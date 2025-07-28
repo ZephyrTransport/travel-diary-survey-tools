@@ -1,0 +1,51 @@
+weighted = true
+
+day_filename = "day.csv"
+hh_filename = "hh.csv"
+location_filename = "location.csv"
+person_filename = "person.csv"
+trip_filename = "trip.csv"
+vehicle_filename = "vehicle.csv"
+
+[raw]
+dir = "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Full Weighted 2023 Dataset/WeightedDataset_02212025"
+
+[00-preprocess]
+dir = "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Processed/TripLinking_20250728/00-preprocess"
+primary_respondent_only = true
+rmove_only = true
+
+[01-taz_spatial_join]
+dir = "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Processed/TripLinking_20250728/01-taz_spatial_join"
+maz_filepath = "X:/travel-model-one-master/utilities/geographies/bayarea_rtaz1454_rev1_WGS84.shp"
+
+[02a-reformat]
+dir = "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Processed/TripLinking_20250728/02a-reformat"
+
+[02b-link_trips_week]
+dir = "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Processed/TripLinking_20250728/02b-link_trips_week"
+accegr_filename = "accegr_week.csv"  # access/egress
+trip_linked_detail_week_filename = "trip-detail.csv"
+
+[03a-tour_extract_week]
+dir = "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Processed/TripLinking_20250728/03a-tour_extract_week"
+personday_filename = "personday.csv"
+tour_filename = "tour.csv"
+hh_weight_col = "hh_weight"
+person_weight_col = "person_weight"
+trip_weight_col = "trip_weight"
+
+[03b-assign_day]
+dir = "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Processed/TripLinking_20250728/03b-assign_day"
+weight_dir = "wt-wkday_3day"  # not currently used in step 3b, only for step 4a/4c
+
+[04a-merge_skims]  # only implemented for step 04c for now
+dir = "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Processed/TripLinking_20250728/04a-merge_skims"
+
+[04b-summary_notebooks]
+dir = "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Processed/TripLinking_20250728/04b-summary_notebooks"
+county_filepath = "Q:/GIS/Model/TAZ/SFCTA_TAZ/TAZ2454_clean.csv"
+sup_dist_filepath = "Q:/GIS/Model/TAZ/SFCTA_TAZ/TAZ_SUPDIST/sftaz_wSupDist_Manual.csv"
+
+[04c-csv_to_dat]
+dir = "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Processed/TripLinking_20250728/04c-csv_to_dat"
