@@ -7,6 +7,9 @@ person_filename = "person.csv"
 trip_filename = "trip.csv"
 vehicle_filename = "vehicle.csv"
 
+[model]
+agency_model = "MTC_TM1"
+
 [raw]
 dir = "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Full Weighted 2023 Dataset/WeightedDataset_02212025"
 
