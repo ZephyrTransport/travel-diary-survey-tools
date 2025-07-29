@@ -1,0 +1,13 @@
+transit_egress,transit_egress_des,transit_egress_priority,link_transit_egress_priority,link_transit_egress
+8,Drove and parked another vehicle,1,1,8
+7,Drove and parked my own household's vehicle,2,2,7
+6,"Uber/Lyft, taxi, or car service",3,3,6
+10,Got dropped off in another vehicle,4,4,10
+9,Got dropped off in my own household's vehicle,5,5,9
+5,Transferred from other transit,6,6,5
+3,Transferred from another bus,7,7,3
+4,Micromobility,8,8,4
+2,Bicycle,9,9,2
+1,Walked,10,10,1
+997,Other,11,11,997
+995,Missing Response,12,12,995
