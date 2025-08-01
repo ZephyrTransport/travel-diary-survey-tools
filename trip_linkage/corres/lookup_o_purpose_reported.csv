@@ -1,0 +1,42 @@
+o_purpose_reported,o_purpose_reported_des,o_purpose_reported_priority,link_o_purpose_reported_priority,link_o_purpose_reported,link_o_purpose_new,link_o_purpose_category_new
+10,Went to primary workplace,1,1,10,10,2
+11,"Went to work-related activity (e.g., meeting, delivery, worksite) ",2,2,11,11,3
+13,Volunteering,3,3,13,13,3
+14,Other work-related,4,4,14,14,3
+2,"Went to work, work-related, volunteer-related",5,5,2,2,3
+26,Attend daycare or preschool,6,6,26,26,4
+21,Attend K-12 school,7,7,21,21,4
+22,Attend college/university,8,8,22,22,4
+3,Attended school/class,9,9,3,3,4
+24,"Attend other education-related activity (e.g., field trip)",10,10,24,24,5
+25,Attend vocational education class,11,11,25,25,4
+23,"Attend other type of class (e.g., cooking class)",12,12,23,23,4
+45,Pick someone up,13,13,45,45,6
+46,Drop someone off,14,14,46,46,6
+44,"Other activity only (e.g., attend meeting, pick-up or drop-off item)",15,15,44,44,6
+47,"Accompany someone only (e.g., go along for the ride)",16,16,47,47,6
+48,BOTH pick up AND drop off,17,17,48,48,6
+5,"Dropped off, picked up, or accompanied another person",18,18,5,5,6
+30,Grocery shopping,19,19,30,30,7
+31,Got gas,20,20,31,31,7
+32,"Other routine shopping (e.g., pharmacy)",21,21,32,32,7
+36,"Shopping for major item (e.g., furniture, car)",22,22,36,36,7
+50,"Dined out, got coffee, or take-out",23,23,50,50,8
+51,"Exercise or recreation (e.g., gym, jog, bike, walk dog)",24,24,51,51,9
+52,"Social activity (e.g., visit friends/relatives)",25,25,52,52,9
+53,"Leisure/entertainment/cultural (e.g., cinema, museum, park)",26,26,53,53,9
+54,Religious/civic/volunteer activity,27,27,54,54,9
+56,"Family activity (e.g., watch child's game)",28,28,56,56,9
+62,Other social,29,29,62,62,9
+7,"Social, leisure, religious, entertainment activity",30,30,7,7,9
+34,"Medical visit (e.g., doctor, dentist)",31,31,34,34,10
+37,"Errand with appointment (e.g., haircut)",32,32,37,37,10
+33,"Errand without appointment (e.g., post office)",33,33,33,33,10
+4,"Appointment, shopping, or errands (e.g., gas)",34,34,4,4,10
+61,Other errand,35,35,61,61,10
+1,Went home,36,36,1,1,1
+150,"Went to another residence (e.g., someone else's home, second home)",37,37,150,150,12
+152,"Went to temporary lodging (e.g., hotel, vacation rental)",38,38,152,152,12
+99,Other reason,39,39,99,99,13
+995,Missing Response,40,40,995,995,13
+60,"Changed or transferred mode (e.g., waited for bus or exited bus)",41,41,60,60,11

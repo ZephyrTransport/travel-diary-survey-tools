@@ -1,0 +1,60 @@
+mode_1,mode_1_priority,mode_2,mode_2_priority,mode_3,mode_3_priority,mode_4,mode_4_priority,link_mode_1,link_mode_1_priority,link_mode_2,link_mode_2_priority,link_mode_3,link_mode_3_priority,link_mode_4,link_mode_4_priority,mode_des
+41,1,41,1,41,1,41,1,41,1,41,1,41,1,41,1,"Intercity/Commuter rail (e.g., Altamount ACE, Amtrak, Caltrain)"
+30,2,30,2,30,2,30,2,30,2,30,2,30,2,30,2,BART
+53,3,53,3,53,3,53,3,53,3,53,3,53,3,53,3,MUNI Metro
+68,4,68,4,68,4,68,4,68,4,68,4,68,4,68,4,Cable car or streetcar
+55,5,55,5,55,5,55,5,55,5,55,5,55,5,55,5,Express bus or Transbay bus
+61,6,61,6,61,6,61,6,61,6,61,6,61,6,61,6,Rapid transit bus (BRT)
+23,7,23,7,23,7,23,7,23,7,23,7,23,7,23,7,Local (public) bus
+25,8,25,8,25,8,25,8,25,8,25,8,25,8,25,8,"Intercity bus (e.g., Greyhound, Megabus)"
+28,9,28,9,28,9,28,9,28,9,28,9,28,9,28,9,Other bus
+42,10,42,10,42,10,42,10,42,10,42,10,42,10,42,10,Other rail
+78,11,78,11,78,11,78,11,78,11,78,11,78,11,78,11,Public ferry or water taxi
+24,12,24,12,24,12,24,12,24,12,24,12,24,12,24,12,School bus
+21,13,21,13,21,13,21,13,21,13,21,13,21,13,21,13,Vanpool
+26,14,26,14,26,14,26,14,26,14,26,14,26,14,26,14,"Other private shuttle/bus (e.g., a hotel's, an airport's)"
+27,15,27,15,27,15,27,15,27,15,27,15,27,15,27,15,Paratransit/Dial-A-Ride
+38,16,38,16,38,16,38,16,38,16,38,16,38,16,38,16,University/college shuttle/bus
+62,17,62,17,62,17,62,17,62,17,62,17,62,17,62,17,Employer-provided shuttle/bus
+67,18,67,18,67,18,67,18,67,18,67,18,67,18,67,18,"Local (private) bus (e.g., RapidShuttle, SuperShuttle)"
+36,19,36,19,36,19,36,19,36,19,36,19,36,19,36,19,"Regular taxi (e.g., Yellow Cab)"
+60,20,60,20,60,20,60,20,60,20,60,20,60,20,60,20,"Other hired car service (e.g., black car, limo)"
+49,21,49,21,49,21,49,21,49,21,49,21,49,21,49,21,"Uber, Lyft, or other smartphone-app ride service"
+18,22,18,22,18,22,18,22,18,22,18,22,18,22,18,22,"Carshare service (e.g., Zipcar)"
+59,23,59,23,59,23,59,23,59,23,59,23,59,23,59,23,"Peer-to-peer car rental (e.g., Turo)"
+76,24,76,24,76,24,76,24,76,24,76,24,76,24,76,24,"Carpool match (e.g., Waze Carpool)"
+6,25,6,25,6,25,6,25,6,25,6,25,6,25,6,25,Household vehicle 1
+7,26,7,26,7,26,7,26,7,26,7,26,7,26,7,26,Household vehicle 2
+8,27,8,27,8,27,8,27,8,27,8,27,8,27,8,27,Household vehicle 3
+9,28,9,28,9,28,9,28,9,28,9,28,9,28,9,28,Household vehicle 4
+10,29,10,29,10,29,10,29,10,29,10,29,10,29,10,29,Household vehicle 5
+11,30,11,30,11,30,11,30,11,30,11,30,11,30,11,30,Household vehicle 6
+12,31,12,31,12,31,12,31,12,31,12,31,12,31,12,31,Household vehicle 7
+13,32,13,32,13,32,13,32,13,32,13,32,13,32,13,32,Household vehicle 8
+16,33,16,33,16,33,16,33,16,33,16,33,16,33,16,33,Other vehicle in household
+17,34,17,34,17,34,17,34,17,34,17,34,17,34,17,34,Rental car
+22,35,22,35,22,35,22,35,22,35,22,35,22,35,22,35,Other vehicle (not my household's)
+33,36,33,36,33,36,33,36,33,36,33,36,33,36,33,36,Car from work
+34,37,34,37,34,37,34,37,34,37,34,37,34,37,34,37,Friend/relative/colleague's car
+47,38,47,38,47,38,47,38,47,38,47,38,47,38,47,38,Other motorcycle in household
+54,39,54,39,54,39,54,39,54,39,54,39,54,39,54,39,Other motorcycle (not my household's)
+2,40,2,40,2,40,2,40,2,40,2,40,2,40,2,40,Standard bicycle (my household's)
+3,41,3,41,3,41,3,41,3,41,3,41,3,41,3,41,"Borrowed bicycle (e.g., a friend's)"
+4,42,4,42,4,42,4,42,4,42,4,42,4,42,4,42,Other rented bicycle
+82,43,82,43,82,43,82,43,82,43,82,43,82,43,82,43,Electric bicycle (my household's)
+69,44,69,44,69,44,69,44,69,44,69,44,69,44,69,44,Bike-share - standard bicycle
+70,45,70,45,70,45,70,45,70,45,70,45,70,45,70,45,Bike-share - electric bicycle
+73,46,73,46,73,46,73,46,73,46,73,46,73,46,73,46,"Moped-share (e.g., Scoot)"
+74,47,74,47,74,47,74,47,74,47,74,47,74,47,74,47,Segway
+83,48,83,48,83,48,83,48,83,48,83,48,83,48,83,48,"Scooter-share (e.g., Bird, Lime)"
+1,49,1,49,1,49,1,49,1,49,1,49,1,49,1,49,Walk (or jog/wheelchair)
+43,50,43,50,43,50,43,50,43,50,43,50,43,50,43,50,Skateboard or rollerblade
+5,51,5,51,5,51,5,51,5,51,5,51,5,51,5,51,Other
+44,52,44,52,44,52,44,52,44,52,44,52,44,52,44,52,Golf cart
+45,53,45,53,45,53,45,53,45,53,45,53,45,53,45,53,ATV
+63,54,63,54,63,54,63,54,63,54,63,54,63,54,63,54,Medical transportation service
+75,55,75,55,75,55,75,55,75,55,75,55,75,55,75,55,Other
+77,56,77,56,77,56,77,56,77,56,77,56,77,56,77,56,Personal scooter or moped (not shared)
+80,57,80,57,80,57,80,57,80,57,80,57,80,57,80,57,"Other boat (e.g., kayak)"
+31,58,31,58,31,58,31,58,31,58,31,58,31,58,31,58,Airplane/helicopter
+995,59,995,59,995,59,995,59,995,59,995,59,995,59,995,59,Missing Response

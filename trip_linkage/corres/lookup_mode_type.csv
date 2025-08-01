@@ -1,0 +1,16 @@
+mode_type,mode_type_des,mode_type_priority,link_mode_type_priority,link_mode_type
+13,Transit,1,1,13
+12,Ferry,2,2,12
+10,School bus,3,3,10
+11,Shuttle/vanpool,4,4,11
+5,Taxi,5,5,5
+6,TNC,6,6,6
+9,Carshare,7,7,9
+8,Car,8,8,8
+2,Bike,9,9,2
+3,Bikeshare,10,10,3
+4,Scootershare,11,11,4
+1,Walk,12,12,1
+7,Other,13,13,7
+14,Long distance passenger,14,14,14
+995,Missing Response,15,15,995
