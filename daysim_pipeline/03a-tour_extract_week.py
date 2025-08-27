@@ -6,39 +6,16 @@ import numpy as np
 import pandas as pd
 import tomllib
 
-"""
-Daysim Pipeline - Step 3a: Tour Extraction and Pattern Recognition
+# MAXTOUR = 16
+MAXSTOP = 21
+PMAX = 15
+DMAX = 1  # Drew was testing this with DMAX = 7 too in Fall 2024, which doesn't work
+TMAX = 200
+NPTYPES = 9
+delim = ","
+# DOW_LOOKUP = {1: "mon", 2: "tue", 3: "wed", 4: "thu", 5: "fri", 6: "sat", 7: "sun"}
 
-This script extracts travel patterns from linked trip data and organizes them
-into tours - round trips that start and end at the same location (typically home).
-This is a critical step for activity-based travel demand modeling.
-
-Key concepts:
-- Tour: A sequence of trips starting and ending at the same location
-- Home-based tours: Tours that start and end at home
-- Work-based tours: Subtours that start and end at work during a work day
-- Primary tour: The most important tour of the day (usually work or school)
-- Stops: Intermediate destinations within a tour
-
-Processing steps:
-1. Identify tour boundaries using origin/destination patterns
-2. Classify tours by primary purpose (work, school, personal business, etc.)
-3. Extract tour timing, mode hierarchy, and stop patterns
-4. Create person-day patterns summarizing daily activity
-5. Generate weighted outputs for model estimation
-
-Input: Linked trip data from step 02b
-Output: Tour, trip, person-day, person, and household files in Daysim format
-"""
-
-# Algorithm parameters and constants
-MAXSTOP = 21  # Maximum stops per half-tour
-PMAX = 15     # Maximum persons per household
-DMAX = 1      # Maximum days per person (Drew tested DMAX=7 in Fall 2024, didn't work)
-TMAX = 200    # Maximum trips per person
-NPTYPES = 9   # Number of trip purpose types
-delim = ","   # CSV delimiter
-MAXTOUR = 75  # Maximum tours per person-day
+MAXTOUR = 75
 
 # according to the weighting memo, the weights are only good for weekdays only,
 # but seems like this script is recalculating the trip weights from scratch anyways.
@@ -50,38 +27,12 @@ WT_COMPLETE_COL = "num_days_complete_3dayweekday"
 
 
 def isclose(a, b, rel_tol=1e-09, abs_tol=0.000001):
-    """
-    Compare floating point numbers for approximate equality.
-    
-    Used for comparing coordinates to identify when trip origins/destinations
-    match known locations (home, work, school).
-    
-    Args:
-        a, b (float): Numbers to compare
-        rel_tol (float): Relative tolerance for comparison
-        abs_tol (float): Absolute tolerance for comparison
-    
-    Returns:
-        bool: True if numbers are approximately equal
-    """
     """compares floating point numbers"""
     # TODO just swap out and use np.isclose()
     return abs(a - b) <= max(rel_tol * max(abs(a), abs(b)), abs_tol)
 
 
 def clock(mins):
-    """
-    Convert minutes past midnight to HHMM clock time format.
-    
-    Handles time values that exceed 24 hours by wrapping to next day.
-    Used for formatting departure and arrival times in tour output.
-    
-    Args:
-        mins (int): Minutes past midnight
-    
-    Returns:
-        str: Time in HHMM format (e.g., '1430' for 2:30 PM)
-    """
     """converts minutes past midnight to clock time on 24 hour clock"""
     while mins >= 1440:
         mins -= 1440
@@ -90,30 +41,6 @@ def clock(mins):
 
 
 def tour_extract_week(config):
-    """
-    Extract tours from weekly trip data and generate Daysim model inputs.
-    
-    This is the main function that processes trip data through the tour
-    extraction algorithm, identifying travel patterns and generating
-    comprehensive outputs for activity-based travel demand modeling.
-    
-    The algorithm:
-    1. Loads and processes household, person, and trip data
-    2. Identifies tour boundaries based on location patterns
-    3. Determines primary purpose and timing for each tour
-    4. Extracts work-based subtours from home-based work tours
-    5. Organizes trips into tour stops and calculates tour modes
-    6. Generates person-day activity patterns
-    7. Outputs weighted data for model estimation
-    
-    Args:
-        config (dict): Configuration dictionary with file paths, weighting options,
-                      and model parameters
-    
-    Returns:
-        None: Outputs multiple CSV files (tour, trip, personday, person, hh)
-              to 03a-tour_extract_week directory
-    """
     # Initiate log file
     logfilename = "03a-tour_extract_week.log"
     logfile = open(logfilename, "w")

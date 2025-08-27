@@ -1,24 +1,11 @@
 """
-Daysim Pipeline - Step 1: Spatial Join to TAZ/MAZ Geography
+Spatial join hh, person, & trip tables (from 00-preprocess dir) to SF CHAMP TAZs & MAZs
 
-This script performs spatial joins between survey data and transportation
-analysis geography (Traffic Analysis Zones - TAZ and Micro Analysis Zones - MAZ).
-
-The script supports multiple agency models:
-- SFCTA CHAMP: Uses both TAZ and MAZ zones
-- MTC TM1: Uses only TAZ (MAZID set equal to TAZ for downstream compatibility)
-
-Processing steps:
-1. Load preprocessed household, person, and trip data
-2. Load geographic zone files (TAZ/MAZ) for the specified agency model
-3. Perform spatial joins using nearest neighbor with distance buffer
-4. Add zone identifiers to each data type:
-   - Households: home_taz, home_maz
-   - Persons: work_taz, work_maz, school_taz, school_maz
-   - Trips: o_taz, o_maz (origin), d_taz, d_maz (destination)
-
-Input: Preprocessed CSV files from step 00
-Output: Spatially joined CSV files with TAZ/MAZ identifiers
+The results are saved in the parsed/01-"taz_spatial_join subdirectory,
+with the following columns added:
+    hh.csv: home_{maz, taz}
+    person.csv: {work, school}_{maz, taz}
+    trip.csv: {o, d}_{maz, taz}
 """
 
 import argparse
@@ -30,18 +17,6 @@ import pandas as pd
 
 
 def taz_spatial_join(config):
-    """
-    Perform spatial joins between survey data and transportation analysis zones.
-    
-    Args:
-        config (dict): Configuration dictionary containing:
-                      - File paths and names for input/output directories
-                      - Agency model specification (SFCTA_CHAMP or MTC_TM1)
-                      - Zone file paths for TAZ/MAZ geography
-    
-    Returns:
-        None: Outputs spatially joined CSV files to 01-taz_spatial_join directory
-    """
     preprocess_dir = Path(config["00-preprocess"]["dir"])
     taz_spatial_join_dir = Path(config["01-taz_spatial_join"]["dir"])
     taz_spatial_join_dir.mkdir(exist_ok=True)
@@ -76,23 +51,6 @@ def taz_spatial_join(config):
 
 
 def sjoin_maz(df: pd.DataFrame, maz: gpd.GeoDataFrame, id_col: str, var_prefix: str):
-    """
-    Perform spatial join between survey data points and MAZ/TAZ geography.
-    
-    Uses nearest neighbor spatial join with distance buffer to handle gaps
-    in zone coverage. Converts coordinates to projected CRS for accurate
-    distance calculations.
-    
-    Args:
-        df (pd.DataFrame): Survey data with lat/lon coordinates
-        maz (gpd.GeoDataFrame): Zone geography with MAZID and TAZ columns
-        id_col (str): Column name for unique identifier in survey data
-        var_prefix (str): Prefix for location type (e.g., 'home', 'work', 'o', 'd')
-    
-    Returns:
-        pd.DataFrame: Survey data with added zone identifiers:
-                     {prefix}_maz and {prefix}_taz columns
-    """
     survey_crs = "EPSG:4326"
     return (
         gpd.GeoDataFrame(
