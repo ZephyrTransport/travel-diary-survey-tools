@@ -1,4 +1,21 @@
-"""Map survey results CSVs to Daysim format"""
+"""
+Daysim Pipeline - Step 2a: Data Reformatting to Daysim Format
+
+This script transforms survey data from its original format to Daysim
+model input format. Daysim is an activity-based travel demand model
+that requires specific data structures and coding schemes.
+
+Key transformations:
+1. Person data: Map demographic categories, employment types, and
+   student status to Daysim person types (pptyp)
+2. Household data: Process income categories and dwelling types
+3. Trip data: Convert travel purposes, modes, and times to Daysim codes
+4. Apply Bay Area geographic filters (9-county region)
+5. Calculate person/day completeness for survey weighting
+
+Input: Spatially joined CSV files from step 01
+Output: Daysim-formatted CSV files ready for trip linking
+"""
 
 import argparse
 from pathlib import Path
@@ -11,6 +28,15 @@ COUNTY_FIPS = 6 * 1000 + np.array([1, 13, 41, 55, 75, 81, 85, 95, 97])  # 6 = CA
 
 
 def reformat(config):
+    """
+    Main function to reformat all survey data to Daysim format.
+    
+    Args:
+        config (dict): Configuration dictionary with file paths and weighting options
+    
+    Returns:
+        None: Outputs reformatted CSV files to 02a-reformat directory
+    """
     taz_spatial_join_dir = Path(config["01-taz_spatial_join"]["dir"])
     reformat_dir = Path(config["02a-reformat"]["dir"])
     reformat_dir.mkdir(exist_ok=True)
@@ -34,6 +60,18 @@ def reformat(config):
 
 
 def load_day_completeness(in_day_filepath):
+    """
+    Load and process survey day completeness data for weighting.
+    
+    Creates person-level completeness indicators by day of week and
+    calculates total complete days for different time periods (3-day, 4-day, 5-day).
+    
+    Args:
+        in_day_filepath (Path): Path to day-level survey data
+    
+    Returns:
+        pl.DataFrame: Person completeness data with day-specific and summary columns
+    """
     # For 2022: even though it looks like we're calculating the person-day completeness,
     # a person is only 'complete' on a day if the entire hh is complete on that day.
     # so we should be looking at the `hh_day_complete` col, not the `is_complete` col
@@ -80,6 +118,23 @@ def load_day_completeness(in_day_filepath):
 
 
 def reformat_person(in_person_filepath, day_with_completeness, weighted: bool):
+    """
+    Reformat person data to Daysim format with comprehensive demographic mapping.
+    
+    Maps survey categories to Daysim codes for:
+    - Person types (pptyp): Full-time worker, part-time worker, student, etc.
+    - Worker types (pwtyp): Employment status categories
+    - Demographics: Age groups, gender, student status
+    - Geographic filtering: Limit work/school locations to Bay Area counties
+    
+    Args:
+        in_person_filepath (Path): Path to spatially joined person data
+        day_with_completeness (pl.DataFrame): Person completeness data
+        weighted (bool): Whether to include survey weights
+    
+    Returns:
+        pl.DataFrame: Daysim-formatted person data
+    """
     age_dict = {
         1: 3,
         2: 10,
@@ -321,6 +376,21 @@ def reformat_person(in_person_filepath, day_with_completeness, weighted: bool):
 
 
 def reformat_hh(in_hh_filepath, person, weighted: bool):
+    """
+    Reformat household data to Daysim format.
+    
+    Processes household characteristics including income categories,
+    dwelling types, and vehicle ownership. Income is derived from
+    detailed and follow-up questions with appropriate fallback logic.
+    
+    Args:
+        in_hh_filepath (Path): Path to spatially joined household data
+        person (pl.DataFrame): Person data for household-level attributes
+        weighted (bool): Whether to include survey weights
+    
+    Returns:
+        pl.DataFrame: Daysim-formatted household data
+    """
     # TODO or should we just use imputed income?
     income_detailed_dict = {
         999: -1,
@@ -400,6 +470,23 @@ def reformat_hh(in_hh_filepath, person, weighted: bool):
 
 
 def reformat_trip(in_trip_filepath, weighted: bool):
+    """
+    Reformat trip data to Daysim format with comprehensive mode and purpose mapping.
+    
+    Transforms trip characteristics including:
+    - Travel purposes: Map survey categories to Daysim purpose codes
+    - Transportation modes: Convert to Daysim mode hierarchy (walk, bike, auto, transit)
+    - Path types: Identify transit service types (bus, rail, ferry, etc.)
+    - Driver/passenger roles: Code auto occupancy and TNC usage
+    - Geographic filtering: Limit to complete person-days and Bay Area locations
+    
+    Args:
+        in_trip_filepath (Path): Path to spatially joined trip data
+        weighted (bool): Whether to include survey weights
+    
+    Returns:
+        pl.DataFrame: Daysim-formatted trip data
+    """
     purpose_dict = {
         -1: -1,  # not imputable -> missing
         995: -1,  # missing -> missing
