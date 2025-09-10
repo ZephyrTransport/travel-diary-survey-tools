@@ -7,6 +7,9 @@ person_filename = "person.csv"
 trip_filename = "trip.csv"
 vehicle_filename = "vehicle.csv"
 
+[model]
+agency_model = "SFCTA_CHAMP"
+
 [raw]
 dir = "Q:/Data/Surveys/HouseholdSurveys/MTC-SFCTA2022/Deliverable_20241127"
 

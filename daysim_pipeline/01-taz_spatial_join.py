@@ -21,9 +21,21 @@ def taz_spatial_join(config):
     taz_spatial_join_dir = Path(config["01-taz_spatial_join"]["dir"])
     taz_spatial_join_dir.mkdir(exist_ok=True)
 
-    maz = gpd.read_file(config["01-taz_spatial_join"]["maz_filepath"])[
-        ["MAZID", "TAZ", "geometry"]
-    ]
+    agency_model = config["model"]["agency_model"]
+
+    if agency_model == "SFCTA_CHAMP":
+        # SFCTA's CHAMP model has both TAZ and MAZ
+        maz = gpd.read_file(config["01-taz_spatial_join"]["maz_filepath"])[
+            ["MAZID", "TAZ", "geometry"]
+        ]
+    elif agency_model == "MTC_TM1":
+        # MTC's TM1 only has TAZ but this proces expects both TAZ and MAZ (so MAZID is set to be the same value as TAZ to satisfy downstream code) 
+        maz = gpd.read_file(config["01-taz_spatial_join"]["maz_filepath"])[
+            ["TAZ1454", "geometry"]
+        ].rename(columns={"TAZ1454": "TAZ"}).assign(MAZID=lambda df: df["TAZ"])
+    else:
+        raise ValueError(f"Unsupported agency_model: {agency_model}")    
+    
     hh = pd.read_csv(preprocess_dir / config["hh_filename"])
     person = pd.read_csv(preprocess_dir / config["person_filename"])
     trip = pd.read_csv(preprocess_dir / config["trip_filename"])
