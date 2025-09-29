@@ -1,3 +1,26 @@
+"""
+Daysim Pipeline - Step 3b: Day Assignment and Weighting
+
+This script assigns specific days of the week to tours and trips from the
+week-long survey data and applies appropriate survey weights for model estimation.
+Since Daysim models typical weekdays, this step focuses on extracting weekday
+patterns and applying person-day weights.
+
+Key functions:
+1. Assign day-of-week to each tour based on constituent trips
+2. Apply survey weights based on person-day completeness
+3. Filter data to focus on specified weekdays (typically Tue-Thu)
+4. Generate person-day activity patterns with proper weighting
+5. Create final Daysim input files ready for model estimation
+
+The weighting approach accounts for varying survey response patterns
+across different days of the week and ensures representative samples
+for travel demand model estimation.
+
+Input: Tour and trip data from step 03a
+Output: Day-specific, weighted Daysim input files
+"""
+
 import argparse
 import tomllib
 from pathlib import Path
@@ -6,6 +29,19 @@ import pandas as pd
 
 
 def link_dt(df):
+    """
+    Link drive-transit trips by connecting access and main transit segments.
+    
+    Drive-transit trips are split into separate drive and transit components
+    during tour extraction. This function reconnects them by updating the
+    origin zone of transit segments to match the destination of drive segments.
+    
+    Args:
+        df (pd.DataFrame): Trip data with potentially split drive-transit trips
+    
+    Returns:
+        pd.DataFrame: Trip data with properly linked drive-transit trips
+    """
     """function to link drive transit trips"""
     dtrn_df = df.loc[df["dpurp"] == 10,]
     dtrn_df.loc[:, "tseg"] += 1
@@ -22,6 +58,25 @@ def link_dt(df):
 
 
 def assign_day(config):
+    """
+    Assign days to tours/trips and apply survey weights for model estimation.
+    
+    This function processes the weekly tour/trip data to:
+    1. Determine the primary day-of-week for each tour based on trip frequency
+    2. Apply person-day weights based on complete survey days
+    3. Generate weighted person-day activity patterns
+    4. Create final Daysim input files focused on representative weekdays
+    
+    The weighting strategy focuses on 3-day weekday patterns (typically
+    Tuesday-Thursday) to capture representative travel behavior while
+    avoiding day-of-week effects from Mondays and Fridays.
+    
+    Args:
+        config (dict): Configuration dictionary with file paths and weighting parameters
+    
+    Returns:
+        None: Outputs day-assigned, weighted CSV files to 03b-assign_day directory
+    """
     tour_extract_week_dir = Path(config["03a-tour_extract_week"]["dir"])
     reformatted_person_filepath = (
         Path(config["02a-reformat"]["dir"]) / config["person_filename"]

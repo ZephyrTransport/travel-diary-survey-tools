@@ -5,10 +5,47 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+"""
+Daysim Pipeline - Step 2b: Trip Linking for Multi-Modal Journeys
+
+This script links related trips that represent a single journey with multiple
+transportation modes or intermediate stops. The primary purpose is to handle
+complex trip chains, particularly:
+
+1. Access/egress trips for transit (drive-to-transit, walk-to-transit)
+2. Multi-modal trips with mode changes
+3. Sequential transit trips on the same journey
+4. Short intermediate stops that are part of a larger trip
+
+Trip linking algorithm:
+- Identifies trips with destination purpose 'change mode' (dpurp = 10)
+- Merges trips with activity duration below specified thresholds
+- Preserves highest-level mode for linked trip (e.g., transit over walk)
+- Creates access/egress mode tracking for complex transit trips
+- Generates continuous trip numbering (lintripno) after linking
+
+Input: Reformatted trip data from step 02a
+Output: Linked trip data with merged multi-modal journeys
+"""
+
 # TODO update the pd _append logic to not do appends (deprecated)
 
 
 def link_trips_week(config):
+    """
+    Link related trips that represent single multi-modal journeys.
+    
+    This function processes the trip data to identify and merge trips that
+    should be considered as segments of a single journey, particularly for
+    complex transit access/egress and mode change scenarios.
+    
+    Args:
+        config (dict): Configuration dictionary containing file paths and parameters
+    
+    Returns:
+        None: Outputs linked trip data and access/egress mode data
+              to 02b-link_trips_week directory
+    """
     trip = pd.read_csv(Path(config["02a-reformat"]["dir"]) / config["trip_filename"])
     link_trips_week_dir = Path(config["02b-link_trips_week"]["dir"])
     link_trips_week_dir.mkdir(exist_ok=True)
@@ -116,6 +153,22 @@ def link_trips_week(config):
     tmp_flag = False
 
     def merge_trips(rownum, skip, mode, tmp_flag):
+        """
+        Merge current trip with next trip(s) in sequence.
+        
+        Updates trip attributes by combining current trip with subsequent trip,
+        preserving the highest-level transportation mode and extending the
+        destination to the final stop.
+        
+        Args:
+            rownum (int): Current trip row index
+            skip (int): Number of trips to skip/merge
+            mode (int): Transportation mode for the merged trip
+            tmp_flag (bool): Flag for tracking access/egress mode combinations
+        
+        Returns:
+            bool: Updated tmp_flag for access/egress tracking
+        """
         #global tmp_flag
         if skip == 1 and mode in [6, 7]:
             tmp_dict["hhno"] = [trip.loc[rownum, "hhno"]]
