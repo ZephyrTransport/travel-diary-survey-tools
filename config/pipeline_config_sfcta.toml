@@ -1,4 +1,5 @@
 weighted = true
+rmove_only = true
 
 day_filename = "day.csv"
 hh_filename = "hh.csv"
@@ -16,7 +17,6 @@ dir = "Q:/Data/Surveys/HouseholdSurveys/MTC-SFCTA2022/Deliverable_20241127"
 [00-preprocess]
 dir = "Q:/Data/Surveys/HouseholdSurveys/MTC-SFCTA2022/Processed_20241127/v00b/00-preprocess"
 primary_respondent_only = true
-rmove_only = true
 
 [01-taz_spatial_join]
 dir = "Q:/Data/Surveys/HouseholdSurveys/MTC-SFCTA2022/Processed_20241127/v00b/01-taz_spatial_join"
@@ -34,9 +34,6 @@ trip_linked_detail_week_filename = "trip-detail.csv"
 dir = "Q:/Data/Surveys/HouseholdSurveys/MTC-SFCTA2022/Processed_20241127/v00b/03a-tour_extract_week"
 personday_filename = "personday.csv"
 tour_filename = "tour.csv"
-hh_weight_col = "hh_weight"
-person_weight_col = "person_weight"
-trip_weight_col = "trip_weight"
 
 [03b-assign_day]
 dir = "Q:/Data/Surveys/HouseholdSurveys/MTC-SFCTA2022/Processed_20241127/v00b/03b-assign_day"
