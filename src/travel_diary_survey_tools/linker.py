@@ -34,7 +34,7 @@ def link_trip_ids(
         trips: DataFrame containing trip data
         change_mode_code: Purpose code indicating a mode change
         max_dwell_time: Maximum time gap between trips to link them (minutes)
-        dwell_buffer_distance: Maximum distance between trips to link them (miles)
+        dwell_buffer_distance: Maximum distance between trips to link (miles)
 
     Returns:
         DataFrame with linked_trip_id column added
@@ -254,7 +254,7 @@ def link_trips(
         change_mode_code: Purpose code indicating a mode change
         transit_mode_codes: List of mode codes that count as transit
         max_dwell_time: Maximum time gap between trips to link them (minutes)
-        dwell_buffer_distance: Maximum distance between trips to link them (miles)
+        dwell_buffer_distance: Maximum distance between trips to link (miles)
 
     Returns:
         Tuple of (trips with linked_trip_id, aggregated linked trips)
