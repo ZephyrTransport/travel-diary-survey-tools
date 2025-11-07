@@ -50,7 +50,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Sync environment
-        run: uv sync --all-extras --dev
+        run: uv sync --group test
 
       - name: Run pytest with coverage
         run: |
@@ -67,7 +67,7 @@ jobs:
           fail_ci_if_error: false
 
   check:
-    name: ✅ All checks passed
+    name: Check Results
     needs: [lint, test]
     runs-on: ubuntu-latest
     if: always()
