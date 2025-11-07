@@ -5,10 +5,16 @@ This directory contains GitHub Actions workflows for continuous integration and 
 ## Workflows
 
 ### CI Workflow (`ci.yml`)
-Runs on push to main branches and on pull requests. Includes:
+Runs on push to main branches and on pull requests. Uses [uv](https://docs.astral.sh/uv/) for fast, reliable dependency management. Includes:
 - **Linting**: Runs Ruff to check code style and formatting
 - **Testing**: Runs pytest with coverage on multiple Python versions (3.11, 3.12, 3.13, 3.14)
 - **Coverage**: Uploads coverage reports to Codecov (optional)
+
+**Why UV?**
+- ⚡ 10-100x faster than pip
+- 🔒 Reproducible builds with `uv.lock`
+- 💾 Automatic caching between runs
+- 🎯 Minimal, only installs what's needed
 
 ### PR Checks Workflow (`pr-checks.yml`)
 Additional checks that run on pull requests to ensure CI passes before merging.
@@ -27,6 +33,8 @@ To prevent merging PRs with failing tests or linting, configure branch protectio
      - `Lint`
      - `Test (Python 3.11)`
      - `Test (Python 3.12)`
+     - `Test (Python 3.13)`
+     - `Test (Python 3.14)`
      - `All checks passed`
    - ✅ **Require branches to be up to date before merging** (recommended)
    - ✅ **Require conversation resolution before merging** (optional)
@@ -42,6 +50,41 @@ For enhanced protection:
 - **Require review from Code Owners** (if using CODEOWNERS file)
 
 ## Local Development
+
+### Using UV (Recommended)
+```bash
+# Install uv if you haven't already
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+# macOS/Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Install all dependencies (including dev group)
+uv sync --all-groups
+
+# Run linting
+uv run ruff check .
+uv run ruff format --check .
+
+# Run tests
+uv run pytest
+
+# Run tests with coverage
+uv run pytest --cov=travel_diary_survey_tools --cov-report=html
+```
+
+### Using pip (Alternative)
+```bash
+# Install in editable mode with dev dependencies
+pip install -e ".[dev]"
+
+# Run linting
+ruff check .
+ruff format --check .
+
+# Run tests
+pytest
+```
 
 ### Running Linting Locally
 ```bash
