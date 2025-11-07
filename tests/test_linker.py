@@ -1,4 +1,5 @@
 """Unit tests for trip linking functions."""
+
 import polars as pl
 import pytest
 
@@ -19,6 +20,7 @@ DISTANCE_TOLERANCE = 0.01  # For floating point comparisons
 
 
 # Helper Functions -------------------------------------------------------------
+
 
 def create_trip_data(
     n_trips: int = 3,
@@ -76,33 +78,36 @@ def create_trip_data(
 
     trip_weight = trip_weight or [1.0] * n_trips
 
-    return pl.DataFrame({
-        "trip_id": trip_id,
-        "day_id": [day_id] * n_trips,
-        "person_id": [person_id] * n_trips,
-        "hh_id": [hh_id] * n_trips,
-        "depart_date": [depart_date] * n_trips,
-        "depart_hour": depart_hour,
-        "depart_minute": depart_minute,
-        "depart_seconds": depart_seconds,
-        "arrive_date": [depart_date] * n_trips,
-        "arrive_hour": arrive_hour,
-        "arrive_minute": arrive_minute,
-        "arrive_seconds": arrive_seconds,
-        "o_purpose_category": o_purpose_category,
-        "d_purpose_category": d_purpose_category,
-        "mode_type": mode_type,
-        "duration_minutes": duration_minutes,
-        "distance_miles": distance_miles,
-        "o_lat": o_lat,
-        "o_lon": o_lon,
-        "d_lat": d_lat,
-        "d_lon": d_lon,
-        "trip_weight": trip_weight,
-    })
+    return pl.DataFrame(
+        {
+            "trip_id": trip_id,
+            "day_id": [day_id] * n_trips,
+            "person_id": [person_id] * n_trips,
+            "hh_id": [hh_id] * n_trips,
+            "depart_date": [depart_date] * n_trips,
+            "depart_hour": depart_hour,
+            "depart_minute": depart_minute,
+            "depart_seconds": depart_seconds,
+            "arrive_date": [depart_date] * n_trips,
+            "arrive_hour": arrive_hour,
+            "arrive_minute": arrive_minute,
+            "arrive_seconds": arrive_seconds,
+            "o_purpose_category": o_purpose_category,
+            "d_purpose_category": d_purpose_category,
+            "mode_type": mode_type,
+            "duration_minutes": duration_minutes,
+            "distance_miles": distance_miles,
+            "o_lat": o_lat,
+            "o_lon": o_lon,
+            "d_lat": d_lat,
+            "d_lon": d_lon,
+            "trip_weight": trip_weight,
+        }
+    )
 
 
 # Fixtures ---------------------------------------------------------------------
+
 
 @pytest.fixture
 def basic_trip_data():
@@ -158,6 +163,7 @@ def separated_trip_data():
 
 # Link Trip IDs Tests ----------------------------------------------------------
 
+
 def test_link_trip_ids_basic(basic_trip_data):
     """Test basic trip linking based on change_mode purpose."""
     df = add_time_columns(basic_trip_data)
@@ -199,11 +205,13 @@ def test_link_trip_ids_unique_across_days():
     )
 
     # Manually set different day_ids and dates
-    df = df.with_columns([
-        pl.Series("day_id", [101, 102]),
-        pl.Series("depart_date", ["2023-01-01", "2023-01-02"]),
-        pl.Series("arrive_date", ["2023-01-01", "2023-01-02"]),
-    ])
+    df = df.with_columns(
+        [
+            pl.Series("day_id", [101, 102]),
+            pl.Series("depart_date", ["2023-01-01", "2023-01-02"]),
+            pl.Series("arrive_date", ["2023-01-01", "2023-01-02"]),
+        ]
+    )
 
     df = add_time_columns(df)
     result = link_trip_ids(df, CHANGE_MODE_CODE)
@@ -213,6 +221,7 @@ def test_link_trip_ids_unique_across_days():
 
 
 # Aggregate Linked Trips Tests -------------------------------------------------
+
 
 def test_aggregate_linked_trips_basic(basic_trip_data):
     """Test basic aggregation of linked trips."""
@@ -292,6 +301,7 @@ def test_aggregate_linked_trips_calculates_dwell_time(transit_trip_data):
 
 # Integration Tests ------------------------------------------------------------
 
+
 def test_link_trips_end_to_end(basic_trip_data):
     """Test the complete link_trips function."""
     df = add_time_columns(basic_trip_data)
@@ -361,8 +371,7 @@ def test_link_trips_multiple_persons():
 
     # Should have linked trips for each person
     assert (
-        linked_trips["person_id"].n_unique()
-        == NUM_PEOPLE_IN_MULTI_PERSON_TEST
+        linked_trips["person_id"].n_unique() == NUM_PEOPLE_IN_MULTI_PERSON_TEST
     )
 
 
@@ -388,7 +397,9 @@ def test_link_trips_with_custom_thresholds():
     # With 120 min threshold, should be linked
     # (90 min gap, prev ends with change_mode)
     trips_with_ids1, _ = link_trips(
-        df, CHANGE_MODE_CODE, TRANSIT_MODE_CODES,
+        df,
+        CHANGE_MODE_CODE,
+        TRANSIT_MODE_CODES,
         max_dwell_time=120,  # 2 hours
     )
     linked_id_0 = trips_with_ids1["linked_trip_id"][0]
@@ -414,7 +425,9 @@ def test_link_trips_with_custom_thresholds():
 
     # Even with change_mode, if distance is too great, don't link
     trips_with_ids2, _ = link_trips(
-        df2, CHANGE_MODE_CODE, TRANSIT_MODE_CODES,
+        df2,
+        CHANGE_MODE_CODE,
+        TRANSIT_MODE_CODES,
         dwell_buffer_distance=100,  # 100 meters
     )
     linked_id2_0 = trips_with_ids2["linked_trip_id"][0]
@@ -423,6 +436,7 @@ def test_link_trips_with_custom_thresholds():
 
 
 # Edge Cases -------------------------------------------------------------------
+
 
 def test_link_trips_single_trip():
     """Test that a single trip works correctly."""

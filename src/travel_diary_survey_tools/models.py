@@ -1,4 +1,5 @@
 """Data models for trip linking."""
+
 import pandera.polars as pa
 import polars as pl
 import pydantic as pd
@@ -45,10 +46,10 @@ class TripModel(pa.DataFrameModel):
             pl.col("arrive_time").ge(pl.col("depart_time")).all(),
         )
 
+
 # Subclassing allows you to extend TripModel cleanly
 class LinkedTripModel(TripModel):
     """Linked Trip data model for validation."""
 
     trip_id: None
     linked_trip_id: pl.Int64 = pa.Field(ge=1, nullable=True)
-
