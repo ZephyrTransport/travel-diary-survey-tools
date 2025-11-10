@@ -146,15 +146,20 @@ def tour_extract_week(config):
 
     weighted = config["weighted"]
 
+    # Determine weight column names based on rmove_only setting
+    rmove_only = config["rmove_only"]
+    weight_suffix = "_rmove_only" if rmove_only else ""
+    person_weight_col = f"person_weight{weight_suffix}"
+    hh_weight_col = f"hh_weight{weight_suffix}"
+    trip_weight_col = f"trip_weight{weight_suffix}"
+
     if weighted:
-        hh["hhexpfac"] = hh[config["03a-tour_extract_week"]["hh_weight_col"]]
-        persons["psexpfac"] = persons[
-            config["03a-tour_extract_week"]["person_weight_col"]
-        ]
+        hh["hhexpfac"] = hh[hh_weight_col]
+        persons["psexpfac"] = persons[person_weight_col]
         # NOTE TODO trexpfac: doesn't seem to be actually used;
         # seems like the `wt` var is just (over)written to this column.
         # But why calculate it ourselves if the vendor already does it for us?
-        # trip["trexpfac"] = trip[config["03a-tour_extract_week"]["trip_weight_col"]]
+        # trip["trexpfac"] = trip["trip_weight_col"]
 
         # remove some bad records
         r1 = trip.shape[0]
