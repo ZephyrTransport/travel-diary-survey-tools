@@ -1,0 +1,82 @@
+
+[project]
+name = "travel-diary-survey-tools"
+version = "0.1.0"
+description = "Set of tools to process and analyze travel diary survey data."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "geopandas>=1.1.1",
+    "networkx>=3.6.1",
+    "numpy>=2.3.4",
+    "polars>=1.35.1",
+    "pyarrow>=22.0.0",
+    "pydantic>=2.12.4",
+    "scipy>=1.16.3",
+]
+
+[dependency-groups]
+test = [
+    "pytest>=8.4.2",
+    "pytest-cov>=7.0.0",
+]
+dev = [
+    "matplotlib>=3.10.8",
+    "tabulate>=0.9.0",
+    "kaleido>=1.2.0",
+    "jupyter>=1.1.1",
+    "pandas>=2.3.3",
+    "plotly>=6.4.0",
+    "pre-commit>=4.3.0",
+    "pytest>=8.4.2",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.14.3",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pipeline", "src/data_canon", "src/processing", "src/utils", "examples"]
+
+[tool.ruff]
+line-length = 80
+lint.select = ["ALL"]
+lint.pylint.max-args = 8  # Increase from default of 5 to accomodate 6 canon tables
+lint.ignore = [
+    "COM812",  # Trailing comma - conflicts with formatter
+    "D203",    # Use D211 (no blank line before class)
+    "D213",    # Use D212 (summary on first line)
+    "RET504",  # Allow return of assigned variable
+    "FBT001",  # Boolean args OK in this codebase
+    "FBT002",  # Boolean args OK in this codebase
+    "ERA001",  # Ignore commented out code
+]
+lint.pydocstyle.convention = "google"
+exclude = ["scripts/daysim_old", "*.html", "uv.lock"]
+
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "S101",      # assert is fine in tests
+    "PLR0913",   # many arguments OK for test helpers
+    "PLR2004",   # allow magic numbers in tests
+    "ANN",       # type annotations optional in tests
+    "SLF001",    # allow access to private members in tests
+    "DTZ001",    # allow naive datetime in tests
+]
+"scripts/**/*.py" = [
+    "INP001",      # script not part of package
+    "T201",        # allow print statements in scripts
+]
+"projects/**/*.py" = [
+    "INP001",      # script not part of package
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "--cov=src/pipeline --cov=src/data_canon --cov=src/processing --cov-report=term-missing"
