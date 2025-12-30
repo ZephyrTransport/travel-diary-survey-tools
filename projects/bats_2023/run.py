@@ -4,10 +4,12 @@ import argparse
 import logging
 import os
 import shutil
+import sys
 from pathlib import Path
 
 import geopandas as gpd
 import polars as pl
+import yaml
 
 from pipeline.decoration import step
 from pipeline.pipeline import Pipeline
@@ -46,22 +48,31 @@ CONFIG_PATH = Path(__file__).parent / "config.yaml"
 # Logging setup
 # ---------------------------------------------------------------------
 # Read output directory from config to place log file there
-import yaml
-with open(CONFIG_PATH) as f:
+with CONFIG_PATH.open() as f:
     config = yaml.safe_load(f)
     output_dir = Path(config.get("output_dir", "output"))
     output_dir.mkdir(parents=True, exist_ok=True)
 
 # Configure logging to both console and file
 log_file = output_dir / "pipeline.log"
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-    handlers=[
-        logging.FileHandler(log_file, mode="a"),
-        logging.StreamHandler(),
-    ],
+formatter = logging.Formatter("%(asctime)s | %(levelname)s | %(message)s")
+
+file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(formatter)
+
+console_handler = logging.StreamHandler(
+    stream=sys.stdout.reconfigure(errors="replace") if hasattr(sys.stdout, "reconfigure") else sys.stdout
 )
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(formatter)
+
+# Get root logger, clear existing handlers, and configure it
+root_logger = logging.getLogger()
+root_logger.handlers.clear()
+root_logger.setLevel(logging.DEBUG)
+root_logger.addHandler(file_handler)
+root_logger.addHandler(console_handler)
 
 logger = logging.getLogger(__name__)
 logger.info("Log file: %s", log_file)
@@ -77,12 +88,13 @@ def custom_add_zone_ids(
     zone_geographies: list[dict],
 ) -> dict:
     """Add zone IDs for multiple geographic levels based on locations.
-    
+
     Automatically applies each zone geography to standard locations:
     - households: home_lon/lat → home_{zone_name}
-    - persons: work_lon/lat → work_{zone_name}, school_lon/lat → school_{zone_name}
+    - persons: work_lon/lat → work_{zone_name},
+                school_lon/lat → school_{zone_name}
     - linked_trips: o_lon/lat → o_{zone_name}, d_lon/lat → d_{zone_name}
-    
+
     Args:
         households: Households dataframe
         persons: Persons dataframe
@@ -91,7 +103,7 @@ def custom_add_zone_ids(
             - shapefile: Path to shapefile with zone boundaries (str)
             - zone_id_field: Field name in shapefile for zone ID
             - zone_name: Short name for zone type (e.g., 'taz', 'maz', 'county')
-    
+
     Returns:
         Dictionary with updated dataframes
     """
@@ -118,7 +130,9 @@ def custom_add_zone_ids(
         shp_prepared = shp_prepared.set_index(zone_id_field)
 
         # Spatial join to find zone containing each point
-        gdf_joined = gpd.sjoin(gdf, shp_prepared, how="left", predicate="within")
+        gdf_joined = gpd.sjoin(
+            gdf, shp_prepared, how="left", predicate="within"
+        )
         gdf_joined = gdf_joined.rename(columns={zone_id_field: zone_col_name})
         gdf_joined = gdf_joined.drop(columns="geometry")
 
@@ -137,7 +151,10 @@ def custom_add_zone_ids(
         zone_name = zone_config["zone_name"]
 
         logger.info(
-            f"Adding {zone_name.upper()} IDs using field '{zone_id_field}' from {shapefile_path}"
+            "Adding %s IDs using field '%s' from %s",
+            zone_name.upper(),
+            zone_id_field,
+            shapefile_path,
         )
 
         # Load the shapefile
