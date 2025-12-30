@@ -61,9 +61,13 @@ file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
 file_handler.setLevel(logging.DEBUG)
 file_handler.setFormatter(formatter)
 
-console_handler = logging.StreamHandler(
-    stream=sys.stdout.reconfigure(errors="replace") if hasattr(sys.stdout, "reconfigure") else sys.stdout
+# Configure console handler with Unicode error handling for Windows
+stdout_stream = (
+    sys.stdout.reconfigure(errors="replace")
+    if hasattr(sys.stdout, "reconfigure")
+    else sys.stdout
 )
+console_handler = logging.StreamHandler(stream=stdout_stream)
 console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(formatter)
 
