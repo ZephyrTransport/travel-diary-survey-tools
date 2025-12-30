@@ -1,7 +1,9 @@
 """Runner script for the BATS 2023 DaySim processing pipeline."""
 
+import argparse
 import logging
 import os
+import shutil
 from pathlib import Path
 
 import geopandas as gpd
@@ -43,44 +45,65 @@ CONFIG_PATH = Path(__file__).parent / "config.yaml"
 # ---------------------------------------------------------------------
 # Logging setup
 # ---------------------------------------------------------------------
+# Read output directory from config to place log file there
+import yaml
+with open(CONFIG_PATH) as f:
+    config = yaml.safe_load(f)
+    output_dir = Path(config.get("output_dir", "output"))
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+# Configure logging to both console and file
+log_file = output_dir / "pipeline.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
+    handlers=[
+        logging.FileHandler(log_file, mode="a"),
+        logging.StreamHandler(),
+    ],
 )
 
 logger = logging.getLogger(__name__)
+logger.info("Log file: %s", log_file)
 
 
 # Optional: project-specific custom step functions
 # You can define or import them here if needed
 @step()
-def custom_add_taz_ids(
+def custom_add_zone_ids(
     households: pl.DataFrame,
     persons: pl.DataFrame,
     linked_trips: pl.DataFrame,
-    taz_shapefile: gpd.GeoDataFrame,
-    maz_shapefile: gpd.GeoDataFrame | None = None,
-    taz_field_name: str = "TAZ1454",
-    maz_field_name: str = "MAZ_ID",
+    zone_geographies: list[dict],
 ) -> dict:
-    """Custom step to add TAZ and MAZ IDs based on locations."""
-    # Rename source field to TAZ_ID for consistency
-    taz_shapefile = taz_shapefile.rename(columns={taz_field_name: "TAZ_ID"})
-
-    # Rename MAZ field if MAZ shapefile provided
-    if maz_shapefile is not None:
-        maz_shapefile = maz_shapefile.rename(columns={maz_field_name: "MAZ_ID"})
-
-    # Helper function to add zone ID based on lon/lat columns
+    """Add zone IDs for multiple geographic levels based on locations.
+    
+    Automatically applies each zone geography to standard locations:
+    - households: home_lon/lat → home_{zone_name}
+    - persons: work_lon/lat → work_{zone_name}, school_lon/lat → school_{zone_name}
+    - linked_trips: o_lon/lat → o_{zone_name}, d_lon/lat → d_{zone_name}
+    
+    Args:
+        households: Households dataframe
+        persons: Persons dataframe
+        linked_trips: Linked trips dataframe
+        zone_geographies: List of dicts, each containing:
+            - shapefile: Path to shapefile with zone boundaries (str)
+            - zone_id_field: Field name in shapefile for zone ID
+            - zone_name: Short name for zone type (e.g., 'taz', 'maz', 'county')
+    
+    Returns:
+        Dictionary with updated dataframes
+    """
     def add_zone_to_dataframe(
         df: pl.DataFrame,
         shp: gpd.GeoDataFrame,
         lon_col: str,
         lat_col: str,
         zone_col_name: str,
-        zone_id_field: str = "TAZ_ID",
+        zone_id_field: str,
     ) -> pl.DataFrame:
-        """Add TAZ/MAZ zone ID to dataframe based on lon/lat coordinates."""
+        """Add zone ID to dataframe based on lon/lat coordinates."""
         gdf = gpd.GeoDataFrame(
             df.to_pandas(),
             geometry=gpd.points_from_xy(
@@ -89,72 +112,57 @@ def custom_add_taz_ids(
             crs="EPSG:4326",
         )
 
-        # Set index zone_id and geometry only for spatial join
-        shp = shp.loc[:, [zone_id_field, "geometry"]].set_index(zone_id_field)
+        # Prepare shapefile for spatial join and ensure zone ID is string
+        shp_prepared = shp.loc[:, [zone_id_field, "geometry"]].copy()
+        shp_prepared[zone_id_field] = shp_prepared[zone_id_field].astype(str)
+        shp_prepared = shp_prepared.set_index(zone_id_field)
 
         # Spatial join to find zone containing each point
-        gdf_joined = gpd.sjoin(gdf, shp, how="left", predicate="within")
+        gdf_joined = gpd.sjoin(gdf, shp_prepared, how="left", predicate="within")
         gdf_joined = gdf_joined.rename(columns={zone_id_field: zone_col_name})
         gdf_joined = gdf_joined.drop(columns="geometry")
 
         return pl.from_pandas(gdf_joined)
 
-    # Add TAZ IDs to all dataframes
-    taz_configs = [
-        ("households", "home_lon", "home_lat", "home_taz"),
-        ("persons", "work_lon", "work_lat", "work_taz"),
-        ("persons", "school_lon", "school_lat", "school_taz"),
-        ("linked_trips", "o_lon", "o_lat", "o_taz"),
-        ("linked_trips", "d_lon", "d_lat", "d_taz"),
-    ]
     results = {
         "households": households,
         "persons": persons,
         "linked_trips": linked_trips,
     }
 
-    for df_name, lon_col, lat_col, taz_col_name in taz_configs:
-        results[df_name] = add_zone_to_dataframe(
-            results[df_name],
-            taz_shapefile,
-            lon_col=lon_col,
-            lat_col=lat_col,
-            zone_col_name=taz_col_name,
-            zone_id_field="TAZ_ID",
+    # Process each zone geography
+    for zone_config in zone_geographies:
+        shapefile_path = zone_config["shapefile"]
+        zone_id_field = zone_config["zone_id_field"]
+        zone_name = zone_config["zone_name"]
+
+        logger.info(
+            f"Adding {zone_name.upper()} IDs using field '{zone_id_field}' from {shapefile_path}"
         )
 
-    # Add MAZ IDs if MAZ shapefile provided, otherwise spoof from TAZ
-    if maz_shapefile is not None:
-        maz_configs = [
-            ("households", "home_lon", "home_lat", "home_maz"),
-            ("persons", "work_lon", "work_lat", "work_maz"),
-            ("persons", "school_lon", "school_lat", "school_maz"),
-            ("linked_trips", "o_lon", "o_lat", "o_maz"),
-            ("linked_trips", "d_lon", "d_lat", "d_maz"),
+        # Load the shapefile
+        shapefile = gpd.read_file(shapefile_path)
+
+        # Standard location mappings: (table, lon_col, lat_col, location_prefix)
+        standard_locations = [
+            ("households", "home_lon", "home_lat", "home"),
+            ("persons", "work_lon", "work_lat", "work"),
+            ("persons", "school_lon", "school_lat", "school"),
+            ("linked_trips", "o_lon", "o_lat", "o"),
+            ("linked_trips", "d_lon", "d_lat", "d"),
         ]
 
-        for df_name, lon_col, lat_col, maz_col_name in maz_configs:
-            results[df_name] = add_zone_to_dataframe(
-                results[df_name],
-                maz_shapefile,
+        # Apply this zone geography to all standard locations
+        for table, lon_col, lat_col, location_prefix in standard_locations:
+            output_col = f"{location_prefix}_{zone_name}"
+            results[table] = add_zone_to_dataframe(
+                results[table],
+                shapefile,
                 lon_col=lon_col,
                 lat_col=lat_col,
-                zone_col_name=maz_col_name,
-                zone_id_field="MAZ_ID",
+                zone_col_name=output_col,
+                zone_id_field=zone_id_field,
             )
-    else:
-        # Spoof MAZ from TAZ if no MAZ shapefile provided
-        results["households"] = results["households"].with_columns(
-            pl.col("home_taz").alias("home_maz")
-        )
-        results["persons"] = results["persons"].with_columns(
-            pl.col("work_taz").alias("work_maz"),
-            pl.col("school_taz").alias("school_maz"),
-        )
-        results["linked_trips"] = results["linked_trips"].with_columns(
-            pl.col("o_taz").alias("o_maz"),
-            pl.col("d_taz").alias("d_maz"),
-        )
 
     return results
 
@@ -163,7 +171,7 @@ def custom_add_taz_ids(
 processing_steps = [
     load_data,
     clean_2023_bats,
-    custom_add_taz_ids,
+    custom_add_zone_ids,
     link_trips,
     detect_joint_trips,
     extract_tours,
@@ -174,7 +182,25 @@ processing_steps = [
 
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(
+        description="BATS 2023 DaySim Processing Pipeline"
+    )
+    parser.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Clear the pipeline cache before running",
+    )
+    args = parser.parse_args()
+
     logger.info("Starting BATS 2023 DaySim Processing Pipeline")
+
+    # Clear cache if requested
+    cache_dir = Path(".cache")
+    if args.clear_cache and cache_dir.exists():
+        logger.info("Clearing pipeline cache at %s", cache_dir)
+        shutil.rmtree(cache_dir)
+        logger.info("Cache cleared")
 
     pipeline = Pipeline(
         config_path=CONFIG_PATH,

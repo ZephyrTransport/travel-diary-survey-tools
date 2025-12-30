@@ -215,7 +215,8 @@ The pipeline is configured using YAML files that specify input data, steps, and 
 # Define directory shorthands
 survey_dir: "M:/some/path/to/survey/data"
 output_dir: "M:/some/path/to/output/data"
-taz_shapefile: "X:/travel-model-one-master/utilities/geographies/bayarea_rtaz1454_rev1_WGS84.shp"
+TM1_shapefile_dir: "X:/travel-model-one/utilities/geographies"
+TM2_shapefile_dir: "X:/tm2py-utils/tm2py_utils/inputs/maz_taz/shapefiles"
 
 # Pipeline configuration
 steps:
@@ -245,10 +246,20 @@ steps:
   - name: extract_tours
     validate: true
 
-  - name: custom_add_taz_ids
+  - name: custom_add_zone_ids
     validate: true
     params:
-      taz_shapefile: "{{ taz_shapefile }}"
+      zone_geographies:
+        - zone_name: "taz"  # Primary TAZ for DaySim
+          shapefile: "{{ TM2_shapefile_dir }}/tazs_TM2_2_5.shp"
+          zone_id_field: "TAZ_NODE"
+        - zone_name: "maz"  # Primary MAZ for DaySim
+          shapefile: "{{ TM2_shapefile_dir }}/mazs_TM2_2_5.shp"
+          zone_id_field: "MAZ_NODE"
+        # Add additional zone geographies as needed:
+        - zone_name: "TAZ1454"
+          shapefile: "{{ TM1_shapefile_dir }}/bayarea_rtaz1454_rev1_WGS84.shp"
+          zone_id_field: "TAZ1454"
 
   - name: weighting
     validate: true
@@ -323,7 +334,25 @@ CONFIG_PATH = Path(__file__).parent / "config_daysim.yaml"
 
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
+    import argparse
+    
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Pipeline Runner")
+    parser.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Clear the pipeline cache before running",
+    )
+    args = parser.parse_args()
+    
     logger.info("Starting FooBar Processing Pipeline")
+    
+    # Clear cache if requested
+    cache_dir = Path(".cache")
+    if args.clear_cache and cache_dir.exists():
+        logger.info("Clearing pipeline cache")
+        import shutil
+        shutil.rmtree(cache_dir)
 
     pipeline = Pipeline(config_path=CONFIG_PATH, custom_steps=custom_steps)
     result = pipeline.run()
@@ -336,7 +365,12 @@ To run, press the green arrow in your IDE, or run from command line:
 
 ```bash
 uv run python project/run.py
+
+# Clear cache before running
+uv run python project/run.py --clear-cache
 ```
+
+**Logging**: The pipeline automatically creates a log file in the output directory (e.g., `output/pipeline.log`) that contains all console output plus additional debugging information.
 
 ---
 
