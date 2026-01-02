@@ -848,9 +848,7 @@ class TestTableLevelUniqueness:
         )
 
         # Aggregate into linked trips table
-        linked_trips = aggregate_linked_trips(
-            unlinked_trips, transit_mode_codes=[6, 7]
-        )
+        linked_trips = aggregate_linked_trips(unlinked_trips, transit_mode_codes=[6, 7])
 
         # CRITICAL: linked_trips table MUST have unique linked_trip_ids
         assert linked_trips["linked_trip_id"].n_unique() == len(linked_trips), (
@@ -911,9 +909,7 @@ class TestTableLevelUniqueness:
             }
         )
 
-        linked_trips = aggregate_linked_trips(
-            unlinked_trips, transit_mode_codes=[6, 7]
-        )
+        linked_trips = aggregate_linked_trips(unlinked_trips, transit_mode_codes=[6, 7])
 
         # 4 unlinked segments become 2 linked trips
         assert len(unlinked_trips) == 4
@@ -1001,6 +997,4 @@ class TestTableLevelUniqueness:
         # Each linked_trip_id should appear exactly once
         for trip_id in linked_trips["linked_trip_id"]:
             count = (linked_trips["linked_trip_id"] == trip_id).sum()
-            assert count == 1, (
-                f"linked_trip_id {trip_id} appears {count} times, should be 1"
-            )
+            assert count == 1, f"linked_trip_id {trip_id} appears {count} times, should be 1"

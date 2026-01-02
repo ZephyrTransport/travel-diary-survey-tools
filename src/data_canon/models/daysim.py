@@ -3,7 +3,6 @@
 Based on https://github.com/RSGInc/DaySim/wiki/docs/Daysim%20Input%20Data%20File%20Documentation.docx
 """
 
-# ruff: noqa: E501
 from pydantic import BaseModel, Field
 
 from data_canon.codebook.daysim import (
@@ -23,15 +22,9 @@ class HouseholdDaysimModel(BaseModel):
     """Household File Format for DaySim."""
 
     hhno: int = Field(ge=1, description="The household ID number")
-    hhsize: int = Field(
-        ge=1, le=99, description="The number of persons in the household"
-    )
-    hhvehs: int = Field(
-        ge=0, le=99, description="The number of autos in the household"
-    )
-    hhwkrs: int = Field(
-        ge=0, le=99, description="The number of workers in the household"
-    )
+    hhsize: int = Field(ge=1, le=99, description="The number of persons in the household")
+    hhvehs: int = Field(ge=0, le=99, description="The number of autos in the household")
+    hhwkrs: int = Field(ge=0, le=99, description="The number of workers in the household")
     hhftw: int = Field(
         ge=0,
         le=99,
@@ -77,18 +70,10 @@ class HouseholdDaysimModel(BaseModel):
         le=9999999,
         description="The household annual income, in integer dollars",
     )
-    hownrent: DaysimResidenceOwnership = Field(
-        description="Household own versus rent status"
-    )
-    hrestype: DaysimResidenceType = Field(
-        description="Household residence building type"
-    )
-    hhxco: float = Field(
-        ge=-9999, le=9999, description="Household residence X coordinate"
-    )
-    hhyco: float = Field(
-        ge=-9999, le=9999, description="Household residence Y coordinate"
-    )
+    hownrent: DaysimResidenceOwnership = Field(description="Household own versus rent status")
+    hrestype: DaysimResidenceType = Field(description="Household residence building type")
+    hhxco: float = Field(ge=-9999, le=9999, description="Household residence X coordinate")
+    hhyco: float = Field(ge=-9999, le=9999, description="Household residence Y coordinate")
     hhparcel: int = Field(
         ge=1,
         le=9999999,
@@ -99,9 +84,7 @@ class HouseholdDaysimModel(BaseModel):
         le=9999999,
         description="The ID of the zone in which the household lives",
     )
-    hhexpfac: float = Field(
-        ge=0, description="The expansion factor for the household"
-    )
+    hhexpfac: float = Field(ge=0, description="The expansion factor for the household")
     samptype: int = Field(ge=0, le=99, description="The type of sample used")
 
 
@@ -140,35 +123,17 @@ class PersonDaysimModel(BaseModel):
         description="The 1-way peak auto travel distance between residence and school",
     )
     puwmode: DaysimMode = Field(description="The usual mode used to work")
-    puwarrp: int = Field(
-        ge=-1, le=9, description="The usual arrival period at work"
-    )
-    puwdepp: int = Field(
-        ge=-1, le=9, description="The usual departure period from work"
-    )
+    puwarrp: int = Field(ge=-1, le=9, description="The usual arrival period at work")
+    puwdepp: int = Field(ge=-1, le=9, description="The usual departure period from work")
     ptpass: int = Field(ge=0, le=1, description="Transit pass ownership")
-    ppaidprk: int = Field(
-        ge=-1, le=1, description="Worker has to pay to park at work"
-    )
-    pdiary: int = Field(
-        ge=0, le=1, description="Survey respondent used their diary"
-    )
+    ppaidprk: int = Field(ge=-1, le=1, description="Worker has to pay to park at work")
+    pdiary: int = Field(ge=0, le=1, description="Survey respondent used their diary")
     pproxy: int = Field(ge=0, le=1, description="Survey responses by proxy")
-    psxco: float | None = Field(
-        ge=-9999, le=9999, description="Person's school X coordinate"
-    )
-    psyco: float | None = Field(
-        ge=-9999, le=9999, description="Person's school Y coordinate"
-    )
-    pwxco: float | None = Field(
-        ge=-9999, le=9999, description="Person's work X coordinate"
-    )
-    pwyco: float | None = Field(
-        ge=-9999, le=9999, description="Person's work Y coordinate"
-    )
-    psexpfac: float = Field(
-        ge=0, description="The expansion factor for the person"
-    )
+    psxco: float | None = Field(ge=-9999, le=9999, description="Person's school X coordinate")
+    psyco: float | None = Field(ge=-9999, le=9999, description="Person's school Y coordinate")
+    pwxco: float | None = Field(ge=-9999, le=9999, description="Person's work X coordinate")
+    pwyco: float | None = Field(ge=-9999, le=9999, description="Person's work Y coordinate")
+    psexpfac: float = Field(ge=0, description="The expansion factor for the person")
 
 
 class HouseholdDayDaysimModel(BaseModel):
@@ -192,9 +157,7 @@ class HouseholdDayDaysimModel(BaseModel):
         le=99,
         description="The number of fully joint half tour records output",
     )
-    hdexpfac: float = Field(
-        ge=0, description="The expansion factor for the household-day"
-    )
+    hdexpfac: float = Field(ge=0, description="The expansion factor for the household-day")
 
 
 class PersonDayDaysimModel(BaseModel):
@@ -207,12 +170,8 @@ class PersonDayDaysimModel(BaseModel):
         description="The person sequence number within the household",
     )
     day: int = Field(ge=1, le=99, description="The survey day sequence")
-    beghom: int = Field(
-        ge=0, le=1, description="A flag if the survey diary day begins at home"
-    )
-    endhom: int = Field(
-        ge=0, le=1, description="A flag if the survey diary day ends at home"
-    )
+    beghom: int = Field(ge=0, le=1, description="A flag if the survey diary day begins at home")
+    endhom: int = Field(ge=0, le=1, description="A flag if the survey diary day ends at home")
     hbtours: int = Field(
         ge=0,
         le=99,
@@ -228,9 +187,7 @@ class PersonDayDaysimModel(BaseModel):
         le=99,
         description="The total number of home-based work tours to usual workplace",
     )
-    wktours: int = Field(
-        ge=0, le=99, description="The number of home-based work tours predicted"
-    )
+    wktours: int = Field(ge=0, le=99, description="The number of home-based work tours predicted")
     sctours: int = Field(
         ge=0,
         le=99,
@@ -251,9 +208,7 @@ class PersonDayDaysimModel(BaseModel):
         le=99,
         description="The number of home-based shopping tours predicted",
     )
-    mltours: int = Field(
-        ge=0, le=99, description="The number of home-based meal tours predicted"
-    )
+    mltours: int = Field(ge=0, le=99, description="The number of home-based meal tours predicted")
     sotours: int = Field(
         ge=0,
         le=99,
@@ -269,9 +224,7 @@ class PersonDayDaysimModel(BaseModel):
         le=99,
         description="The number of home-based medical tours predicted",
     )
-    wkstops: int = Field(
-        ge=0, le=99, description="The number of home-based work stops predicted"
-    )
+    wkstops: int = Field(ge=0, le=99, description="The number of home-based work stops predicted")
     scstops: int = Field(
         ge=0,
         le=99,
@@ -292,9 +245,7 @@ class PersonDayDaysimModel(BaseModel):
         le=99,
         description="The number of home-based shopping stops predicted",
     )
-    mlstops: int = Field(
-        ge=0, le=99, description="The number of home-based meal stops predicted"
-    )
+    mlstops: int = Field(ge=0, le=99, description="The number of home-based meal stops predicted")
     sostops: int = Field(
         ge=0,
         le=99,
@@ -327,9 +278,7 @@ class PersonDayDaysimModel(BaseModel):
     psyco: float | None = Field(
         ge=-9999, le=9999, description="Person's school location Y coordinate"
     )
-    pdexpfac: float = Field(
-        ge=0, description="The expansion factor for the person-day"
-    )
+    pdexpfac: float = Field(ge=0, description="The expansion factor for the person-day")
 
 
 class TourDaysimModel(BaseModel):
@@ -342,9 +291,7 @@ class TourDaysimModel(BaseModel):
         description="The person sequence number within the household",
     )
     day: int = Field(ge=1, le=99, description="The survey day sequence")
-    tour: int = Field(
-        ge=1, le=99, description="The tour sequence within the person-day"
-    )
+    tour: int = Field(ge=1, le=99, description="The tour sequence within the person-day")
     jtindex: int = Field(
         ge=0,
         le=99,
@@ -360,9 +307,7 @@ class TourDaysimModel(BaseModel):
         le=99,
         description="The number of work-based subtours made from the work activity",
     )
-    pdpurp: DaysimPurpose = Field(
-        description="The tour primary destination purpose"
-    )
+    pdpurp: DaysimPurpose = Field(description="The tour primary destination purpose")
     tlvorig: int = Field(
         ge=0,
         le=1439,
@@ -384,9 +329,7 @@ class TourDaysimModel(BaseModel):
         description="The time arriving back at the tour origin, in minutes after midnight",
     )
     toadtyp: int = Field(ge=1, le=5, description="Tour origin address type")
-    tdadtyp: int = Field(
-        ge=1, le=5, description="Tour destination address type"
-    )
+    tdadtyp: int = Field(ge=1, le=5, description="Tour destination address type")
     topcl: int | None = Field(ge=-1, description="Tour origin parcel ID")
     totaz: int | None = Field(ge=-1, description="Tour origin zone ID")
     tdpcl: int | None = Field(ge=-1, description="Tour destination parcel ID")
@@ -395,9 +338,7 @@ class TourDaysimModel(BaseModel):
     tpathtp: DaysimPathType = Field(description="Tour main mode path type")
     tautotime: float = Field(ge=-1, description="The one-way auto travel time")
     tautocost: float = Field(ge=-1, description="The one-way auto toll cost")
-    tautodist: float = Field(
-        ge=-1, description="The one-way auto travel distance"
-    )
+    tautodist: float = Field(ge=-1, description="The one-way auto travel distance")
     tripsh1: int = Field(
         ge=1,
         le=99,
@@ -428,9 +369,7 @@ class TourDaysimModel(BaseModel):
         le=99,
         description="Links to the sequence number of the second half tour in full half tour",
     )
-    toexpfac: float = Field(
-        ge=0, description="The expansion factor for the tour"
-    )
+    toexpfac: float = Field(ge=0, description="The expansion factor for the tour")
 
 
 class LinkedTripDaysimModel(BaseModel):
@@ -443,38 +382,22 @@ class LinkedTripDaysimModel(BaseModel):
         description="The person sequence number within the household",
     )
     day: int = Field(ge=1, le=99, description="The survey day sequence")
-    tour: int = Field(
-        ge=1, le=99, description="The tour sequence within the person-day"
-    )
+    tour: int = Field(ge=1, le=99, description="The tour sequence within the person-day")
     half: int = Field(ge=1, le=2, description="The half tour")
-    tseg: int = Field(
-        ge=1, le=99, description="The trip sequence number within the half tour"
-    )
-    tsvid: int = Field(
-        ge=1, le=99, description="Links to a travel survey trip ID"
-    )
+    tseg: int = Field(ge=1, le=99, description="The trip sequence number within the half tour")
+    tsvid: int = Field(ge=1, le=99, description="Links to a travel survey trip ID")
     opurp: DaysimPurpose = Field(description="The purpose at the trip origin")
-    dpurp: DaysimPurpose = Field(
-        description="The purpose at the trip destination"
-    )
+    dpurp: DaysimPurpose = Field(description="The purpose at the trip destination")
     oadtyp: int = Field(ge=1, le=6, description="Trip origin address type")
     dadtyp: int = Field(ge=1, le=6, description="Trip destination address type")
     opcl: int | None = Field(ge=-1, description="Trip origin parcel ID")
     otaz: int | None = Field(ge=-1, description="Trip origin zone ID")
-    oxco: float = Field(
-        ge=-9999, le=9999, description="Trip origin X coordinate"
-    )
-    oyco: float = Field(
-        ge=-9999, le=9999, description="Trip origin Y coordinate"
-    )
+    oxco: float = Field(ge=-9999, le=9999, description="Trip origin X coordinate")
+    oyco: float = Field(ge=-9999, le=9999, description="Trip origin Y coordinate")
     dpcl: int | None = Field(ge=-1, description="Trip destination parcel ID")
     dtaz: int | None = Field(ge=-1, description="Trip destination zone ID")
-    dxco: float = Field(
-        ge=-9999, le=9999, description="Trip destination X coordinate"
-    )
-    dyco: float = Field(
-        ge=-9999, le=9999, description="Trip destination Y coordinate"
-    )
+    dxco: float = Field(ge=-9999, le=9999, description="Trip destination X coordinate")
+    dyco: float = Field(ge=-9999, le=9999, description="Trip destination Y coordinate")
     mode: DaysimMode = Field(description="Trip mode")
     pathtype: DaysimPathType = Field(description="Trip path type")
     dorp: DaysimDriverPassenger = Field(
@@ -495,16 +418,10 @@ class LinkedTripDaysimModel(BaseModel):
         le=1439,
         description="The end time of the destination activity, in minutes after midnight",
     )
-    travtime: float = Field(
-        ge=-1, description="The travel time by the trip mode and path type"
-    )
-    travcost: float = Field(
-        ge=-1, description="The travel cost by the trip mode and path type"
-    )
+    travtime: float = Field(ge=-1, description="The travel time by the trip mode and path type")
+    travcost: float = Field(ge=-1, description="The travel cost by the trip mode and path type")
     travdist: float = Field(
         ge=-1,
         description="The network distance between the trip origin and destination",
     )
-    trexpfac: float = Field(
-        ge=0, description="The expansion factor for the trip"
-    )
+    trexpfac: float = Field(ge=0, description="The expansion factor for the trip")

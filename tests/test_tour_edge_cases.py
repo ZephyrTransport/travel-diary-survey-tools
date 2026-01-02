@@ -313,9 +313,7 @@ def test_partial_tour(partial_tour_data):
 
 def test_distant_destinations(distant_destinations_data):
     """Test that tours with distant destinations still get valid times."""
-    persons, households, unlinked_trips, linked_trips = (
-        distant_destinations_data
-    )
+    persons, households, unlinked_trips, linked_trips = distant_destinations_data
 
     result = extract_tours(persons, households, unlinked_trips, linked_trips)
     tours_df = result["tours"]
@@ -415,9 +413,7 @@ def test_tour_num_sequential():
     unlinked_trips_with_ids = link_result["unlinked_trips"]
     linked_trips = link_result["linked_trips"]
 
-    result = extract_tours(
-        persons, households, unlinked_trips_with_ids, linked_trips
-    )
+    result = extract_tours(persons, households, unlinked_trips_with_ids, linked_trips)
     tours_df = result["tours"]
 
     # Should have 3 tours
@@ -520,9 +516,7 @@ def test_all_tours_have_required_fields():
     unlinked_trips_with_ids = link_result["unlinked_trips"]
     linked_trips = link_result["linked_trips"]
 
-    result = extract_tours(
-        persons, households, unlinked_trips_with_ids, linked_trips
-    )
+    result = extract_tours(persons, households, unlinked_trips_with_ids, linked_trips)
     tours_df = result["tours"]
 
     # All tours should have tour_num >= 1

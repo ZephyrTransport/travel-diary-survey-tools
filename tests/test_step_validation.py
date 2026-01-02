@@ -23,37 +23,27 @@ class TestSelectiveFieldRequirements:
         """Fields should only be required in their designated step."""
         # linked_trip_id is not required in link_trips, but is in extract_tours
 
-        required_linking = get_required_fields_for_step(
-            UnlinkedTripModel, "link_trips"
-        )
+        required_linking = get_required_fields_for_step(UnlinkedTripModel, "link_trips")
         assert "linked_trip_id" not in required_linking
 
-        required_tours = get_required_fields_for_step(
-            UnlinkedTripModel, "extract_tours"
-        )
+        required_tours = get_required_fields_for_step(UnlinkedTripModel, "extract_tours")
         assert "linked_trip_id" in required_tours
 
     def test_fields_added_during_pipeline(self):
         """Fields added during pipeline only required after creation."""
         # depart_time/arrive_time are added in preprocessing step
         # Not required in load_data (before preprocessing)
-        required_load = get_required_fields_for_step(
-            UnlinkedTripModel, "load_data"
-        )
+        required_load = get_required_fields_for_step(UnlinkedTripModel, "load_data")
         assert "depart_time" not in required_load
         assert "arrive_time" not in required_load
 
         # Required in link_trips (after preprocessing)
-        required_link = get_required_fields_for_step(
-            UnlinkedTripModel, "link_trips"
-        )
+        required_link = get_required_fields_for_step(UnlinkedTripModel, "link_trips")
         assert "depart_time" in required_link
         assert "arrive_time" in required_link
 
         # Also required in extract_tours (after link_trip)
-        required_tours = get_required_fields_for_step(
-            UnlinkedTripModel, "extract_tours"
-        )
+        required_tours = get_required_fields_for_step(UnlinkedTripModel, "extract_tours")
         assert "depart_time" in required_tours
         assert "arrive_time" in required_tours
 
@@ -207,7 +197,5 @@ class TestStepValidationBehavior:
         }
 
         # Should fail - linked_trip_id is present but invalid
-        with pytest.raises(
-            PydanticValidationError, match="greater than or equal"
-        ):
+        with pytest.raises(PydanticValidationError, match="greater than or equal"):
             validate_row_for_step(row, UnlinkedTripModel, "preprocessing")

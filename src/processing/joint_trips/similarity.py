@@ -51,17 +51,13 @@ def compute_pairwise_distances(trip_pairs: pl.DataFrame) -> pl.DataFrame:
                 pl.col("d_lon_b"),
             ).alias("dest_dist_m"),
             # Depart time difference in minutes (absolute)
-            (
-                (pl.col("depart_time") - pl.col("depart_time_b"))
-                .dt.total_minutes()
-                .abs()
-            ).alias("depart_diff_min"),
+            ((pl.col("depart_time") - pl.col("depart_time_b")).dt.total_minutes().abs()).alias(
+                "depart_diff_min"
+            ),
             # Arrive time difference in minutes (absolute)
-            (
-                (pl.col("arrive_time") - pl.col("arrive_time_b"))
-                .dt.total_minutes()
-                .abs()
-            ).alias("arrive_diff_min"),
+            ((pl.col("arrive_time") - pl.col("arrive_time_b")).dt.total_minutes().abs()).alias(
+                "arrive_diff_min"
+            ),
         ]
     )
 
@@ -93,10 +89,7 @@ def apply_buffer_filter(
     }
     missing = required_cols - set(trip_pairs.columns)
     if missing:
-        msg = (
-            f"Missing required distance columns: {missing}. "
-            "Run compute_pairwise_distances first."
-        )
+        msg = f"Missing required distance columns: {missing}. Run compute_pairwise_distances first."
         raise ValueError(msg)
 
     filtered = trip_pairs.filter(
@@ -148,10 +141,7 @@ def apply_mahalanobis_filter(
     }
     missing = required_cols - set(trip_pairs.columns)
     if missing:
-        msg = (
-            f"Missing required distance columns: {missing}. "
-            "Run compute_pairwise_distances first."
-        )
+        msg = f"Missing required distance columns: {missing}. Run compute_pairwise_distances first."
         raise ValueError(msg)
 
     # Convert covariance to numpy array
@@ -187,9 +177,7 @@ def apply_mahalanobis_filter(
 
     # Compute Mahalanobis distance for each pair
     # d = sqrt(delta^T * Sigma^-1 * delta)
-    mahal_distances = np.array(
-        [np.sqrt(delta @ cov_inv @ delta) for delta in deltas]
-    )
+    mahal_distances = np.array([np.sqrt(delta @ cov_inv @ delta) for delta in deltas])
 
     # Filter pairs below threshold
     mask = mahal_distances < distance_threshold

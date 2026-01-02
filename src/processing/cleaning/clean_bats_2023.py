@@ -43,17 +43,11 @@ def clean_2023_bats(
 
     unlinked_trips = unlinked_trips.with_columns(
         [
-            pl.when(swap_condition)
-            .then(pl.col(b))
-            .otherwise(pl.col(a))
-            .alias(a)
+            pl.when(swap_condition).then(pl.col(b)).otherwise(pl.col(a)).alias(a)
             for a, b in swap_cols
         ]
         + [
-            pl.when(swap_condition)
-            .then(pl.col(a))
-            .otherwise(pl.col(b))
-            .alias(b)
+            pl.when(swap_condition).then(pl.col(a)).otherwise(pl.col(b)).alias(b)
             for a, b in swap_cols
         ]
     )
@@ -61,10 +55,7 @@ def clean_2023_bats(
     # Replace any -1 value in *_purpose columns with missing code
     unlinked_trips = unlinked_trips.with_columns(
         [
-            pl.when(pl.col(col_name) == -1)
-            .then(996)
-            .otherwise(pl.col(col_name))
-            .alias(col_name)
+            pl.when(pl.col(col_name) == -1).then(996).otherwise(pl.col(col_name)).alias(col_name)
             for col_name in [
                 "o_purpose",
                 "d_purpose",
@@ -92,9 +83,7 @@ def clean_2023_bats(
     # If duration_minutes is null, recalculate it from depart/arrive times
     unlinked_trips = unlinked_trips.with_columns(
         pl.when(pl.col("duration_minutes").is_null())
-        .then(
-            (pl.col("arrive_time") - pl.col("depart_time")).dt.total_minutes()
-        )
+        .then((pl.col("arrive_time") - pl.col("depart_time")).dt.total_minutes())
         .otherwise(pl.col("duration_minutes"))
         .alias("duration_minutes")
     )
@@ -108,11 +97,7 @@ def clean_2023_bats(
     # Get travel_dow from other household members' days
     days_for_dow = (
         days.select(["hh_id", "travel_dow"])
-        .filter(
-            pl.col("hh_id").is_in(
-                persons_without_days["hh_id"].unique().implode()
-            )
-        )
+        .filter(pl.col("hh_id").is_in(persons_without_days["hh_id"].unique().implode()))
         .unique()
     )
 

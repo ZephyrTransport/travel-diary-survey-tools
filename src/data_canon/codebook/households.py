@@ -75,9 +75,7 @@ class ParticipationGroup(LabeledEnum):
     """participation_group value labels."""
 
     canonical_field_name = "participation_group"
-    field_description = (
-        "Indicates the survey mode used for signup and diary completion"
-    )
+    field_description = "Indicates the survey mode used for signup and diary completion"
 
     SIGNUP_BMOVE_DIARY_BMOVE = (
         1,
@@ -130,8 +128,7 @@ class ResidenceType(LabeledEnum):
     SFH = (1, "Single-family house (detached house)")
     TOWNHOUSE = (
         2,
-        "Single-family house attached to one or more houses "
-        "(rowhouse or townhouse)",
+        "Single-family house attached to one or more houses (rowhouse or townhouse)",
     )
     MULTIFAMILY = (3, "Building with 2-4 units (duplexes, triplexes, quads)")
     CONDO_5TO50_UNITS = (4, "Building with 5-49 apartments/condos")

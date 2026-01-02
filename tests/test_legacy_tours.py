@@ -139,17 +139,12 @@ def to_legacy_format(
     hh = pd.DataFrame(
         {
             "hhno": hh_ids,
-            "hhsize": [
-                len(persons_df.filter(pl.col("hh_id") == hh_id))
-                for hh_id in hh_ids
-            ],
+            "hhsize": [len(persons_df.filter(pl.col("hh_id") == hh_id)) for hh_id in hh_ids],
             "hxcord": [
-                persons_df.filter(pl.col("hh_id") == hh_id)["home_lon"][0]
-                for hh_id in hh_ids
+                persons_df.filter(pl.col("hh_id") == hh_id)["home_lon"][0] for hh_id in hh_ids
             ],
             "hycord": [
-                persons_df.filter(pl.col("hh_id") == hh_id)["home_lat"][0]
-                for hh_id in hh_ids
+                persons_df.filter(pl.col("hh_id") == hh_id)["home_lat"][0] for hh_id in hh_ids
             ],
             "hhparcel": [-1 for _ in hh_ids],  # MAZ - not used in tests
             "hhtaz": [-1 for _ in hh_ids],  # TAZ - not used in tests
@@ -168,20 +163,14 @@ def to_legacy_format(
             "hhno": row["hh_id"],
             "pno": row["person_id"],
             "pptyp": row["person_type"],
-            "pwtyp": (
-                1 if row["person_type"] == PersonType.FULL_TIME_WORKER else 0
-            ),
+            "pwtyp": (1 if row["person_type"] == PersonType.FULL_TIME_WORKER else 0),
             "pwtaz": -1,  # Not used in current tests
             "pstyp": 0,  # Not used in current tests
             "pstaz": -1,  # Not used in current tests
             "pwxcord": (row["work_lon"] if row["work_lon"] is not None else -1),
             "pwycord": (row["work_lat"] if row["work_lat"] is not None else -1),
-            "psxcord": (
-                row["school_lon"] if row["school_lon"] is not None else -1
-            ),
-            "psycord": (
-                row["school_lat"] if row["school_lat"] is not None else -1
-            ),
+            "psxcord": (row["school_lon"] if row["school_lon"] is not None else -1),
+            "psycord": (row["school_lat"] if row["school_lat"] is not None else -1),
             "pwpcl": 0,  # Purpose category at work (not needed for tests)
             "pspcl": 0,  # Purpose category at school (not needed for tests)
             "pagey": 35,  # Default age
@@ -197,19 +186,13 @@ def to_legacy_format(
     for row in trips_df.iter_rows(named=True):
         # Convert purpose codes using PURPOSE_MAP
         # Polars returns enum values as integers
-        opurp_legacy = PURPOSE_MAP.get(
-            row["o_purpose_category"], DaysimPurpose.HOME.value
-        )
-        dpurp_legacy = PURPOSE_MAP.get(
-            row["d_purpose_category"], DaysimPurpose.HOME.value
-        )
+        opurp_legacy = PURPOSE_MAP.get(row["o_purpose_category"], DaysimPurpose.HOME.value)
+        dpurp_legacy = PURPOSE_MAP.get(row["d_purpose_category"], DaysimPurpose.HOME.value)
 
         # Convert mode codes
         # Polars returns enum values as integers, so convert to enum
         mode_enum = ModeType(row["mode_type"])
-        mode_legacy = new_to_legacy_mode.get(
-            mode_enum, MODE_MAP_LEGACY["drive"]
-        )
+        mode_legacy = new_to_legacy_mode.get(mode_enum, MODE_MAP_LEGACY["drive"])
 
         # Set dorp (driver or passenger flag)
         # For auto modes (drive=3), default to driver (1)
@@ -430,9 +413,7 @@ def test_simple_work_tour(simple_work_tour_data):
     linked_trips = link_result["linked_trips"]
 
     # Extract tours using both unlinked and linked trips
-    result = extract_tours(
-        persons, households, unlinked_trips_with_ids, linked_trips
-    )
+    result = extract_tours(persons, households, unlinked_trips_with_ids, linked_trips)
     tours_new = result["tours"]
 
     # Compare tour counts
@@ -448,23 +429,19 @@ def test_simple_work_tour(simple_work_tour_data):
     wb_tours = tours_new.filter(pl.col("tour_category") == TourType.WORK_BASED)
 
     assert len(hb_tours) == expected["num_hb_tours"], (
-        f"Expected {expected['num_hb_tours']} home-based tours, "
-        f"got {len(hb_tours)}"
+        f"Expected {expected['num_hb_tours']} home-based tours, got {len(hb_tours)}"
     )
     assert len(wb_tours) == expected["num_wb_tours"], (
-        f"Expected {expected['num_wb_tours']} work-based tours, "
-        f"got {len(wb_tours)}"
+        f"Expected {expected['num_wb_tours']} work-based tours, got {len(wb_tours)}"
     )
 
     # Check tour attributes
     tour = tours_new[0]
     assert tour["tour_purpose"][0] == expected["tour_purpose"].value, (
-        f"Expected tour purpose {expected['tour_purpose'].value}, "
-        f"got {tour['tour_purpose'][0]}"
+        f"Expected tour purpose {expected['tour_purpose'].value}, got {tour['tour_purpose'][0]}"
     )
     assert tour["tour_mode"][0] == expected["tour_mode"].value, (
-        f"Expected tour mode {expected['tour_mode'].value}, "
-        f"got {tour['tour_mode'][0]}"
+        f"Expected tour mode {expected['tour_mode'].value}, got {tour['tour_mode'][0]}"
     )
 
 
@@ -495,9 +472,7 @@ def test_work_tour_with_subtour(work_tour_with_subtour_data):
     linked_trips = link_result["linked_trips"]
 
     # Extract tours using both unlinked and linked trips
-    result = extract_tours(
-        persons, households, unlinked_trips_with_ids, linked_trips
-    )
+    result = extract_tours(persons, households, unlinked_trips_with_ids, linked_trips)
     tours_new = result["tours"]
 
     # Compare tour counts
@@ -513,12 +488,10 @@ def test_work_tour_with_subtour(work_tour_with_subtour_data):
     wb_tours = tours_new.filter(pl.col("tour_category") == TourType.WORK_BASED)
 
     assert len(hb_tours) == expected["num_hb_tours"], (
-        f"Expected {expected['num_hb_tours']} home-based tours, "
-        f"got {len(hb_tours)}"
+        f"Expected {expected['num_hb_tours']} home-based tours, got {len(hb_tours)}"
     )
     assert len(wb_tours) == expected["num_wb_tours"], (
-        f"Expected {expected['num_wb_tours']} work-based tours, "
-        f"got {len(wb_tours)}"
+        f"Expected {expected['num_wb_tours']} work-based tours, got {len(wb_tours)}"
     )
 
     # Check home-based tour attributes
@@ -528,8 +501,7 @@ def test_work_tour_with_subtour(work_tour_with_subtour_data):
         f"got {hb_tour['tour_purpose'][0]}"
     )
     assert hb_tour["tour_mode"][0] == expected["hb_tour_mode"].value, (
-        f"Expected HB tour mode {expected['hb_tour_mode'].value}, "
-        f"got {hb_tour['tour_mode'][0]}"
+        f"Expected HB tour mode {expected['hb_tour_mode'].value}, got {hb_tour['tour_mode'][0]}"
     )
 
     # Check work-based subtour attributes
@@ -539,8 +511,7 @@ def test_work_tour_with_subtour(work_tour_with_subtour_data):
         f"got {wb_tour['tour_purpose'][0]}"
     )
     assert wb_tour["tour_mode"][0] == expected["wb_tour_mode"].value, (
-        f"Expected WB tour mode {expected['wb_tour_mode'].value}, "
-        f"got {wb_tour['tour_mode'][0]}"
+        f"Expected WB tour mode {expected['wb_tour_mode'].value}, got {wb_tour['tour_mode'][0]}"
     )
 
     # Verify subtour has correct parent reference
@@ -576,9 +547,7 @@ def test_multiple_tours_same_day(multiple_tours_data):
     linked_trips = link_result["linked_trips"]
 
     # Extract tours using both unlinked and linked trips
-    result = extract_tours(
-        persons, households, unlinked_trips_with_ids, linked_trips
-    )
+    result = extract_tours(persons, households, unlinked_trips_with_ids, linked_trips)
     tours = result["tours"]
 
     # Compare tour counts
@@ -592,21 +561,18 @@ def test_multiple_tours_same_day(multiple_tours_data):
     # Check all are home-based
     hb_tours = tours.filter(pl.col("tour_category") == TourType.HOME_BASED)
     assert len(hb_tours) == expected["num_hb_tours"], (
-        f"Expected {expected['num_hb_tours']} home-based tours, "
-        f"got {len(hb_tours)}"
+        f"Expected {expected['num_hb_tours']} home-based tours, got {len(hb_tours)}"
     )
 
     # Check tour purposes (should be in time order)
     tours_sorted = tours.sort("origin_depart_time")
     expected_first = expected["first_tour_purpose"].value
     assert tours_sorted[0, "tour_purpose"] == expected_first, (
-        f"Expected first tour purpose {expected_first}, "
-        f"got {tours_sorted[0, 'tour_purpose']}"
+        f"Expected first tour purpose {expected_first}, got {tours_sorted[0, 'tour_purpose']}"
     )
     expected_second = expected["second_tour_purpose"].value
     assert tours_sorted[1, "tour_purpose"] == expected_second, (
-        f"Expected second tour purpose {expected_second}, "
-        f"got {tours_sorted[1, 'tour_purpose']}"
+        f"Expected second tour purpose {expected_second}, got {tours_sorted[1, 'tour_purpose']}"
     )
 
 
@@ -637,9 +603,7 @@ def test_mode_hierarchy(mode_hierarchy_data):
     linked_trips = link_result["linked_trips"]
 
     # Extract tours using both unlinked and linked trips
-    result = extract_tours(
-        persons, households, unlinked_trips_with_ids, linked_trips
-    )
+    result = extract_tours(persons, households, unlinked_trips_with_ids, linked_trips)
     tours = result["tours"]
 
     # Compare tour counts
@@ -654,8 +618,7 @@ def test_mode_hierarchy(mode_hierarchy_data):
     tour = tours[0]
     expected_mode = expected["tour_mode"].value
     assert tour["tour_mode"][0] == expected_mode, (
-        f"Expected tour mode {expected_mode} (transit should win), "
-        f"got {tour['tour_mode'][0]}"
+        f"Expected tour mode {expected_mode} (transit should win), got {tour['tour_mode'][0]}"
     )
 
 
@@ -716,17 +679,13 @@ def test_tour_timing():
     expected_hb_origin_depart = trip1_depart  # 8:15 - Leave home
     expected_hb_origin_arrive = trip4_arrive  # 17:45 - Return home
     expected_hb_dest_arrive = trip1_arrive  # 9:00 - First arrival at work
-    expected_hb_dest_depart = (
-        trip4_depart  # 17:00 - LAST departure from work (currently broken)
-    )
+    expected_hb_dest_depart = trip4_depart  # 17:00 - LAST departure from work (currently broken)
 
     # EXPECTED work-based subtour timing (what the algorithm SHOULD produce)
     expected_wb_origin_depart = trip2_depart  # 12:00 - Leave work for lunch
     expected_wb_origin_arrive = trip3_arrive  # 13:15 - Return to work
     expected_wb_dest_arrive = trip2_arrive  # 12:15 - Arrive at lunch
-    expected_wb_dest_depart = (
-        trip3_depart  # 13:00 - Departure from lunch (currently broken)
-    )
+    expected_wb_dest_depart = trip3_depart  # 13:00 - Departure from lunch (currently broken)
 
     trips = pl.DataFrame(
         {
@@ -822,9 +781,7 @@ def test_tour_timing():
     linked_trips = link_result["linked_trips"]
 
     # Extract tours using both unlinked and linked trips
-    result = extract_tours(
-        persons, households, unlinked_trips_with_ids, linked_trips
-    )
+    result = extract_tours(persons, households, unlinked_trips_with_ids, linked_trips)
     tours = result["tours"]
 
     # Compare tour counts - should find 1 HB tour + 1 WB subtour
@@ -837,12 +794,8 @@ def test_tour_timing():
     hb_tours = tours.filter(pl.col("tour_category") == TourType.HOME_BASED)
     wb_tours = tours.filter(pl.col("tour_category") == TourType.WORK_BASED)
 
-    assert len(hb_tours) == 1, (
-        f"Expected 1 home-based tour, got {len(hb_tours)}"
-    )
-    assert len(wb_tours) == 1, (
-        f"Expected 1 work-based tour, got {len(wb_tours)}"
-    )
+    assert len(hb_tours) == 1, f"Expected 1 home-based tour, got {len(hb_tours)}"
+    assert len(wb_tours) == 1, f"Expected 1 work-based tour, got {len(wb_tours)}"
 
     # Check home-based tour timing
     hb_tour = hb_tours[0]
@@ -971,9 +924,7 @@ def test_tour_trip_counts():
     linked_trips = link_result["linked_trips"]
 
     # Extract tours using both unlinked and linked trips
-    result = extract_tours(
-        persons, households, unlinked_trips_with_ids, linked_trips
-    )
+    result = extract_tours(persons, households, unlinked_trips_with_ids, linked_trips)
     tours = result["tours"]
 
     # Compare tour counts
@@ -983,12 +934,8 @@ def test_tour_trip_counts():
 
     # Check trip count
     tour = tours[0]
-    assert tour["trip_count"][0] == 4, (
-        f"Expected 4 trips in tour, got {tour['trip_count'][0]}"
-    )
-    assert tour["stop_count"][0] == 3, (
-        f"Expected 3 intermediate stops, got {tour['stop_count'][0]}"
-    )
+    assert tour["trip_count"][0] == 4, f"Expected 4 trips in tour, got {tour['trip_count'][0]}"
+    assert tour["stop_count"][0] == 3, f"Expected 3 intermediate stops, got {tour['stop_count'][0]}"
 
 
 def test_incomplete_tour_at_end_of_day():
@@ -1088,9 +1035,7 @@ def test_incomplete_tour_at_end_of_day():
     linked_trips = link_result["linked_trips"]
 
     # Extract tours using both unlinked and linked trips
-    result = extract_tours(
-        persons, households, unlinked_trips_with_ids, linked_trips
-    )
+    result = extract_tours(persons, households, unlinked_trips_with_ids, linked_trips)
     tours = result["tours"]
 
     # Legacy only counts complete tours (should be 1)
@@ -1100,8 +1045,7 @@ def test_incomplete_tour_at_end_of_day():
 
     # New implementation should find both complete and incomplete tours
     assert len(tours) == 2, (
-        f"Expected new code to find 2 tours (1 complete + 1 incomplete), "
-        f"got {len(tours)}"
+        f"Expected new code to find 2 tours (1 complete + 1 incomplete), got {len(tours)}"
     )
 
 
@@ -1188,9 +1132,7 @@ def test_no_work_location():
     linked_trips = link_result["linked_trips"]
 
     # Extract tours using both unlinked and linked trips
-    result = extract_tours(
-        persons, households, unlinked_trips_with_ids, linked_trips
-    )
+    result = extract_tours(persons, households, unlinked_trips_with_ids, linked_trips)
     tours = result["tours"]
 
     # Compare tour counts

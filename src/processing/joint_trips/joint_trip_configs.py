@@ -64,9 +64,7 @@ class JointTripConfig(BaseModel):
 
     method: Literal["buffer", "mahalanobis"] = Field(
         default="buffer",
-        description=(
-            "Detection method: buffer (strict) or mahalanobis (statistical)"
-        ),
+        description=("Detection method: buffer (strict) or mahalanobis (statistical)"),
     )
 
     time_threshold_minutes: float = Field(
@@ -143,10 +141,7 @@ class JointTripConfig(BaseModel):
         # Check positive definiteness (all eigenvalues > 0)
         eigenvalues = np.linalg.eigvals(np.array(v))
         if any(eigenvalues <= 0):
-            msg = (
-                "Covariance matrix must be positive definite "
-                "(all eigenvalues > 0)"
-            )
+            msg = "Covariance matrix must be positive definite (all eigenvalues > 0)"
             raise ValueError(msg)
 
     @field_validator("covariance")
@@ -209,9 +204,7 @@ class JointTripConfig(BaseModel):
         arbitrary_types_allowed = True
 
 
-def _validate_covariance_inputs(
-    joint_trips: pl.DataFrame, linked_trips: pl.DataFrame
-) -> None:
+def _validate_covariance_inputs(joint_trips: pl.DataFrame, linked_trips: pl.DataFrame) -> None:
     """Validate inputs for covariance estimation."""
     required_joint_cols = {"joint_trip_id", "hh_id", "day_id"}
     required_trip_cols = {
@@ -245,15 +238,10 @@ def _validate_covariance_inputs(
 
 def _compute_joint_trip_pairs(linked_trips: pl.DataFrame) -> pl.DataFrame:
     """Compute pairwise differences for joint trip members."""
-    joint_trip_members = linked_trips.filter(
-        pl.col("joint_trip_id").is_not_null()
-    )
+    joint_trip_members = linked_trips.filter(pl.col("joint_trip_id").is_not_null())
 
     if len(joint_trip_members) == 0:
-        msg = (
-            "No joint trips detected in buffer run. "
-            "Cannot estimate covariance from empty set."
-        )
+        msg = "No joint trips detected in buffer run. Cannot estimate covariance from empty set."
         raise ValueError(msg)
 
     # Create all pairwise combinations within each joint_trip_id
@@ -305,16 +293,12 @@ def _compute_joint_trip_pairs(linked_trips: pl.DataFrame) -> pl.DataFrame:
                 pl.col("d_lat_b"),
                 pl.col("d_lon_b"),
             ).alias("delta_dest_m"),
-            (
-                (pl.col("depart_time") - pl.col("depart_time_b"))
-                .dt.total_minutes()
-                .abs()
-            ).alias("delta_depart_min"),
-            (
-                (pl.col("arrive_time") - pl.col("arrive_time_b"))
-                .dt.total_minutes()
-                .abs()
-            ).alias("delta_arrive_min"),
+            ((pl.col("depart_time") - pl.col("depart_time_b")).dt.total_minutes().abs()).alias(
+                "delta_depart_min"
+            ),
+            ((pl.col("arrive_time") - pl.col("arrive_time_b")).dt.total_minutes().abs()).alias(
+                "delta_arrive_min"
+            ),
         ]
     )
 
@@ -389,9 +373,7 @@ def estimate_covariance_from_detected_pairs(
     for threshold in threshold_range:
         # Compute Mahalanobis distance for each pair
         cov_inv = np.linalg.inv(cov_matrix)
-        mahal_distances = np.array(
-            [np.sqrt(delta @ cov_inv @ delta) for delta in deltas]
-        )
+        mahal_distances = np.array([np.sqrt(delta @ cov_inv @ delta) for delta in deltas])
 
         # Count pairs below threshold
         detected = np.sum(mahal_distances < threshold)
@@ -428,9 +410,7 @@ def estimate_covariance_from_detected_pairs(
     recommended_idx = 0
     for i in range(len(marginal_vals) - 1):
         if marginal_vals[i] > 0 and marginal_vals[i + 1] > 0:
-            pct_jump = (
-                marginal_vals[i + 1] - marginal_vals[i]
-            ) / marginal_vals[i]
+            pct_jump = (marginal_vals[i + 1] - marginal_vals[i]) / marginal_vals[i]
             if pct_jump > 0.5:  # noqa: PLR2004
                 recommended_idx = i
                 break

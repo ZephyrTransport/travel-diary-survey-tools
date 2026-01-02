@@ -165,8 +165,7 @@ def _display_tours(
     """Display tour comparison for a household."""
     output = [
         "\n--- Tours ---",
-        "(Note: Matching tours by household, person, day, and times "
-        "converted to HHMM format)",
+        "(Note: Matching tours by household, person, day, and times converted to HHMM format)",
         "",
         f"Legacy Tours (n={len(legacy_hh_tours)}):",
         _format_df(legacy_hh_tours, TOUR_COLS, ["pno", "tour"]),
@@ -184,8 +183,7 @@ def _display_trips(
     """Display trip comparison for a household."""
     output = [
         "\n--- Trips ---",
-        "(Note: Time fields shown but not compared due to legacy "
-        "encoding error)",
+        "(Note: Time fields shown but not compared due to legacy encoding error)",
         "",
         f"Legacy Trips (n={len(legacy_hh_trips)}):",
         _format_df(legacy_hh_trips, TRIP_COLS, ["pno", "tour", "deptm"], 20),
@@ -307,11 +305,7 @@ def compare_household_diaries(
     # Report summary
     sep = "=" * 80
     mismatch_rate = len(failures) / sample_size * 100 if sample_size else 0
-    tour_match_rate = (
-        total_tour_matches / total_legacy_tours * 100
-        if total_legacy_tours > 0
-        else 0
-    )
+    tour_match_rate = total_tour_matches / total_legacy_tours * 100 if total_legacy_tours > 0 else 0
 
     summary_stats = {
         "total_households": len(hhno_list),

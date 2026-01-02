@@ -76,9 +76,7 @@ def step(
 
             # Extract validation flags and cache configuration
             should_validate_input = kwargs.pop("validate_input", validate_input)
-            should_validate_output = kwargs.pop(
-                "validate_output", validate_output
-            )
+            should_validate_output = kwargs.pop("validate_output", validate_output)
             should_cache = kwargs.pop("cache", cache)
             pipeline_cache = kwargs.pop("pipeline_cache", None)
 
@@ -99,11 +97,7 @@ def step(
 
             # Add back in any popped flags if requested by the function
             kwargs.update(
-                {
-                    key: value
-                    for key, value in kwargs_copy.items()
-                    if key in sig.parameters
-                }
+                {key: value for key, value in kwargs_copy.items() if key in sig.parameters}
             )
 
             # Cache miss or caching disabled - execute step
@@ -140,8 +134,7 @@ def _update_canonical_data(
             logger.info("Updating canonical_data with output '%s'", key)
         else:
             logger.warning(
-                "Output '%s' is not a canonical table. "
-                "This cannot be validated automatically.",
+                "Output '%s' is not a canonical table. This cannot be validated automatically.",
                 key,
             )
         # Add to canonical_data instance either way

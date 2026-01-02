@@ -27,21 +27,15 @@ CONSERVATIVE_DIVISOR = 2
 def find_candidate_joint_trips(trips: pl.DataFrame) -> pl.DataFrame:
     """Find likely joint trip pairs using loose criteria."""
     # Filter to multi-person households
-    persons_per_hh = trips.group_by("hh_id").agg(
-        pl.col("person_id").n_unique().alias("n_persons")
-    )
-    multi_person_hhs = persons_per_hh.filter(
-        pl.col("n_persons") >= MIN_PERSONS_PER_HH
-    )
+    persons_per_hh = trips.group_by("hh_id").agg(pl.col("person_id").n_unique().alias("n_persons"))
+    multi_person_hhs = persons_per_hh.filter(pl.col("n_persons") >= MIN_PERSONS_PER_HH)
 
-    candidate_trips = trips.join(
-        multi_person_hhs.select("hh_id"), on="hh_id", how="inner"
-    )
+    candidate_trips = trips.join(multi_person_hhs.select("hh_id"), on="hh_id", how="inner")
 
     # Self-join within households to create pairs
-    trip_pairs = candidate_trips.join(
-        candidate_trips, on="hh_id", suffix="_b"
-    ).filter(pl.col("person_id") < pl.col("person_id_b"))
+    trip_pairs = candidate_trips.join(candidate_trips, on="hh_id", suffix="_b").filter(
+        pl.col("person_id") < pl.col("person_id_b")
+    )
 
     # Compute distances
     trip_pairs = compute_pairwise_distances(trip_pairs)
@@ -115,10 +109,7 @@ def _print_header(n_pairs: int) -> None:
     print("JOINT TRIP COVARIANCE CALIBRATION ANALYSIS")
     print("=" * 70)
     print(f"\nAnalyzed {n_pairs:,} likely joint trip pairs")
-    print(
-        "\nVariance Analysis "
-        "(for trips from same household within loose thresholds):"
-    )
+    print("\nVariance Analysis (for trips from same household within loose thresholds):")
     print("-" * 70)
 
 
@@ -135,22 +126,13 @@ def _print_recommendations(stats: dict) -> None:
     arrive_var = stats["arrive"]["var"]
 
     print("\nBased on observed variance in likely joint trips:")
-    print(
-        f"  covariance: [{origin_var:.0f}, {dest_var:.0f}, "
-        f"{depart_var:.0f}, {arrive_var:.0f}]"
-    )
+    print(f"  covariance: [{origin_var:.0f}, {dest_var:.0f}, {depart_var:.0f}, {arrive_var:.0f}]")
 
     # Also provide conservative estimates (using 95th percentile as ~2 std devs)
-    origin_var_conservative = (
-        stats["origin"]["p95"] / CONSERVATIVE_DIVISOR
-    ) ** 2
+    origin_var_conservative = (stats["origin"]["p95"] / CONSERVATIVE_DIVISOR) ** 2
     dest_var_conservative = (stats["dest"]["p95"] / CONSERVATIVE_DIVISOR) ** 2
-    depart_var_conservative = (
-        stats["depart"]["p95"] / CONSERVATIVE_DIVISOR
-    ) ** 2
-    arrive_var_conservative = (
-        stats["arrive"]["p95"] / CONSERVATIVE_DIVISOR
-    ) ** 2
+    depart_var_conservative = (stats["depart"]["p95"] / CONSERVATIVE_DIVISOR) ** 2
+    arrive_var_conservative = (stats["arrive"]["p95"] / CONSERVATIVE_DIVISOR) ** 2
 
     print("\nConservative estimate (based on 95th percentile):")
     print(
@@ -194,12 +176,8 @@ def print_analysis(stats: dict, n_pairs: int) -> None:
     _print_header(n_pairs)
     _print_dimension_stats("ORIGIN DISTANCE (meters)", stats["origin"], "m")
     _print_dimension_stats("DESTINATION DISTANCE (meters)", stats["dest"], "m")
-    _print_dimension_stats(
-        "DEPARTURE TIME DIFFERENCE (minutes)", stats["depart"], "min"
-    )
-    _print_dimension_stats(
-        "ARRIVAL TIME DIFFERENCE (minutes)", stats["arrive"], "min"
-    )
+    _print_dimension_stats("DEPARTURE TIME DIFFERENCE (minutes)", stats["depart"], "min")
+    _print_dimension_stats("ARRIVAL TIME DIFFERENCE (minutes)", stats["arrive"], "min")
     _print_recommendations(stats)
     _print_interpretation()
 
@@ -232,11 +210,7 @@ if __name__ == "__main__":
     )
 
     n_joint_trips = len(result["joint_trips"])
-    n_trips_in_joint = (
-        result["linked_trips"]
-        .filter(pl.col("joint_trip_id").is_not_null())
-        .height
-    )
+    n_trips_in_joint = result["linked_trips"].filter(pl.col("joint_trip_id").is_not_null()).height
 
     print(
         "Detected %s joint trips involving %s trips",
@@ -253,7 +227,5 @@ if __name__ == "__main__":
 
     # Save outputs
     likely_joint.write_parquet(project_path / "joint_trip_candidates.parquet")
-    result["joint_trips"].write_parquet(
-        project_path / "detected_joint_trips.parquet"
-    )
+    result["joint_trips"].write_parquet(project_path / "detected_joint_trips.parquet")
     print("Saved results to project directory")

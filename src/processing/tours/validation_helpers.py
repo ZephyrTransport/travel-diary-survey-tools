@@ -27,9 +27,7 @@ def _diagnose_problem_tours(
         zero_tour_trips: Subset of trips with tour_num=0
     """
     # Diagnostics for INDETERMINATE tours
-    indeterminate_tours = tours.filter(
-        pl.col("tour_data_quality") == TourDataQuality.INDETERMINATE
-    )
+    indeterminate_tours = tours.filter(pl.col("tour_data_quality") == TourDataQuality.INDETERMINATE)
     if len(indeterminate_tours) > 0:
         logger.warning(
             "Diagnosing %d INDETERMINATE tours...",
@@ -61,9 +59,7 @@ def _diagnose_problem_tours(
         )
         logger.warning("INDETERMINATE tours by trip count:")
         for row in trip_count_dist.iter_rows(named=True):
-            logger.warning(
-                "  %d trips: %d tours", row["trip_count"], row["count"]
-            )
+            logger.warning("  %d trips: %d tours", row["trip_count"], row["count"])
 
         # Sample details
         sample_tours = indeterminate_tours.head(5)
@@ -71,12 +67,9 @@ def _diagnose_problem_tours(
 
         logger.warning("Sample INDETERMINATE tour details (first 5):")
         for tour_id in sample_tour_ids:
-            tour_info = indeterminate_tours.filter(
-                pl.col("tour_id") == tour_id
-            ).row(0, named=True)
+            tour_info = indeterminate_tours.filter(pl.col("tour_id") == tour_id).row(0, named=True)
             logger.warning(
-                "  Tour %s: person=%d, day=%d, trips=%d, category=%s, "
-                "home_origin=%s, home_dest=%s",
+                "  Tour %s: person=%d, day=%d, trips=%d, category=%s, home_origin=%s, home_dest=%s",
                 tour_id,
                 tour_info["person_id"],
                 tour_info["day_id"],
@@ -165,9 +158,7 @@ def validate_and_correct_tours(
         [
             # Check conditions in order of specificity
             pl.when(
-                (pl.col("trip_count") == 1)
-                & pl.col("_has_home_origin")
-                & pl.col("_has_home_dest")
+                (pl.col("trip_count") == 1) & pl.col("_has_home_origin") & pl.col("_has_home_dest")
             )
             .then(pl.lit(TourDataQuality.LOOP_TRIP))
             .when(pl.col("trip_count") == 1)
@@ -196,10 +187,7 @@ def validate_and_correct_tours(
         [
             pl.when(
                 (pl.col("tour_data_quality") == TourDataQuality.SINGLE_TRIP)
-                | (
-                    pl.col("tour_data_quality")
-                    == TourDataQuality.MISSING_HOME_ANCHOR
-                )
+                | (pl.col("tour_data_quality") == TourDataQuality.MISSING_HOME_ANCHOR)
             )
             .then(pl.lit(TourCategory.PARTIAL_BOTH))
             .otherwise(pl.col("tour_category"))
@@ -209,15 +197,12 @@ def validate_and_correct_tours(
 
     # Log validation summary
     quality_summary = (
-        tours.group_by("tour_data_quality")
-        .agg(pl.len().alias("count"))
-        .sort("tour_data_quality")
+        tours.group_by("tour_data_quality").agg(pl.len().alias("count")).sort("tour_data_quality")
     )
 
     # Report all quality levels, including those with 0 count
     quality_counts = {
-        row["tour_data_quality"]: row["count"]
-        for row in quality_summary.iter_rows(named=True)
+        row["tour_data_quality"]: row["count"] for row in quality_summary.iter_rows(named=True)
     }
 
     logger.info("Tour data quality summary:")
@@ -226,9 +211,7 @@ def validate_and_correct_tours(
         logger.info("  %s: %d", quality_enum.label, count)
 
     # Warn if invalid tours found
-    invalid_count = tours.filter(
-        pl.col("tour_data_quality") != TourDataQuality.VALID
-    ).height
+    invalid_count = tours.filter(pl.col("tour_data_quality") != TourDataQuality.VALID).height
     if invalid_count > 0:
         logger.warning(
             "Found %d tours with data quality issues.\n"

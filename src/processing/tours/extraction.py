@@ -159,9 +159,7 @@ def extract_tours(
     )
 
     # Step 4: Detect anchor-based subtours (work-based, school-based, etc.)
-    linked_trips_with_subtours = detect_anchor_based_subtours(
-        linked_trips_with_anchor_periods
-    )
+    linked_trips_with_subtours = detect_anchor_based_subtours(linked_trips_with_anchor_periods)
 
     # Step 5: Aggregation and tour classification
     # Create tour_id and parent_tour_id

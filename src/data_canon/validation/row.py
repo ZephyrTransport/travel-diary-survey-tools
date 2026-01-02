@@ -88,17 +88,10 @@ def validate_row_for_step(
     # Note: A field is only "missing" if it's not in the dict at all
     # Fields that are present but have None values are allowed if the
     # field type is Optional (e.g., float | None)
-    missing_fields = [
-        field_name
-        for field_name in required_fields
-        if field_name not in row_dict
-    ]
+    missing_fields = [field_name for field_name in required_fields if field_name not in row_dict]
 
     if missing_fields:
-        msg = (
-            f"Missing required fields for step '{step_name}': "
-            f"{', '.join(missing_fields)}"
-        )
+        msg = f"Missing required fields for step '{step_name}': {', '.join(missing_fields)}"
         raise ValueError(msg)
 
     # Validate all fields present in row_dict (comprehensive validation)
@@ -113,9 +106,7 @@ def validate_row_for_step(
         # This prevents errors about missing optional fields
         present_fields = set(row_dict.keys())
         relevant_errors = [
-            err
-            for err in e.errors()
-            if not err.get("loc") or err["loc"][0] in present_fields
+            err for err in e.errors() if not err.get("loc") or err["loc"][0] in present_fields
         ]
         if relevant_errors:
             raise PydanticValidationError.from_exception_data(
@@ -179,9 +170,7 @@ def validate_dataframe_rows(
                     break
 
         # Progress updates for large datasets (time-based)
-        if (total_rows > batch_size) and (
-            current_time - start_time >= update_interval
-        ):
+        if (total_rows > batch_size) and (current_time - start_time >= update_interval):
             percent_done = (batch_end / total_rows) * 100
             logger.info(
                 "Row validation progress for '%s': %.1f%% (%s/%s rows)",
@@ -217,9 +206,7 @@ def _report_errors(error_groups: dict[str, list[int]], table_name: str) -> None:
             rows_str = f"Row(s) {', '.join(map(str, row_indices))}"
         else:
             shown = row_indices[:max_rows_to_show]
-            rows_str = (
-                f"{num_affected} rows (e.g., {', '.join(map(str, shown))})"
-            )
+            rows_str = f"{num_affected} rows (e.g., {', '.join(map(str, shown))})"
 
         error_lines.append(f"  {rows_str}: {msg}")
 

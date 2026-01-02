@@ -44,9 +44,7 @@ def write_summary_report(  # noqa: C901, PLR0912, PLR0915 ignore since its a scr
     report_lines.append("=" * 80)
     report_lines.append("BATS 2023 PIPELINE SUMMARY REPORT")
     report_lines.append("=" * 80)
-    report_lines.append(
-        f"Generated: {datetime.now(tz=UTC).strftime('%Y-%m-%d %H:%M:%S')}"
-    )
+    report_lines.append(f"Generated: {datetime.now(tz=UTC).strftime('%Y-%m-%d %H:%M:%S')}")
     report_lines.append("")
     report_lines.append(f"Input Directory:  {input_dir}")
     report_lines.append(f"Output Directory: {output_dir}")
@@ -160,8 +158,7 @@ def write_summary_report(  # noqa: C901, PLR0912, PLR0915 ignore since its a scr
         hh_out = standard_summaries["households"]["rows"]
         hh_diff = hh_out - hh_in
         report_lines.append(
-            f"Households: {format_number(hh_in)} → "
-            f"{format_number(hh_out)} ({hh_diff:+,})"
+            f"Households: {format_number(hh_in)} → {format_number(hh_out)} ({hh_diff:+,})"
         )
 
     if "persons" in input_summaries and "persons" in standard_summaries:
@@ -169,8 +166,7 @@ def write_summary_report(  # noqa: C901, PLR0912, PLR0915 ignore since its a scr
         per_out = standard_summaries["persons"]["rows"]
         per_diff = per_out - per_in
         report_lines.append(
-            f"Persons:    {format_number(per_in)} → "
-            f"{format_number(per_out)} ({per_diff:+,})"
+            f"Persons:    {format_number(per_in)} → {format_number(per_out)} ({per_diff:+,})"
         )
 
     if "days" in input_summaries and "days" in standard_summaries:
@@ -178,8 +174,7 @@ def write_summary_report(  # noqa: C901, PLR0912, PLR0915 ignore since its a scr
         day_out = standard_summaries["days"]["rows"]
         day_diff = day_out - day_in
         report_lines.append(
-            f"Days:       {format_number(day_in)} → "
-            f"{format_number(day_out)} ({day_diff:+,})"
+            f"Days:       {format_number(day_in)} → {format_number(day_out)} ({day_diff:+,})"
         )
 
     if "trips" in input_summaries and "unlinked_trips" in standard_summaries:
@@ -211,9 +206,7 @@ def write_summary_report(  # noqa: C901, PLR0912, PLR0915 ignore since its a scr
     report_lines.append("DaySim Filtering:")
     report_lines.append("  Reasons tours/trips are dropped:")
     report_lines.append("    1. Invalid tours (tour_data_quality != VALID)")
-    report_lines.append(
-        "    2. Partial/incomplete tours (tour_category != COMPLETE)"
-    )
+    report_lines.append("    2. Partial/incomplete tours (tour_category != COMPLETE)")
     report_lines.append("    3. Missing TAZ/MAZ assignments for households")
     report_lines.append("")
 
@@ -233,19 +226,14 @@ def write_summary_report(  # noqa: C901, PLR0912, PLR0915 ignore since its a scr
             }
             report_lines.append("  Tour Data Quality Breakdown:")
             quality_counts = (
-                tours_df.group_by("tour_data_quality")
-                .agg(pl.len())
-                .sort("tour_data_quality")
+                tours_df.group_by("tour_data_quality").agg(pl.len()).sort("tour_data_quality")
             )
             for row in quality_counts.iter_rows():
                 quality_code, count = row
-                quality_label = quality_labels.get(
-                    quality_code, f"Unknown ({quality_code})"
-                )
+                quality_label = quality_labels.get(quality_code, f"Unknown ({quality_code})")
                 pct = count / len(tours_df) * 100
                 report_lines.append(
-                    f"    {quality_label:60s}: "
-                    f"{format_number(count):>8s} ({pct:5.1f}%)"
+                    f"    {quality_label:60s}: {format_number(count):>8s} ({pct:5.1f}%)"
                 )
             report_lines.append("")
 
@@ -258,20 +246,13 @@ def write_summary_report(  # noqa: C901, PLR0912, PLR0915 ignore since its a scr
                 4: "PARTIAL - Start not at home, end not at home",
             }
             report_lines.append("  Tour Category Breakdown:")
-            category_counts = (
-                tours_df.group_by("tour_category")
-                .agg(pl.len())
-                .sort("tour_category")
-            )
+            category_counts = tours_df.group_by("tour_category").agg(pl.len()).sort("tour_category")
             for row in category_counts.iter_rows():
                 category_code, count = row
-                category_label = category_labels.get(
-                    category_code, f"Unknown ({category_code})"
-                )
+                category_label = category_labels.get(category_code, f"Unknown ({category_code})")
                 pct = count / len(tours_df) * 100
                 report_lines.append(
-                    f"    {category_label:60s}: "
-                    f"{format_number(count):>8s} ({pct:5.1f}%)"
+                    f"    {category_label:60s}: {format_number(count):>8s} ({pct:5.1f}%)"
                 )
             report_lines.append("")
 
@@ -285,10 +266,7 @@ def write_summary_report(  # noqa: C901, PLR0912, PLR0915 ignore since its a scr
             f"{format_number(tours_std)} ({pct_dropped:.1f}%)"
         )
 
-    if (
-        "linked_trips" in standard_summaries
-        and "linked_trips_daysim" in daysim_summaries
-    ):
+    if "linked_trips" in standard_summaries and "linked_trips_daysim" in daysim_summaries:
         trips_std = standard_summaries["linked_trips"]["rows"]
         trips_ds = daysim_summaries["linked_trips_daysim"]["rows"]
         trips_dropped = trips_std - trips_ds
@@ -333,9 +311,7 @@ def write_summary_report(  # noqa: C901, PLR0912, PLR0915 ignore since its a scr
         new_cols = sorted(out_cols - in_cols)
         if new_cols:
             report_lines.append("Linked Trips - New Fields:")
-            report_lines.extend(
-                f"  • {col}" for col in new_cols[:MAX_COLUMNS_DISPLAY]
-            )
+            report_lines.extend(f"  • {col}" for col in new_cols[:MAX_COLUMNS_DISPLAY])
             if len(new_cols) > MAX_COLUMNS_DISPLAY:
                 remaining = len(new_cols) - MAX_COLUMNS_DISPLAY
                 report_lines.append(f"  ... and {remaining} more")
@@ -354,11 +330,7 @@ def write_summary_report(  # noqa: C901, PLR0912, PLR0915 ignore since its a scr
         tours_df = pl.read_csv(output_dir / "tours.csv")
         if "tour_purpose" in tours_df.columns:
             report_lines.append("Tours by Purpose:")
-            purpose_counts = (
-                tours_df.group_by("tour_purpose")
-                .agg(pl.len())
-                .sort("tour_purpose")
-            )
+            purpose_counts = tours_df.group_by("tour_purpose").agg(pl.len()).sort("tour_purpose")
             for row in purpose_counts.iter_rows():
                 purpose, count = row
                 pct = count / len(tours_df) * 100
@@ -375,9 +347,7 @@ def write_summary_report(  # noqa: C901, PLR0912, PLR0915 ignore since its a scr
             for row in mode_counts.iter_rows():
                 mode, count = row
                 pct = count / len(trips_df) * 100
-                report_lines.append(
-                    f"  {mode!s:20s}: {format_number(count):>10s} ({pct:5.1f}%)"
-                )
+                report_lines.append(f"  {mode!s:20s}: {format_number(count):>10s} ({pct:5.1f}%)")
             report_lines.append("")
 
     # Tours by person category
@@ -385,11 +355,7 @@ def write_summary_report(  # noqa: C901, PLR0912, PLR0915 ignore since its a scr
         tours_df = pl.read_csv(output_dir / "tours.csv")
         if "tour_category" in tours_df.columns:
             report_lines.append("Tours by Category:")
-            person_counts = (
-                tours_df.group_by("tour_category")
-                .agg(pl.len())
-                .sort("tour_category")
-            )
+            person_counts = tours_df.group_by("tour_category").agg(pl.len()).sort("tour_category")
             for row in person_counts.iter_rows():
                 category, count = row
                 pct = count / len(tours_df) * 100
@@ -402,9 +368,7 @@ def write_summary_report(  # noqa: C901, PLR0912, PLR0915 ignore since its a scr
         hh_df = pl.read_csv(output_dir / "households.csv")
         if "num_persons" in hh_df.columns:
             report_lines.append("Household Size Distribution:")
-            size_counts = (
-                hh_df.group_by("num_persons").agg(pl.len()).sort("num_persons")
-            )
+            size_counts = hh_df.group_by("num_persons").agg(pl.len()).sort("num_persons")
             for row in size_counts.iter_rows():
                 size, count = row
                 pct = count / len(hh_df) * 100
@@ -443,19 +407,12 @@ def write_summary_report(  # noqa: C901, PLR0912, PLR0915 ignore since its a scr
     if "joint_trips" in standard_summaries:
         joint_df = pl.read_csv(output_dir / "joint_trips.csv")
         report_lines.append("Joint Trips Summary:")
-        report_lines.append(
-            f"  Total joint trip pairs: {format_number(len(joint_df))}"
-        )
+        report_lines.append(f"  Total joint trip pairs: {format_number(len(joint_df))}")
         if "linked_trip_id_1" in joint_df.columns:
             unique_trips = len(
-                set(
-                    joint_df["linked_trip_id_1"].to_list()
-                    + joint_df["linked_trip_id_2"].to_list()
-                )
+                set(joint_df["linked_trip_id_1"].to_list() + joint_df["linked_trip_id_2"].to_list())
             )
-            report_lines.append(
-                f"  Unique trips involved:  {format_number(unique_trips)}"
-            )
+            report_lines.append(f"  Unique trips involved:  {format_number(unique_trips)}")
         report_lines.append("")
 
     # Tours per person distribution
@@ -463,9 +420,7 @@ def write_summary_report(  # noqa: C901, PLR0912, PLR0915 ignore since its a scr
         tours_df = pl.read_csv(output_dir / "tours.csv")
         if "person_id" in tours_df.columns:
             report_lines.append("Tours per Person Distribution:")
-            tours_per_person = tours_df.group_by("person_id").agg(
-                pl.len().alias("num_tours")
-            )
+            tours_per_person = tours_df.group_by("person_id").agg(pl.len().alias("num_tours"))
             tour_dist = (
                 tours_per_person.group_by("num_tours")
                 .agg(pl.len().alias("num_persons"))
@@ -503,8 +458,7 @@ if __name__ == "__main__":
         "Full Weighted 2023 Dataset/WeightedDataset_02212025"
     )
     OUTPUT_DIR = Path(
-        "M:/Data/HomeInterview/Bay Area Travel Study 2023/"
-        "Data/Processed/2023_pipeline_output"
+        "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Processed/2023_pipeline_output"
     )
     REPORT_FILE = OUTPUT_DIR / "pipeline_summary_report.txt"
 

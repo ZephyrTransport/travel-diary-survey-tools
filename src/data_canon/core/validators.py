@@ -83,16 +83,11 @@ def validate_row_for_step(
 
     # Check for missing required fields
     missing_fields = [
-        field_name
-        for field_name in required_fields
-        if row_dict.get(field_name) is None
+        field_name for field_name in required_fields if row_dict.get(field_name) is None
     ]
 
     if missing_fields:
-        msg = (
-            f"Missing required fields for step '{step_name}': "
-            f"{', '.join(missing_fields)}"
-        )
+        msg = f"Missing required fields for step '{step_name}': {', '.join(missing_fields)}"
         raise ValueError(msg)
 
     # Build dict with only non-None values to avoid Pydantic's
@@ -204,9 +199,7 @@ def validate_dataframe_rows(  # noqa: C901
         raise DataValidationError(
             table=table_name,
             rule="row_validation",
-            message=(
-                f"Found {len(errors)} validation errors:\n{error_summary}"
-            ),
+            message=(f"Found {len(errors)} validation errors:\n{error_summary}"),
         )
 
 

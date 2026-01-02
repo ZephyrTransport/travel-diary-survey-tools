@@ -4,11 +4,13 @@ import json
 import logging
 import os
 import time
+from pathlib import Path
 
 import polars as pl
 import pytest
 import yaml
 
+from pipeline.decoration import step
 from pipeline.pipeline import Pipeline
 
 
@@ -174,9 +176,7 @@ def test_get_data_missing_table(temp_config, temp_cache_dir):
         caching=temp_cache_dir,
     )
 
-    with pytest.raises(
-        ValueError, match="not found in any cached step"
-    ) as exc_info:
+    with pytest.raises(ValueError, match="not found in any cached step") as exc_info:
         pipeline.get_data("nonexistent_table")
 
     assert "not found in any cached step" in str(exc_info.value)
@@ -220,10 +220,12 @@ def test_get_data_no_caching_enabled(temp_config):
         caching=False,
     )
 
-    with pytest.raises(ValueError, match="Caching is disabled") as exc_info:
+    with pytest.raises(
+        ValueError, match=r"Table 'households' not found in canonical data."
+    ) as exc_info:
         pipeline.get_data("households")
 
-    assert "Caching is disabled" in str(exc_info.value)
+    assert "Table 'households' not found in canonical data." in str(exc_info.value)
 
 
 def test_multiple_cache_keys_uses_newest(temp_config, temp_cache_dir):
@@ -281,3 +283,444 @@ def test_scan_cache_after_run(temp_config, temp_cache_dir):
 
     # Status should remain consistent
     assert pipeline._step_status["step1"]["has_cache"] is True
+
+
+def test_pipeline_with_caching_path_string(temp_config, tmp_path):
+    """Test Pipeline initialization with caching as string path."""
+    cache_dir = tmp_path / "custom_cache"
+
+    pipeline = Pipeline(
+        config_path=str(temp_config),
+        steps=[],
+        caching=str(cache_dir),  # Pass as string
+    )
+
+    assert pipeline.cache is not None
+    assert pipeline.cache.cache_dir == cache_dir
+
+
+def test_pipeline_with_caching_path_object(temp_config, tmp_path):
+    """Test Pipeline initialization with caching as Path object."""
+    cache_dir = tmp_path / "custom_cache"
+
+    pipeline = Pipeline(
+        config_path=str(temp_config),
+        steps=[],
+        caching=cache_dir,  # Pass as Path
+    )
+
+    assert pipeline.cache is not None
+    assert pipeline.cache.cache_dir == cache_dir
+
+
+def test_pipeline_with_caching_true(temp_config):
+    """Test Pipeline initialization with caching=True uses default."""
+    pipeline = Pipeline(
+        config_path=str(temp_config),
+        steps=[],
+        caching=True,
+    )
+
+    assert pipeline.cache is not None
+    assert pipeline.cache.cache_dir == Path(".cache")
+
+
+def test_report_status_with_no_steps(tmp_path):
+    """Test status report with empty config."""
+    config = {"steps": []}
+    config_path = tmp_path / "empty_config.yaml"
+
+    with config_path.open("w") as f:
+        yaml.dump(config, f)
+
+    pipeline = Pipeline(
+        config_path=str(config_path),
+        steps=[],
+        caching=False,
+    )
+
+    # Should not crash with empty steps
+    pipeline.report_status()
+
+
+def test_get_available_tables(temp_config, temp_cache_dir):
+    """Test _get_available_tables method."""
+    pipeline = Pipeline(
+        config_path=str(temp_config),
+        steps=[],
+        caching=temp_cache_dir,
+    )
+
+    tables = pipeline._get_available_tables()
+
+    # Should have all cached tables
+    assert "households" in tables
+    assert "persons" in tables
+    assert "linked_trips" in tables
+
+    # Should map to correct steps
+    assert "step1" in tables["households"]
+    assert "step1" in tables["persons"]
+    assert "step2" in tables["linked_trips"]
+
+
+def test_find_step_with_table(temp_config, temp_cache_dir):
+    """Test _find_step_with_table finds latest step."""
+    pipeline = Pipeline(
+        config_path=str(temp_config),
+        steps=[],
+        caching=temp_cache_dir,
+    )
+
+    # Find households - should be in step1
+    step = pipeline._find_step_with_table("households")
+    assert step == "step1"
+
+    # Find linked_trips - should be in step2
+    step = pipeline._find_step_with_table("linked_trips")
+    assert step == "step2"
+
+    # Find nonexistent table
+    step = pipeline._find_step_with_table("nonexistent")
+    assert step is None
+
+
+def test_pipeline_caching_disabled_operations(temp_config):
+    """Test that pipeline operations work with caching disabled."""
+    pipeline = Pipeline(
+        config_path=str(temp_config),
+        steps=[],
+        caching=False,
+    )
+
+    # _get_available_tables should return empty dict
+    tables = pipeline._get_available_tables()
+    assert tables == {}
+
+    # _find_step_with_table should return None
+    step = pipeline._find_step_with_table("households")
+    assert step is None
+
+
+def test_scan_cache_with_corrupted_metadata(temp_config, temp_cache_dir):
+    """Test _scan_cache handles corrupted metadata gracefully."""
+    # Create cache with invalid metadata
+    step_cache = temp_cache_dir / "step1" / "corrupt123"
+    step_cache.mkdir(parents=True)
+
+    # Write corrupted JSON
+    metadata_path = step_cache / "metadata.json"
+    metadata_path.write_text("{ invalid json }")
+
+    # Should not crash
+    pipeline = Pipeline(
+        config_path=str(temp_config),
+        steps=[],
+        caching=temp_cache_dir,
+    )
+
+    # Should have scanned successfully (skipping corrupted cache)
+    assert "step1" in pipeline._step_status
+
+
+def test_step_status_cache_enabled_field(temp_config, temp_cache_dir):
+    """Test that cache_enabled field is set correctly in step status."""
+    pipeline = Pipeline(
+        config_path=str(temp_config),
+        steps=[],
+        caching=temp_cache_dir,
+    )
+
+    # step1 and step2 have cache enabled
+    assert pipeline._step_status["step1"]["cache_enabled"] is True
+    assert pipeline._step_status["step2"]["cache_enabled"] is True
+
+    # step3 has cache disabled
+    assert pipeline._step_status["step3"]["cache_enabled"] is False
+
+
+def test_pipeline_config_variable_substitution(tmp_path):
+    """Test that config template variables are substituted."""
+    config = {
+        "base_dir": "/data/surveys",
+        "survey_name": "bats_2023",
+        "input_file": "{{ base_dir }}/{{ survey_name }}/input.csv",
+        "steps": [],
+    }
+    config_path = tmp_path / "config.yaml"
+
+    with config_path.open("w") as f:
+        yaml.dump(config, f)
+
+    pipeline = Pipeline(
+        config_path=str(config_path),
+        steps=[],
+        caching=False,
+    )
+
+    # Variables should be substituted
+    assert pipeline.config["input_file"] == "/data/surveys/bats_2023/input.csv"
+
+
+def test_parse_step_args_with_canonical_data(temp_config):
+    """Test parse_step_args passes canonical_data parameter."""
+
+    def step_func(canonical_data):
+        pass
+
+    pipeline = Pipeline(
+        config_path=str(temp_config),
+        steps=[step_func],
+        caching=False,
+    )
+
+    kwargs = pipeline.parse_step_args("step1", step_func)
+
+    assert "canonical_data" in kwargs
+    assert kwargs["canonical_data"] is pipeline.data
+
+
+def test_parse_step_args_with_table_names(temp_config):
+    """Test parse_step_args extracts table data from canonical data."""
+
+    def step_func(households, persons):
+        pass
+
+    pipeline = Pipeline(
+        config_path=str(temp_config),
+        steps=[step_func],
+        caching=False,
+    )
+
+    pipeline.data.households = pl.DataFrame({"id": [1, 2]})
+    pipeline.data.persons = pl.DataFrame({"id": [1, 2]})
+
+    kwargs = pipeline.parse_step_args("step_func", step_func)
+
+    assert "households" in kwargs
+    assert "persons" in kwargs
+    assert kwargs["households"] is pipeline.data.households
+    assert kwargs["persons"] is pipeline.data.persons
+
+
+def test_parse_step_args_missing_required_parameter(tmp_path):
+    """Test parse_step_args raises error for missing required params."""
+    config = {
+        "steps": [
+            {"name": "test_step", "params": {}}  # Missing required param
+        ]
+    }
+    config_path = tmp_path / "config.yaml"
+    with config_path.open("w") as f:
+        yaml.dump(config, f)
+
+    def step_func(required_param):  # No default value
+        pass
+
+    pipeline = Pipeline(
+        config_path=str(config_path),
+        steps=[step_func],
+        caching=False,
+    )
+
+    with pytest.raises(ValueError, match="Missing required parameter 'required_param'"):
+        pipeline.parse_step_args("test_step", step_func)
+
+
+def test_parse_step_args_with_config_params(tmp_path):
+    """Test parse_step_args extracts parameters from config."""
+    config = {"steps": [{"name": "test_step", "params": {"threshold": 0.5, "mode": "strict"}}]}
+    config_path = tmp_path / "config.yaml"
+    with config_path.open("w") as f:
+        yaml.dump(config, f)
+
+    def step_func(threshold, mode):
+        pass
+
+    pipeline = Pipeline(
+        config_path=str(config_path),
+        steps=[step_func],
+        caching=False,
+    )
+
+    kwargs = pipeline.parse_step_args("test_step", step_func)
+
+    assert kwargs["threshold"] == 0.5
+    assert kwargs["mode"] == "strict"
+
+
+def test_parse_step_args_with_defaults(tmp_path):
+    """Test parse_step_args handles parameters with default values."""
+    config = {
+        "steps": [
+            {"name": "test_step", "params": {}}  # No params provided
+        ]
+    }
+    config_path = tmp_path / "config.yaml"
+    with config_path.open("w") as f:
+        yaml.dump(config, f)
+
+    def step_func(optional_param="default_value"):
+        pass
+
+    pipeline = Pipeline(
+        config_path=str(config_path),
+        steps=[step_func],
+        caching=False,
+    )
+
+    kwargs = pipeline.parse_step_args("test_step", step_func)
+
+    # Should not include param since it has default and not in config
+    assert "optional_param" not in kwargs
+
+
+def test_load_from_step_with_invalid_step(temp_config, temp_cache_dir):
+    """Test _load_from_step with step that has no cache."""
+    pipeline = Pipeline(
+        config_path=str(temp_config),
+        steps=[],
+        caching=temp_cache_dir,
+    )
+
+    with pytest.raises(ValueError, match="has no cached data"):
+        pipeline._load_from_step("households", "step3")  # step3 has no cache
+
+
+def test_load_from_step_missing_table_in_step(temp_config, temp_cache_dir):
+    """Test _load_from_step when table not in specified step."""
+    pipeline = Pipeline(
+        config_path=str(temp_config),
+        steps=[],
+        caching=temp_cache_dir,
+    )
+
+    with pytest.raises(ValueError, match="not found in step"):
+        pipeline._load_from_step("nonexistent_table", "step1")
+
+
+def test_pipeline_run_with_simple_step(tmp_path):
+    """Test pipeline.run() executes steps correctly."""
+    config = {"steps": [{"name": "simple_step", "cache": False}]}
+    config_path = tmp_path / "config.yaml"
+    with config_path.open("w") as f:
+        yaml.dump(config, f)
+
+    # Create a simple step function
+    step_executed = []
+
+    def simple_step(canonical_data, **kwargs):  # noqa: ARG001
+        step_executed.append(True)
+        canonical_data.households = pl.DataFrame({"id": [1, 2, 3]})
+
+    pipeline = Pipeline(
+        config_path=str(config_path),
+        steps=[simple_step],
+        caching=False,
+    )
+
+    result = pipeline.run()
+
+    assert len(step_executed) == 1
+    assert result.households is not None
+    assert len(result.households) == 3
+
+
+def test_pipeline_run_missing_step(tmp_path):
+    """Test pipeline.run() raises error for missing step."""
+    config = {"steps": [{"name": "nonexistent_step"}]}
+    config_path = tmp_path / "config.yaml"
+    with config_path.open("w") as f:
+        yaml.dump(config, f)
+
+    pipeline = Pipeline(
+        config_path=str(config_path),
+        steps=[],  # No steps provided
+        caching=False,
+    )
+
+    with pytest.raises(ValueError, match="not found in pipeline steps"):
+        pipeline.run()
+
+
+def test_pipeline_run_with_log_file(tmp_path):
+    """Test pipeline with log file configuration."""
+    config = {
+        "log_file": "pipeline.log",  # Relative path
+        "steps": [{"name": "test_step", "cache": False}],
+    }
+    config_path = tmp_path / "config.yaml"
+    with config_path.open("w") as f:
+        yaml.dump(config, f)
+
+    def test_step(canonical_data, **kwargs):  # noqa: ARG001
+        canonical_data.households = pl.DataFrame({"id": [1]})
+
+    pipeline = Pipeline(
+        config_path=str(config_path),
+        steps=[test_step],
+        caching=False,
+    )
+
+    pipeline.run()
+
+    # Log file should be in .cache directory
+    log_file = Path(".cache") / "pipeline.log"
+    assert log_file.exists()
+
+
+def test_pipeline_run_with_absolute_log_file(tmp_path):
+    """Test pipeline with absolute log file path."""
+    log_file = tmp_path / "test.log"
+    config = {
+        "log_file": str(log_file),  # Absolute path
+        "steps": [{"name": "test_step", "cache": False}],
+    }
+    config_path = tmp_path / "config.yaml"
+    with config_path.open("w") as f:
+        yaml.dump(config, f)
+
+    def test_step(canonical_data, **kwargs):  # noqa: ARG001
+        canonical_data.households = pl.DataFrame({"id": [1]})
+
+    pipeline = Pipeline(
+        config_path=str(config_path),
+        steps=[test_step],
+        caching=False,
+    )
+
+    pipeline.run()
+
+    assert log_file.exists()
+
+
+def test_pipeline_run_with_caching_statistics(tmp_path):
+    """Test pipeline run logs cache statistics."""
+    cache_dir = tmp_path / "cache"
+    config = {"steps": [{"name": "cached_step", "cache": True}]}
+    config_path = tmp_path / "config.yaml"
+    with config_path.open("w") as f:
+        yaml.dump(config, f)
+
+    @step()
+    def cached_step(canonical_data):
+        canonical_data.households = pl.DataFrame({"id": [1, 2]})
+
+    pipeline = Pipeline(
+        config_path=str(config_path),
+        steps=[cached_step],
+        caching=cache_dir,
+    )
+
+    # First run - should cache
+    result1 = pipeline.run()
+    assert result1.households is not None
+
+    # Second run - should use cache
+    pipeline2 = Pipeline(
+        config_path=str(config_path),
+        steps=[cached_step],
+        caching=cache_dir,
+    )
+    result2 = pipeline2.run()
+    assert result2.households is not None

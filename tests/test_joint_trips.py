@@ -185,9 +185,7 @@ class TestSimilarityCalculations:
 @pytest.fixture
 def two_person_household_matching_trips():
     """Two household members with matching trips (same origin, dest, time)."""
-    households = pl.DataFrame(
-        {"hh_id": [1], "home_lat": [37.8], "home_lon": [-122.4]}
-    )
+    households = pl.DataFrame({"hh_id": [1], "home_lat": [37.8], "home_lon": [-122.4]})
 
     linked_trips = pl.DataFrame(
         {
@@ -244,9 +242,7 @@ def two_person_household_matching_trips():
 @pytest.fixture
 def two_person_household_non_matching_trips():
     """Two household members with trips at different times (no overlap)."""
-    households = pl.DataFrame(
-        {"hh_id": [1], "home_lat": [37.8], "home_lon": [-122.4]}
-    )
+    households = pl.DataFrame({"hh_id": [1], "home_lat": [37.8], "home_lon": [-122.4]})
 
     linked_trips = pl.DataFrame(
         {
@@ -346,9 +342,7 @@ def test_detect_non_matching_trips(two_person_household_non_matching_trips):
 
 def test_single_person_household():
     """Test that single-person households are excluded."""
-    households = pl.DataFrame(
-        {"hh_id": [1], "home_lat": [37.8], "home_lon": [-122.4]}
-    )
+    households = pl.DataFrame({"hh_id": [1], "home_lat": [37.8], "home_lon": [-122.4]})
 
     linked_trips = pl.DataFrame(
         {
@@ -384,9 +378,7 @@ def test_single_person_household():
         }
     )
 
-    result = detect_joint_trips(
-        linked_trips=linked_trips, households=households, method="buffer"
-    )
+    result = detect_joint_trips(linked_trips=linked_trips, households=households, method="buffer")
 
     # Should return with no joint trips
     assert result["linked_trips"]["joint_trip_id"].null_count() == 1
@@ -430,9 +422,7 @@ def test_empty_input():
         }
     )
 
-    result = detect_joint_trips(
-        linked_trips=linked_trips, households=households, method="buffer"
-    )
+    result = detect_joint_trips(linked_trips=linked_trips, households=households, method="buffer")
 
     # Should handle gracefully
     assert len(result["linked_trips"]) == 0

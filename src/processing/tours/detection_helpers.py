@@ -55,27 +55,21 @@ def identify_home_based_tours(
     is_returning_home = ~pl.col("_o_is_home") & pl.col("_d_is_home")
     is_loop_trip = pl.col("_o_is_home") & pl.col("_d_is_home")
     # Use rank with tiebreakers to handle duplicate departure times
-    is_first_trip = (
-        pl.col("depart_time").rank("ordinal").over(["person_id", "day_id"]) == 1
-    )
+    is_first_trip = pl.col("depart_time").rank("ordinal").over(["person_id", "day_id"]) == 1
     is_last_trip = pl.col("depart_time") == pl.col("depart_time").max().over(
         ["person_id", "day_id"]
     )
 
     # Check for multi-day gaps if configured
     if check_multiday_gaps:
-        day_gap = (pl.col("day_id") - pl.col("day_id").shift(1)).over(
-            ["person_id"]
-        )
+        day_gap = (pl.col("day_id") - pl.col("day_id").shift(1)).over(["person_id"])
         has_gap = day_gap > 1
     else:
         has_gap = pl.lit(value=False)
 
     # Check if previous trip returned home
     prev_returned_home = (
-        is_returning_home.shift(1)
-        .over(["person_id", "day_id"])
-        .fill_null(value=False)
+        is_returning_home.shift(1).over(["person_id", "day_id"]).fill_null(value=False)
     )
 
     # Tour starts when:
@@ -111,10 +105,7 @@ def identify_home_based_tours(
         ]
     ).with_columns(
         [
-            pl.col("_tour_starts")
-            .cum_sum()
-            .over(["person_id", "day_id"])
-            .alias("tour_num"),
+            pl.col("_tour_starts").cum_sum().over(["person_id", "day_id"]).alias("tour_num"),
         ]
     )
 
@@ -168,9 +159,7 @@ def expand_anchor_periods(
 
     # Join person anchor locations (work and school)
     linked_trips = linked_trips.join(
-        person_locations.select(
-            ["person_id", "work_lat", "work_lon", "school_lat", "school_lon"]
-        ),
+        person_locations.select(["person_id", "work_lat", "work_lon", "school_lat", "school_lon"]),
         on="person_id",
         how="left",
     )
@@ -252,12 +241,8 @@ def expand_anchor_periods(
     # Determine if trip involves usual anchor (either end at anchor)
     linked_trips = linked_trips.with_columns(
         [
-            (pl.col("_o_at_usual_work") | pl.col("_d_at_usual_work")).alias(
-                "_at_usual_work"
-            ),
-            (pl.col("_o_at_usual_school") | pl.col("_d_at_usual_school")).alias(
-                "_at_usual_school"
-            ),
+            (pl.col("_o_at_usual_work") | pl.col("_d_at_usual_work")).alias("_at_usual_work"),
+            (pl.col("_o_at_usual_school") | pl.col("_d_at_usual_school")).alias("_at_usual_school"),
         ]
     )
 
@@ -393,9 +378,7 @@ def detect_anchor_based_subtours(  # noqa: C901, PLR0915
     )
 
     # Ensure sorted for partition_by to maintain order
-    linked_trips = linked_trips.sort(
-        ["person_id", "day_id", "tour_num", "_trip_num_in_tour"]
-    )
+    linked_trips = linked_trips.sort(["person_id", "day_id", "tour_num", "_trip_num_in_tour"])
 
     # Partition by tour using Polars partition_by
     tour_groups = linked_trips.partition_by(
@@ -405,9 +388,7 @@ def detect_anchor_based_subtours(  # noqa: C901, PLR0915
     )
 
     # Process each tour
-    logger.info(
-        "Processing %d tours for subtour detection...", len(tour_groups)
-    )
+    logger.info("Processing %d tours for subtour detection...", len(tour_groups))
     subtour_counter = 0
     modified_tours = []
     for i, tour_df in enumerate(tour_groups):

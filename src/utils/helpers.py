@@ -41,29 +41,21 @@ def add_time_columns(
 
     for prefix in ["depart", "arrive"]:
         col_name = f"{prefix}_time"
-        comp_cols = [
-            f"{prefix}_{s}" for s in ["date", "hour", "minute", "seconds"]
-        ]
+        comp_cols = [f"{prefix}_{s}" for s in ["date", "hour", "minute", "seconds"]]
 
         if col_name not in trips.columns:
             logger.info("Constructing %s...", col_name)
             trips = trips.with_columns(
-                datetime_from_parts(*[pl.col(c) for c in comp_cols]).alias(
-                    col_name
-                )
+                datetime_from_parts(*[pl.col(c) for c in comp_cols]).alias(col_name)
             )
         elif trips[col_name].dtype == pl.Utf8:
             logger.info("Parsing %s from string...", col_name)
             trips = trips.with_columns(
-                pl.col(col_name).str.to_datetime(
-                    format=datetime_format, strict=False
-                )
+                pl.col(col_name).str.to_datetime(format=datetime_format, strict=False)
             )
 
             if trips[col_name].null_count() > 0:
-                logger.info(
-                    "Reconstructing null %s from components...", col_name
-                )
+                logger.info("Reconstructing null %s from components...", col_name)
                 trips = trips.with_columns(
                     pl.when(pl.col(col_name).is_null())
                     .then(datetime_from_parts(*[pl.col(c) for c in comp_cols]))
@@ -90,10 +82,7 @@ def expr_haversine(
 
     # Check if all coordinates are non-null before calculation
     all_coords_valid = (
-        lat1.is_not_null()
-        & lon1.is_not_null()
-        & lat2.is_not_null()
-        & lon2.is_not_null()
+        lat1.is_not_null() & lon1.is_not_null() & lat2.is_not_null() & lon2.is_not_null()
     )
 
     # Fill nulls with dummy values to prevent trigonometry errors
@@ -106,9 +95,7 @@ def expr_haversine(
     # Calculate distance
     dlat = lat2_safe.radians() - lat1_safe.radians()
     dlon = lon2_safe.radians() - lon1_safe.radians()
-    a = (dlat / 2).sin().pow(
-        2
-    ) + lat1_safe.radians().cos() * lat2_safe.radians().cos() * (
+    a = (dlat / 2).sin().pow(2) + lat1_safe.radians().cos() * lat2_safe.radians().cos() * (
         dlon / 2
     ).sin().pow(2)
 

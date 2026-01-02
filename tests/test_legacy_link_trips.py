@@ -237,14 +237,8 @@ def to_legacy_format(new_df: pl.DataFrame) -> pd.DataFrame:
             "pno": new_df["person_id"].to_list(),
             "dow": new_df["day_id"].to_list(),
             "tripno": new_df["trip_id"].to_list(),
-            "opurp": [
-                new_to_legacy_purpose[p]
-                for p in new_df["o_purpose_category"].to_list()
-            ],
-            "dpurp": [
-                new_to_legacy_purpose[p]
-                for p in new_df["d_purpose_category"].to_list()
-            ],
+            "opurp": [new_to_legacy_purpose[p] for p in new_df["o_purpose_category"].to_list()],
+            "dpurp": [new_to_legacy_purpose[p] for p in new_df["d_purpose_category"].to_list()],
             "mode": new_df["mode_type"].to_list(),
             "mode_type": new_df["mode_type"].to_list(),
             "path": [1, 2, 1, 1],  # path hierarchy for mode selection
@@ -252,10 +246,7 @@ def to_legacy_format(new_df: pl.DataFrame) -> pd.DataFrame:
             "arrtm": [dt.hour * 100 + dt.minute for dt in arrive_times],
             "otaz": list(range(100, 100 + len(new_df))),
             "dtaz": list(range(101, 101 + len(new_df))),
-            "dpcl": [
-                new_to_legacy_purpose[p]
-                for p in new_df["d_purpose_category"].to_list()
-            ],
+            "dpcl": [new_to_legacy_purpose[p] for p in new_df["d_purpose_category"].to_list()],
             "dxcord": new_df["d_lon"].to_list(),
             "dycord": new_df["d_lat"].to_list(),
         }
@@ -272,9 +263,7 @@ def test_linking_row_count():
     legacy_data = to_legacy_format(new_data)
 
     # Run both implementations
-    legacy_result, _ = link_trip_legacy(
-        legacy_data, act_dur_limit=35, act_dur_limit2=15
-    )
+    legacy_result, _ = link_trip_legacy(legacy_data, act_dur_limit=35, act_dur_limit2=15)
     new_result = link_trips(
         new_data,
         change_mode_code=PURPOSE_MAP_NEW["change_mode"],
@@ -288,15 +277,11 @@ def test_linking_row_count():
     new_count = len(new_result["linked_trips"])
     expected_count = expected["num_linked_trips"]
 
-    assert new_count == expected_count, (
-        f"New: expected {expected_count} trips, got {new_count}"
-    )
+    assert new_count == expected_count, f"New: expected {expected_count} trips, got {new_count}"
     assert legacy_count == expected_count, (
         f"Legacy: expected {expected_count} trips, got {legacy_count}"
     )
-    assert new_count == legacy_count, (
-        f"Row count mismatch: legacy={legacy_count}, new={new_count}"
-    )
+    assert new_count == legacy_count, f"Row count mismatch: legacy={legacy_count}, new={new_count}"
 
 
 @pytest.mark.filterwarnings("ignore::FutureWarning")
@@ -338,9 +323,7 @@ def test_linked_trip_modes():
     legacy_data = to_legacy_format(new_data)
 
     # Run both implementations
-    legacy_result, _ = link_trip_legacy(
-        legacy_data, act_dur_limit=35, act_dur_limit2=15
-    )
+    legacy_result, _ = link_trip_legacy(legacy_data, act_dur_limit=35, act_dur_limit2=15)
     new_result = link_trips(
         new_data,
         change_mode_code=PURPOSE_MAP_NEW["change_mode"],

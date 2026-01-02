@@ -55,9 +55,7 @@ def format_tours(
 
     # Map tour identifiers and purpose
     tours_daysim = tours_daysim.join(
-        tours.select(["tour_id", "tour_num"]).rename(
-            {"tour_num": "parent_tour_num"}
-        ),
+        tours.select(["tour_id", "tour_num"]).rename({"tour_num": "parent_tour_num"}),
         left_on="parent_tour_id",
         right_on="tour_id",
         how="left",
@@ -126,9 +124,7 @@ def format_tours(
         .group_by("parent_tour_id")
         .agg(pl.len().alias("subtrs"))
     )
-    tours_daysim = tours_daysim.join(
-        subtour_counts, on="parent_tour_id", how="left"
-    )
+    tours_daysim = tours_daysim.join(subtour_counts, on="parent_tour_id", how="left")
 
     # Get taz and parcel fields from linked trips
     tours_daysim = (
@@ -156,25 +152,21 @@ def format_tours(
 
     # Count number of outbound and inbound stops from linked trips
     outbound_stops = (
-        linked_trips.filter(
-            pl.col("tour_direction") == TourDirection.OUTBOUND.value
-        )
+        linked_trips.filter(pl.col("tour_direction") == TourDirection.OUTBOUND.value)
         .group_by("tour_id")
         .agg(pl.len().alias("num_outbound_stops"))
     )
 
     inbound_stops = (
-        linked_trips.filter(
-            pl.col("tour_direction") == TourDirection.INBOUND.value
-        )
+        linked_trips.filter(pl.col("tour_direction") == TourDirection.INBOUND.value)
         .group_by("tour_id")
         .agg(pl.len().alias("num_inbound_stops"))
     )
 
     # Join stop counts to tours
-    tours_daysim = tours_daysim.join(
-        outbound_stops, on="tour_id", how="left"
-    ).join(inbound_stops, on="tour_id", how="left")
+    tours_daysim = tours_daysim.join(outbound_stops, on="tour_id", how="left").join(
+        inbound_stops, on="tour_id", how="left"
+    )
 
     # Calculate tour weight from linked_trips
     if "linked_trip_weight" in linked_trips.columns:
@@ -245,9 +237,7 @@ def format_tours(
         "toexpfac",
     ]
 
-    tours_daysim = tours_daysim.select(tour_cols).sort(
-        by=["hhno", "pno", "day", "tour"]
-    )
+    tours_daysim = tours_daysim.select(tour_cols).sort(by=["hhno", "pno", "day", "tour"])
 
     logger.info("Formatted %d tours", len(tours_daysim))
     return tours_daysim

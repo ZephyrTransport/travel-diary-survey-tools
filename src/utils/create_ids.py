@@ -103,9 +103,9 @@ def create_concatenated_id(
         sequence_padding,
     )
 
-    id_expr = pl.col(parent_id_col).cast(pl.Int64) * (
-        10**sequence_padding
-    ) + pl.col(sequence_col).cast(pl.Int64)
+    id_expr = pl.col(parent_id_col).cast(pl.Int64) * (10**sequence_padding) + pl.col(
+        sequence_col
+    ).cast(pl.Int64)
 
     return df.with_columns(id_expr.alias(output_col))
 
@@ -178,9 +178,7 @@ def create_tour_ids(
     """
     # Create hierarchical tour_id as aggregation key
     linked_trips = linked_trips.with_columns(
-        (pl.col(tour_num_col) * 1000 + pl.col(subtour_num_col) * 10).alias(
-            "_tour_id_suffix"
-        )
+        (pl.col(tour_num_col) * 1000 + pl.col(subtour_num_col) * 10).alias("_tour_id_suffix")
     )
 
     linked_trips = create_concatenated_id(
@@ -204,8 +202,6 @@ def create_tour_ids(
     )
 
     # Drop temporary columns
-    linked_trips = linked_trips.drop(
-        "_tour_id_suffix", "_parent_tour_id_suffix"
-    )
+    linked_trips = linked_trips.drop("_tour_id_suffix", "_parent_tour_id_suffix")
 
     return linked_trips

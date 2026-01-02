@@ -71,9 +71,7 @@ def summarize_transit_trips(
     # If there are trips without weights, check which days are missing
     # (e.g., Fri/Sat/Sun)
 
-    unlinked_trip_ids = set(
-        unlinked_trips.select("trip_id").to_series().to_list()
-    )
+    unlinked_trip_ids = set(unlinked_trips.select("trip_id").to_series().to_list())
     trip_weight_ids = set(trip_weights.select("trip_id").to_series().to_list())
     missing_ids = trip_weight_ids - unlinked_trip_ids
     if missing_ids:
@@ -117,28 +115,18 @@ def summarize_transit_trips(
     )
 
     # Filter to transit trips only
-    linked_transit_trips = linked_trips.filter(
-        pl.col("mode_type").is_in(transit_mode_codes)
-    )
+    linked_transit_trips = linked_trips.filter(pl.col("mode_type").is_in(transit_mode_codes))
 
     # Summarize total transit trips by origin and destination county
     transit_summary = (
         (
             linked_transit_trips.group_by(["o_county", "d_county"]).agg(
-                pl.col("linked_trip_weight")
-                .sum()
-                .alias("total_weighted_transit_trips")
+                pl.col("linked_trip_weight").sum().alias("total_weighted_transit_trips")
             )
         )
         .with_columns(
-            pl.col("o_county")
-            .cast(pl.Utf8)
-            .replace(county_names)
-            .alias("o_county_name"),
-            pl.col("d_county")
-            .cast(pl.Utf8)
-            .replace(county_names)
-            .alias("d_county_name"),
+            pl.col("o_county").cast(pl.Utf8).replace(county_names).alias("o_county_name"),
+            pl.col("d_county").cast(pl.Utf8).replace(county_names).alias("d_county_name"),
         )
         .pivot(
             values="total_weighted_transit_trips",
@@ -149,9 +137,9 @@ def summarize_transit_trips(
     )
     # Add row totals
     transit_summary = transit_summary.with_columns(
-        pl.sum_horizontal(
-            [col for col in transit_summary.columns if col != "o_county_name"]
-        ).alias("Total")
+        pl.sum_horizontal([col for col in transit_summary.columns if col != "o_county_name"]).alias(
+            "Total"
+        )
     )
     # Add column totals
     total_row = transit_summary.select(
@@ -176,9 +164,7 @@ def summarize_transit_trips(
         (pl.col("boardings") * pl.col("linked_trip_weight")).sum()
     ).item()
 
-    avg_weighted_boardings_per_trip = (
-        total_boardings / total_weighted_transit_trips
-    )
+    avg_weighted_boardings_per_trip = total_boardings / total_weighted_transit_trips
 
     # Compare to expected ~ 971,588
     expected = 971588

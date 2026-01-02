@@ -58,11 +58,7 @@ def check_unique_constraints(
             continue
 
         # Check for duplicates using Polars
-        duplicates = (
-            non_null.group_by(col)
-            .agg(pl.len().alias("count"))
-            .filter(pl.col("count") > 1)
-        )
+        duplicates = non_null.group_by(col).agg(pl.len().alias("count")).filter(pl.col("count") > 1)
 
         if len(duplicates) > 0:
             dup_values = duplicates[col].to_list()

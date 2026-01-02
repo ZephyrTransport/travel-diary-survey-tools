@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 import polars as pl
 from pydantic import BaseModel
 
-from data_canon.models import daysim as daysim_models
 from data_canon.models import survey as survey_models
 from data_canon.validation.column import (
     check_unique_constraints,
@@ -61,12 +60,6 @@ class CanonicalData:
             "linked_trips": survey_models.LinkedTripModel,
             "tours": survey_models.TourModel,
             "joint_trips": survey_models.JointTripModel,
-            # Daysim models
-            "households_daysim": daysim_models.HouseholdDaysimModel,
-            "persons_daysim": daysim_models.PersonDaysimModel,
-            "days_daysim": daysim_models.PersonDayDaysimModel,
-            "linked_trips_daysim": daysim_models.LinkedTripDaysimModel,
-            "tours_daysim": daysim_models.TourDaysimModel,
         }
     )
 
@@ -74,14 +67,26 @@ class CanonicalData:
     # Populated from custom_validation.CUSTOM_VALIDATORS
     _custom_validators: dict[str, list[Callable]] = field(
         default_factory=lambda: {
-            table: list(validators)
-            for table, validators in CUSTOM_VALIDATORS.items()
+            table: list(validators) for table, validators in CUSTOM_VALIDATORS.items()
         }
     )
 
     def __post_init__(self) -> None:
         """Validate FK references point to unique fields."""
         validate_fk_references(self._models)
+
+    def add_models(self, new_models: dict[str, type[BaseModel]]) -> None:
+        """Add or override data models for validation.
+
+        Also adds the new tables as canonical data attributes.
+
+        Args:
+            new_models: Dictionary of table name to Pydantic model class
+        """
+        for table_name, model in new_models.items():
+            self._models[table_name] = model
+            if not hasattr(self, table_name):
+                setattr(self, table_name, None)
 
     def validate(self, table_name: str, step: str | None = None) -> None:
         """Validate a table through all validation layers.
@@ -102,17 +107,12 @@ class CanonicalData:
         """
         if table_name not in self._models:
             valid_tables = ", ".join(self._models.keys())
-            msg = (
-                f"Invalid table name: {table_name}. "
-                f"Valid tables: {valid_tables}"
-            )
+            msg = f"Invalid table name: {table_name}. Valid tables: {valid_tables}"
             raise ValueError(msg)
 
         df = getattr(self, table_name)
         if df is None:
-            logger.warning(
-                "Table '%s' is None - skipping validation", table_name
-            )
+            logger.warning("Table '%s' is None - skipping validation", table_name)
             return
 
         start_time = time.time()
@@ -192,8 +192,7 @@ class CanonicalData:
                     # Skip validator if required table is None
                     if table_df is None:
                         logger.warning(
-                            "Skipping validator %s: required table '%s' "
-                            "is None",
+                            "Skipping validator %s: required table '%s' is None",
                             validator_func.__name__,
                             param_name,
                         )
@@ -201,8 +200,7 @@ class CanonicalData:
                     kwargs[param_name] = table_df
                 else:
                     msg = (
-                        f"Validator {validator_func.__name__} requires "
-                        f"unknown table: {param_name}"
+                        f"Validator {validator_func.__name__} requires unknown table: {param_name}"
                     )
                     raise ValueError(msg)
 
@@ -210,10 +208,7 @@ class CanonicalData:
             errors = validator_func(**kwargs)
             if errors:
                 # Convert string errors to structured errors
-                if isinstance(errors, list):
-                    error_msg = "; ".join(errors)
-                else:
-                    error_msg = str(errors)
+                error_msg = "; ".join(errors) if isinstance(errors, list) else str(errors)
                 raise DataValidationError(
                     table=table_name,
                     rule=validator_func.__name__,
@@ -238,8 +233,7 @@ class CanonicalData:
         unique_fields = get_unique_fields(self._models[table_name])
         if not unique_fields:
             logger.warning(
-                "Skipping required children check: no unique field found "
-                "for '%s'",
+                "Skipping required children check: no unique field found for '%s'",
                 table_name,
             )
             return
@@ -264,24 +258,20 @@ class CanonicalData:
 
                 if child_df is None:
                     logger.warning(
-                        "Skipping required children check: child table '%s' "
-                        "is None",
+                        "Skipping required children check: child table '%s' is None",
                         child_table,
                     )
                     continue
 
                 if child_fk_col not in child_df.columns:
                     logger.warning(
-                        "Skipping required children check: FK column '%s' "
-                        "not in '%s'",
+                        "Skipping required children check: FK column '%s' not in '%s'",
                         child_fk_col,
                         child_table,
                     )
                     continue
 
-                child_parent_ids = set(
-                    child_df[child_fk_col].drop_nulls().unique().to_list()
-                )
+                child_parent_ids = set(child_df[child_fk_col].drop_nulls().unique().to_list())
                 parents_without_children = parent_ids - child_parent_ids
 
                 if parents_without_children:

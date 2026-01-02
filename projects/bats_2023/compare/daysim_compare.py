@@ -87,17 +87,14 @@ if __name__ == "__main__":
     logger.info(msg)
 
     # Check common households for mismatches
-    failures, stats = compare_household_diaries(
-        common_hhnos, legacy, new, sample_pct=10.0
-    )
+    failures, stats = compare_household_diaries(common_hhnos, legacy, new, sample_pct=10.0)
 
     # Display detailed comparison for sample of failures
     if failures:
         sep = "=" * 80
         num_to_display = min(NUM_SAMPLE_HOUSEHOLDS, len(failures))
         logger.info(
-            "\n%s\nDETAILED COMPARISON OF FAILED HOUSEHOLDS "
-            "(showing %d of %d)\n%s",
+            "\n%s\nDETAILED COMPARISON OF FAILED HOUSEHOLDS (showing %d of %d)\n%s",
             sep,
             num_to_display,
             len(failures),

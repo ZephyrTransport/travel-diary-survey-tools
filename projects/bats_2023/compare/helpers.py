@@ -45,10 +45,7 @@ def load_new_pipeline_data(
         "tours_daysim",
         "linked_trips_daysim",
     ]
-    data = {
-        name: pipeline.get_data(key)
-        for name, key in zip(TABLES, data_keys, strict=True)
-    }
+    data = {name: pipeline.get_data(key) for name, key in zip(TABLES, data_keys, strict=True)}
 
     for name, table_name in zip(TABLES, TABLE_NAMES, strict=True):
         logger.info("  %s: %s", table_name, f"{len(data[name]):,}")
@@ -67,8 +64,7 @@ def compare_row_counts(
         "ROW COUNT COMPARISON",
         sep,
         "",
-        f"{'Table':<15} {'Legacy':<12} {'New':<12} "
-        f"{'Difference':<12} {'% Diff':<10}",
+        f"{'Table':<15} {'Legacy':<12} {'New':<12} {'Difference':<12} {'% Diff':<10}",
         "-" * 80,
     ]
 
@@ -76,9 +72,7 @@ def compare_row_counts(
         leg_cnt, new_cnt = len(legacy_data[table]), len(new_data[table])
         diff = new_cnt - leg_cnt
         pct = (diff / leg_cnt * 100) if leg_cnt > 0 else 0
-        output.append(
-            f"{name:<15} {leg_cnt:<12,} {new_cnt:<12,} {diff:+12,} {pct:+9.2f}%"
-        )
+        output.append(f"{name:<15} {leg_cnt:<12,} {new_cnt:<12,} {diff:+12,} {pct:+9.2f}%")
 
     logger.info("\n".join(output))
 
@@ -102,8 +96,7 @@ def compare_columns(
             [
                 "",
                 f"--- {name} ---",
-                f"Total columns: Legacy={len(leg_cols)}, "
-                f"New={len(new_cols)}, Common={len(common)}",
+                f"Total columns: Legacy={len(leg_cols)}, New={len(new_cols)}, Common={len(common)}",
             ]
         )
 
@@ -153,11 +146,7 @@ def print_summary_statistics(
     logger.info("\n--- Household TAZ Coverage ---")
     for data, label in [(legacy_data, "Legacy"), (new_data, "New")]:
         if "hhtaz" in data["hh"].columns:
-            null_taz = (
-                data["hh"]
-                .filter(pl.col("hhtaz").is_null() | (pl.col("hhtaz") == -1))
-                .height
-            )
+            null_taz = data["hh"].filter(pl.col("hhtaz").is_null() | (pl.col("hhtaz") == -1)).height
             logger.info(
                 "%s: %s households with missing/invalid TAZ",
                 label,

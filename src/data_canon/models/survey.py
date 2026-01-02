@@ -38,29 +38,17 @@ from data_canon.core.step_field import step_field
 class HouseholdModel(BaseModel):
     """Household attributes (minimal for tour building)."""
 
-    hh_id: int = step_field(
-        ge=1, unique=True, required_in_steps=["extract_tours"]
-    )
-    home_lat: float = step_field(
-        ge=-90, le=90, required_in_steps=["extract_tours"]
-    )
-    home_lon: float = step_field(
-        ge=-180, le=180, required_in_steps=["extract_tours"]
-    )
-    residence_rent_own: ResidenceRentOwn = step_field(
-        required_in_steps=["format_daysim"]
-    )
-    residence_type: ResidenceType = step_field(
-        required_in_steps=["format_daysim"]
-    )
+    hh_id: int = step_field(ge=1, unique=True, required_in_steps=["extract_tours"])
+    home_lat: float = step_field(ge=-90, le=90, required_in_steps=["extract_tours"])
+    home_lon: float = step_field(ge=-180, le=180, required_in_steps=["extract_tours"])
+    residence_rent_own: ResidenceRentOwn = step_field(required_in_steps=["format_daysim"])
+    residence_type: ResidenceType = step_field(required_in_steps=["format_daysim"])
 
 
 class PersonModel(BaseModel):
     """Person attributes for tour building."""
 
-    person_id: int = step_field(
-        ge=1, unique=True, required_in_steps=["extract_tours"]
-    )
+    person_id: int = step_field(ge=1, unique=True, required_in_steps=["extract_tours"])
     hh_id: int = step_field(
         ge=1,
         fk_to="households.hh_id",
@@ -68,18 +56,10 @@ class PersonModel(BaseModel):
     )
     age: AgeCategory = step_field(required_in_steps=["extract_tours"])
     # These fields can be None if person is not employed or in school
-    work_lat: float | None = step_field(
-        ge=-90, le=90, required_in_steps=["extract_tours"]
-    )
-    work_lon: float | None = step_field(
-        ge=-180, le=180, required_in_steps=["extract_tours"]
-    )
-    school_lat: float | None = step_field(
-        ge=-90, le=90, required_in_steps=["extract_tours"]
-    )
-    school_lon: float | None = step_field(
-        ge=-180, le=180, required_in_steps=["extract_tours"]
-    )
+    work_lat: float | None = step_field(ge=-90, le=90, required_in_steps=["extract_tours"])
+    work_lon: float | None = step_field(ge=-180, le=180, required_in_steps=["extract_tours"])
+    school_lat: float | None = step_field(ge=-90, le=90, required_in_steps=["extract_tours"])
+    school_lon: float | None = step_field(ge=-180, le=180, required_in_steps=["extract_tours"])
     person_type: PersonType = step_field(required_in_steps=[])
     employment: Employment = step_field(required_in_steps=["extract_tours"])
     student: Student = step_field(required_in_steps=["extract_tours"])
@@ -140,12 +120,8 @@ class UnlinkedTripModel(BaseModel):
     d_lat: float = step_field(ge=-90, le=90, required_in_steps=["link_trips"])
     o_purpose: Purpose
     d_purpose: Purpose
-    o_purpose_category: PurposeCategory = step_field(
-        required_in_steps=["link_trips"]
-    )
-    d_purpose_category: PurposeCategory = step_field(
-        required_in_steps=["link_trips"]
-    )
+    o_purpose_category: PurposeCategory = step_field(required_in_steps=["link_trips"])
+    d_purpose_category: PurposeCategory = step_field(required_in_steps=["link_trips"])
     mode_type: ModeType = step_field(required_in_steps=["link_trips"])
     mode_1: Mode | None
     mode_2: Mode | None
@@ -154,12 +130,8 @@ class UnlinkedTripModel(BaseModel):
     duration_minutes: float = step_field(ge=0)
     distance_meters: float = step_field(ge=0)
 
-    depart_time: datetime | None = step_field(
-        required_in_steps=["link_trips", "extract_tours"]
-    )
-    arrive_time: datetime | None = step_field(
-        required_in_steps=["link_trips", "extract_tours"]
-    )
+    depart_time: datetime | None = step_field(required_in_steps=["link_trips", "extract_tours"])
+    arrive_time: datetime | None = step_field(required_in_steps=["link_trips", "extract_tours"])
 
     # You can add custom row-level validators here
     # Don't confuse with the constom DataFrame-level validators elsewhere
@@ -186,9 +158,7 @@ class UnlinkedTripModel(BaseModel):
 class LinkedTripModel(BaseModel):
     """Linked Trip data model for validation."""
 
-    day_id: int = step_field(
-        ge=1, fk_to="days.day_id", required_in_steps=["extract_tours"]
-    )
+    day_id: int = step_field(ge=1, fk_to="days.day_id", required_in_steps=["extract_tours"])
     person_id: int = step_field(ge=1, fk_to="persons.person_id")
     hh_id: int = step_field(ge=1, fk_to="households.hh_id")
 
@@ -198,9 +168,7 @@ class LinkedTripModel(BaseModel):
         fk_to="joint_trips.joint_trip_id",
         default=None,
     )
-    tour_id: int = step_field(
-        ge=1, fk_to="tours.tour_id", required_in_steps=["format_daysim"]
-    )
+    tour_id: int = step_field(ge=1, fk_to="tours.tour_id", required_in_steps=["format_daysim"])
     travel_dow: TravelDow = step_field(required_in_steps=["extract_tours"])
     depart_date: datetime = step_field()
     depart_hour: int = step_field(ge=0, le=23)
@@ -211,23 +179,13 @@ class LinkedTripModel(BaseModel):
     arrive_minute: int = step_field(ge=0, le=59)
     arrive_seconds: int = step_field(ge=0, le=59)
     o_purpose_category: int = step_field()
-    o_lat: float = step_field(
-        ge=-90, le=90, required_in_steps=["detect_joint_trips"]
-    )
-    o_lon: float = step_field(
-        ge=-180, le=180, required_in_steps=["detect_joint_trips"]
-    )
+    o_lat: float = step_field(ge=-90, le=90, required_in_steps=["detect_joint_trips"])
+    o_lon: float = step_field(ge=-180, le=180, required_in_steps=["detect_joint_trips"])
     d_purpose_category: int = step_field(required_in_steps=["extract_tours"])
-    d_lat: float = step_field(
-        ge=-90, le=90, required_in_steps=["detect_joint_trips"]
-    )
-    d_lon: float = step_field(
-        ge=-180, le=180, required_in_steps=["detect_joint_trips"]
-    )
+    d_lat: float = step_field(ge=-90, le=90, required_in_steps=["detect_joint_trips"])
+    d_lon: float = step_field(ge=-180, le=180, required_in_steps=["detect_joint_trips"])
     mode_type: ModeType = step_field(required_in_steps=["extract_tours"])
-    driver: Driver = step_field(
-        required_in_steps=["link_trips", "format_daysim"]
-    )
+    driver: Driver = step_field(required_in_steps=["link_trips", "format_daysim"])
     num_travelers: int = step_field(ge=1)
     access_mode: AccessEgressMode | None = step_field(
         required_in_steps=["format_daysim"], default=None
@@ -240,9 +198,7 @@ class LinkedTripModel(BaseModel):
     distance_meters: float = step_field(ge=0)
     depart_time: datetime = step_field(required_in_steps=["detect_joint_trips"])
     arrive_time: datetime = step_field(required_in_steps=["detect_joint_trips"])
-    tour_direction: TourDirection = step_field(
-        required_in_steps=["format_daysim"]
-    )
+    tour_direction: TourDirection = step_field(required_in_steps=["format_daysim"])
 
 
 class TourModel(BaseModel):
@@ -301,27 +257,17 @@ class TourModel(BaseModel):
         """
         if not self.single_trip_tour:
             if self.tour_purpose is None:
-                msg = (
-                    f"Tour {self.tour_id}: Complete tours must have "
-                    f"tour_purpose (non-null)"
-                )
+                msg = f"Tour {self.tour_id}: Complete tours must have tour_purpose (non-null)"
                 raise ValueError(msg)
             if self.dest_arrive_time is None:
-                msg = (
-                    f"Tour {self.tour_id}: Complete tours must have "
-                    f"dest_arrive_time (non-null)"
-                )
+                msg = f"Tour {self.tour_id}: Complete tours must have dest_arrive_time (non-null)"
                 raise ValueError(msg)
             if self.dest_depart_time is None:
-                msg = (
-                    f"Tour {self.tour_id}: Complete tours must have "
-                    f"dest_depart_time (non-null)"
-                )
+                msg = f"Tour {self.tour_id}: Complete tours must have dest_depart_time (non-null)"
                 raise ValueError(msg)
             if self.dest_linked_trip_id is None:
                 msg = (
-                    f"Tour {self.tour_id}: Complete tours must have "
-                    f"dest_linked_trip_id (non-null)"
+                    f"Tour {self.tour_id}: Complete tours must have dest_linked_trip_id (non-null)"
                 )
                 raise ValueError(msg)
         return self
@@ -357,9 +303,5 @@ class JointTripModel(BaseModel):
         le=180,
         description="Mean destination longitude across member trips",
     )
-    depart_time_mean: datetime = step_field(
-        description="Mean departure time across member trips"
-    )
-    depart_arrive_mean: datetime = step_field(
-        description="Mean arrival time across member trips"
-    )
+    depart_time_mean: datetime = step_field(description="Mean departure time across member trips")
+    depart_arrive_mean: datetime = step_field(description="Mean arrival time across member trips")

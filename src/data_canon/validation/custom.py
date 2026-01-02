@@ -45,14 +45,8 @@ def check_for_teleports(unlinked_trips: pl.DataFrame) -> list[str]:
         unlinked_trips.with_columns(
             pl.col("d_lat").alias("current_d_lat"),
             pl.col("d_lon").alias("current_d_lon"),
-            pl.col("o_lat")
-            .shift(-1)
-            .over(["person_id", "day_id"])
-            .alias("next_o_lat"),
-            pl.col("o_lon")
-            .shift(-1)
-            .over(["person_id", "day_id"])
-            .alias("next_o_lon"),
+            pl.col("o_lat").shift(-1).over(["person_id", "day_id"]).alias("next_o_lat"),
+            pl.col("o_lon").shift(-1).over(["person_id", "day_id"]).alias("next_o_lon"),
         )
         .with_columns(
             expr_haversine(
@@ -100,9 +94,7 @@ def check_single_trip_tour_flag_consistency(
     errors = []
 
     # Count trips per tour
-    trip_counts = linked_trips.group_by("tour_id").agg(
-        pl.len().alias("actual_trip_count")
-    )
+    trip_counts = linked_trips.group_by("tour_id").agg(pl.len().alias("actual_trip_count"))
 
     # Join with tours and check consistency
     inconsistent = tours.join(trip_counts, on="tour_id", how="left").filter(

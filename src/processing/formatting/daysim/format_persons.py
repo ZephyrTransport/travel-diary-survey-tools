@@ -29,9 +29,7 @@ from .mappings import (
 logger = logging.getLogger(__name__)
 
 
-MODE_TO_MODE_TYPE_MAP = {
-    k.value: v.value for k, v in ModeType.from_mode().items()
-}
+MODE_TO_MODE_TYPE_MAP = {k.value: v.value for k, v in ModeType.from_mode().items()}
 
 
 def compute_day_completeness(days: pl.DataFrame) -> pl.DataFrame:
@@ -167,9 +165,7 @@ def format_persons(persons: pl.DataFrame, days: pl.DataFrame) -> pl.DataFrame:
         # Map gender codes
         pgend=pl.col("gender").replace(GENDER_MAP),
         # Map student status
-        pstyp=pl.col("student")
-        .replace(STUDENT_MAP)
-        .fill_null(DaysimStudentType.NOT_STUDENT.value),
+        pstyp=pl.col("student").replace(STUDENT_MAP).fill_null(DaysimStudentType.NOT_STUDENT.value),
         # Map work parking
         ppaidprk=pl.col("work_park").replace_strict(WORK_PARK_MAP),
     )
@@ -328,22 +324,16 @@ def format_persons(persons: pl.DataFrame, days: pl.DataFrame) -> pl.DataFrame:
         puwarrp=pl.lit(-1),  # usual work arrival period (not available)
         puwdepp=pl.lit(-1),  # usual work departure period (not available)
         # transit pass
-        ptpass=pl.when(pl.col("transit_pass") == BooleanYesNo.YES.value)
-        .then(1)
-        .otherwise(0),
+        ptpass=pl.when(pl.col("transit_pass") == BooleanYesNo.YES.value).then(1).otherwise(0),
         # proxy respondent
-        pproxy=pl.when(pl.col("is_proxy") == BooleanYesNo.YES.value)
-        .then(1)
-        .otherwise(0),
+        pproxy=pl.when(pl.col("is_proxy") == BooleanYesNo.YES.value).then(1).otherwise(0),
         # has diary day
         pdiary=pl.when(pl.col("num_days_complete") > 0).then(1).otherwise(0),
     )
 
     # Join day completeness if available
     if day_completeness is not None:
-        persons_daysim = persons_daysim.join(
-            day_completeness, on=["hhno", "pno"], how="left"
-        )
+        persons_daysim = persons_daysim.join(day_completeness, on=["hhno", "pno"], how="left")
 
     # Select DaySim person fields
     person_cols = [

@@ -84,12 +84,8 @@ class DaysimTestDataBuilder:
             "num_vehicles": vehicles,  # Add this field for DaySim formatting
             "num_workers": 1,  # Default to 1 worker
             "income": 87500,  # Approximate midpoint for 75-100k
-            "income_detailed": income_detailed.value
-            if income_detailed
-            else None,
-            "income_followup": income_followup.value
-            if income_followup
-            else None,
+            "income_detailed": income_detailed.value if income_detailed else None,
+            "income_followup": income_followup.value if income_followup else None,
             "residence_type": residence_type.value,
             "residence_rent_own": residence_rent_own.value,
             "hh_weight": 1.0,
@@ -205,10 +201,7 @@ class DaysimTestDataBuilder:
             age_years = age_years_map[age]
 
         # Determine work_park based on whether person has work location
-        if work_taz is not None:
-            work_park = WorkParking.FREE
-        else:
-            work_park = WorkParking.NOT_APPLICABLE
+        work_park = WorkParking.FREE if work_taz is not None else WorkParking.NOT_APPLICABLE
 
         return {
             "person_id": person_id,
@@ -451,9 +444,7 @@ class DaysimTestDataBuilder:
             "tour_id": tour_id,
             "depart_time": depart_time,
             "arrive_time": arrive_time,
-            "duration_minutes": int(
-                (arrive_time - depart_time).total_seconds() / 60
-            ),
+            "duration_minutes": int((arrive_time - depart_time).total_seconds() / 60),
             "o_lat": origin_lat,
             "o_lon": origin_lon,
             "o_taz": origin_taz,
@@ -539,9 +530,7 @@ class DaysimTestDataBuilder:
         if origin_linked_trip_id is None:
             origin_linked_trip_id = tour_id * 100 + 1
         if dest_linked_trip_id is None:
-            dest_linked_trip_id = tour_id * 100 + (
-                num_trips // 2 if num_trips > 2 else 2
-            )
+            dest_linked_trip_id = tour_id * 100 + (num_trips // 2 if num_trips > 2 else 2)
 
         return {
             "tour_id": tour_id,
@@ -586,11 +575,7 @@ class DaysimScenarioBuilder:
             Tuple of (households, persons, days, linked_trips, tours) DataFrames
         """
         households = pl.DataFrame(
-            [
-                DaysimTestDataBuilder.create_household(
-                    hh_id=1, home_taz=100, home_maz=1000
-                )
-            ]
+            [DaysimTestDataBuilder.create_household(hh_id=1, home_taz=100, home_maz=1000)]
         )
 
         persons = pl.DataFrame(
@@ -685,11 +670,7 @@ class DaysimScenarioBuilder:
             Tuple of (households, persons, days, linked_trips, tours) DataFrames
         """
         households = pl.DataFrame(
-            [
-                DaysimTestDataBuilder.create_household(
-                    hh_id=1, home_taz=100, home_maz=1000
-                )
-            ]
+            [DaysimTestDataBuilder.create_household(hh_id=1, home_taz=100, home_maz=1000)]
         )
 
         persons = pl.DataFrame(

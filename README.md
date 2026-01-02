@@ -335,7 +335,7 @@ CONFIG_PATH = Path(__file__).parent / "config_daysim.yaml"
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
     import argparse
-    
+
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description="Pipeline Runner")
     parser.add_argument(
@@ -344,9 +344,9 @@ if __name__ == "__main__":
         help="Clear the pipeline cache before running",
     )
     args = parser.parse_args()
-    
+
     logger.info("Starting FooBar Processing Pipeline")
-    
+
     # Clear cache if requested
     cache_dir = Path(".cache")
     if args.clear_cache and cache_dir.exists():

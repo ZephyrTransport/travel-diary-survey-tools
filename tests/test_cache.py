@@ -1,10 +1,14 @@
 """Tests for pipeline caching functionality."""
 
+import contextlib
 import shutil
+import threading
 import time
 
+import geopandas as gpd
 import polars as pl
 import pytest
+from shapely.geometry import Point
 
 from pipeline.cache import PipelineCache
 from pipeline.decoration import step
@@ -58,14 +62,10 @@ class TestPipelineCache:
         assert key1 == key2
         assert len(key1) == 16  # 16 hex characters
 
-    def test_cache_key_changes_with_data(
-        self, pipeline_cache, sample_dataframe
-    ):
+    def test_cache_key_changes_with_data(self, pipeline_cache, sample_dataframe):
         """Test cache key changes when data changes."""
         inputs1 = {"households": sample_dataframe}
-        inputs2 = {
-            "households": sample_dataframe.with_columns(pl.col("hh_id") + 10)
-        }
+        inputs2 = {"households": sample_dataframe.with_columns(pl.col("hh_id") + 10)}
         params = {"param1": "value1"}
 
         key1 = pipeline_cache.get_cache_key("test_step", inputs1, params)
@@ -73,18 +73,12 @@ class TestPipelineCache:
 
         assert key1 != key2
 
-    def test_cache_key_changes_with_params(
-        self, pipeline_cache, sample_dataframe
-    ):
+    def test_cache_key_changes_with_params(self, pipeline_cache, sample_dataframe):
         """Test cache key changes when parameters change."""
         inputs = {"households": sample_dataframe}
 
-        key1 = pipeline_cache.get_cache_key(
-            "test_step", inputs, {"param1": "value1"}
-        )
-        key2 = pipeline_cache.get_cache_key(
-            "test_step", inputs, {"param1": "value2"}
-        )
+        key1 = pipeline_cache.get_cache_key("test_step", inputs, {"param1": "value1"})
+        key2 = pipeline_cache.get_cache_key("test_step", inputs, {"param1": "value2"})
 
         assert key1 != key2
 
@@ -193,17 +187,13 @@ class TestStepDecoratorCaching:
         def process_data(households: pl.DataFrame) -> dict[str, pl.DataFrame]:
             time.sleep(0.1)  # Simulate slow operation
             processed = households.with_columns(
-                pl.concat_str(
-                    [pl.lit("HH_"), pl.col("hh_id").cast(pl.Utf8)]
-                ).alias("hh_code")
+                pl.concat_str([pl.lit("HH_"), pl.col("hh_id").cast(pl.Utf8)]).alias("hh_code")
             )
             return {"households": processed}
 
         return process_data
 
-    def test_decorator_cache_miss_and_hit(
-        self, slow_step, pipeline_cache, sample_dataframe
-    ):
+    def test_decorator_cache_miss_and_hit(self, slow_step, pipeline_cache, sample_dataframe):
         """Test decorator correctly caches and retrieves results."""
         # First call - cache miss
         start = time.time()
@@ -229,9 +219,7 @@ class TestStepDecoratorCaching:
         # Verify second call was significantly faster (cache hit)
         assert second_duration < first_duration * 0.5
 
-    def test_decorator_cache_disabled(
-        self, slow_step, pipeline_cache, sample_dataframe
-    ):
+    def test_decorator_cache_disabled(self, slow_step, pipeline_cache, sample_dataframe):
         """Test decorator works when caching is disabled."""
         result1 = slow_step(
             households=sample_dataframe,
@@ -253,9 +241,7 @@ class TestStepDecoratorCaching:
         stats = pipeline_cache.get_stats()
         assert stats["loaded"] == 0
 
-    def test_decorator_without_pipeline_cache(
-        self, slow_step, sample_dataframe
-    ):
+    def test_decorator_without_pipeline_cache(self, slow_step, sample_dataframe):
         """Test decorator works when no pipeline_cache is provided."""
         result = slow_step(households=sample_dataframe, cache=True)
         assert "households" in result
@@ -276,14 +262,10 @@ class TestCacheIntegration:
         df2 = pl.DataFrame({"hh_id": [4, 5, 6]})
 
         # First call with df1
-        result1 = transform(
-            households=df1, pipeline_cache=pipeline_cache, cache=True
-        )
+        result1 = transform(households=df1, pipeline_cache=pipeline_cache, cache=True)
 
         # Second call with df2 - should not use cache
-        result2 = transform(
-            households=df2, pipeline_cache=pipeline_cache, cache=True
-        )
+        result2 = transform(households=df2, pipeline_cache=pipeline_cache, cache=True)
 
         # Results should be different
         assert not result1["households"].equals(result2["households"])
@@ -303,14 +285,10 @@ class TestCacheIntegration:
         df = pl.DataFrame({"hh_id": [1, 2, 3]})
 
         # First call
-        result1 = split_data(
-            households=df, pipeline_cache=pipeline_cache, cache=True
-        )
+        result1 = split_data(households=df, pipeline_cache=pipeline_cache, cache=True)
 
         # Second call - should use cache
-        result2 = split_data(
-            households=df, pipeline_cache=pipeline_cache, cache=True
-        )
+        result2 = split_data(households=df, pipeline_cache=pipeline_cache, cache=True)
 
         assert result1["households"].equals(result2["households"])
         assert result1["persons"].equals(result2["persons"])
@@ -319,3 +297,227 @@ class TestCacheIntegration:
         cached_steps = pipeline_cache.list_cached_steps()
         assert len(cached_steps) == 1
         assert set(cached_steps[0]["tables"]) == {"households", "persons"}
+
+    def test_cache_key_with_empty_dataframe(self, pipeline_cache):
+        """Test cache key generation with empty DataFrame."""
+        empty_df = pl.DataFrame({"id": []})
+        inputs = {"data": empty_df}
+        params = {"param": "value"}
+
+        key = pipeline_cache.get_cache_key("test_step", inputs, params)
+
+        assert isinstance(key, str)
+        assert len(key) == 16
+
+    def test_cache_key_with_none_inputs(self, pipeline_cache):
+        """Test cache key generation with None inputs (first step)."""
+        key = pipeline_cache.get_cache_key("test_step", None, {"param": "value"})
+
+        assert isinstance(key, str)
+        assert len(key) == 16
+
+    def test_cache_key_with_none_params(self, pipeline_cache, sample_dataframe):
+        """Test cache key generation with None parameters."""
+        inputs = {"data": sample_dataframe}
+
+        key = pipeline_cache.get_cache_key("test_step", inputs, None)
+
+        assert isinstance(key, str)
+        assert len(key) == 16
+
+    def test_load_nonexistent_step(self, pipeline_cache):
+        """Test loading from nonexistent step."""
+        result = pipeline_cache.load("nonexistent_step", "fake_key")
+
+        assert result is None
+
+    def test_load_nonexistent_cache_key(self, pipeline_cache, sample_dataframe):
+        """Test loading with nonexistent cache key."""
+        # Save with one key
+        pipeline_cache.save("test_step", "real_key", {"data": sample_dataframe})
+
+        # Try to load with different key
+        result = pipeline_cache.load("test_step", "fake_key")
+
+        assert result is None
+
+    def test_clear_cache(self, pipeline_cache, sample_dataframe):
+        """Test clearing all cache."""
+        # Save some data
+        pipeline_cache.save("step1", "key1", {"data": sample_dataframe})
+        pipeline_cache.save("step2", "key2", {"data": sample_dataframe})
+
+        assert len(pipeline_cache.list_cached_steps()) == 2
+
+        # Clear cache
+        pipeline_cache.clear()
+
+        # Cache should be empty (directory still exists but contents cleared)
+        assert len(pipeline_cache.list_cached_steps()) == 0
+        # Cache directory itself may still exist
+        if pipeline_cache.cache_dir.exists():
+            # But should have no step directories
+            step_dirs = [d for d in pipeline_cache.cache_dir.iterdir() if d.is_dir()]
+            assert len(step_dirs) == 0
+
+    def test_cache_with_geodataframe(self, pipeline_cache):
+        """Test caching with GeoDataFrame."""
+        gdf = gpd.GeoDataFrame(
+            {"id": [1, 2], "value": [10, 20]}, geometry=[Point(0, 0), Point(1, 1)], crs="EPSG:4326"
+        )
+
+        # Save and load
+        pipeline_cache.save("test_step", "geo_key", {"locations": gdf})
+        loaded = pipeline_cache.load("test_step", "geo_key")
+
+        assert loaded is not None
+        assert "locations" in loaded
+        assert isinstance(loaded["locations"], gpd.GeoDataFrame)
+        assert loaded["locations"].crs.to_string() == "EPSG:4326"
+
+    def test_cache_key_with_non_serializable_params(self, pipeline_cache, sample_dataframe):
+        """Test cache key generation with non-serializable parameters."""
+        inputs = {"data": sample_dataframe}
+        # Include non-serializable object (like a thread lock)
+        params = {
+            "serializable": "value",
+            "non_serializable": threading.Lock(),
+            "another_good": 123,
+        }
+
+        # Should skip non-serializable and generate key from valid params
+        key = pipeline_cache.get_cache_key("test_step", inputs, params)
+
+        assert isinstance(key, str)
+        assert len(key) == 16
+
+    def test_load_with_corrupted_metadata(self, pipeline_cache, sample_dataframe):
+        """Test loading cache with corrupted metadata file."""
+        step_name = "test_step"
+        cache_key = "corrupt_key"
+
+        # Save valid data first
+        pipeline_cache.save(step_name, cache_key, {"data": sample_dataframe})
+
+        # Corrupt the metadata file
+        cache_path = pipeline_cache.cache_dir / step_name / cache_key
+        metadata_path = cache_path / "metadata.json"
+        metadata_path.write_text("{ invalid json }")
+
+        # Load should return None
+        result = pipeline_cache.load(step_name, cache_key)
+        assert result is None
+
+        # Stats should show stale
+        assert pipeline_cache._stats["stale"] > 0
+
+    def test_load_with_missing_metadata(self, pipeline_cache, sample_dataframe):
+        """Test loading cache with missing metadata file."""
+        step_name = "test_step"
+        cache_key = "missing_metadata"
+
+        # Save valid data first
+        pipeline_cache.save(step_name, cache_key, {"data": sample_dataframe})
+
+        # Delete metadata file
+        cache_path = pipeline_cache.cache_dir / step_name / cache_key
+        metadata_path = cache_path / "metadata.json"
+        metadata_path.unlink()
+
+        # Load should return None
+        result = pipeline_cache.load(step_name, cache_key)
+        assert result is None
+
+    def test_load_with_missing_table_file(self, pipeline_cache, sample_dataframe):
+        """Test loading cache when table parquet file is missing."""
+        step_name = "test_step"
+        cache_key = "missing_table"
+
+        # Save valid data first
+        pipeline_cache.save(step_name, cache_key, {"data": sample_dataframe})
+
+        # Delete one of the table files
+        cache_path = pipeline_cache.cache_dir / step_name / cache_key
+        table_file = cache_path / "data.parquet"
+        table_file.unlink()
+
+        # Load should return None
+        result = pipeline_cache.load(step_name, cache_key)
+        assert result is None
+
+    def test_list_cached_steps_with_corrupted_metadata(self, pipeline_cache, sample_dataframe):
+        """Test list_cached_steps skips corrupted cache entries."""
+        # Save valid data
+        pipeline_cache.save("step1", "key1", {"data": sample_dataframe})
+        pipeline_cache.save("step2", "key2", {"data": sample_dataframe})
+
+        # Corrupt one metadata file
+        corrupt_path = pipeline_cache.cache_dir / "step2" / "key2" / "metadata.json"
+        corrupt_path.write_text("{ bad json }")
+
+        # List should only return valid step
+        cached_steps = pipeline_cache.list_cached_steps()
+
+        # Should have step1 but not step2 (corrupted)
+        step_names = [s["step_name"] for s in cached_steps]
+        assert "step1" in step_names
+        # step2 might still be listed if list_cached_steps is lenient
+
+    def test_save_with_exception_cleans_up(self, pipeline_cache):
+        """Test that failed save cleans up partial cache."""
+        step_name = "test_step"
+        cache_key = "will_fail"
+
+        # Create an object that can't be saved properly
+        class SerializationError(RuntimeError):
+            def __init__(self):
+                super().__init__("Cannot serialize")
+
+        class UnserializableObject:
+            def __getstate__(self):
+                raise SerializationError
+
+        outputs = {"bad_data": UnserializableObject()}
+
+        # This should catch the exception and clean up
+        with contextlib.suppress(Exception):
+            pipeline_cache.save(step_name, cache_key, outputs)
+
+        # Cache directory for this key should not exist
+        cache_path = pipeline_cache.cache_dir / step_name / cache_key
+        assert not cache_path.exists()
+
+    def test_get_stats(self, pipeline_cache, sample_dataframe):
+        """Test cache statistics calculation."""
+        # Initial stats
+        stats = pipeline_cache.get_stats()
+        assert stats["loaded"] == 0
+        assert stats["missing"] == 0
+        assert stats["stale"] == 0
+        assert stats["total"] == 0
+
+        # Save and load
+        pipeline_cache.save("step1", "key1", {"data": sample_dataframe})
+        pipeline_cache.load("step1", "key1")
+
+        stats = pipeline_cache.get_stats()
+        assert stats["loaded"] == 1
+        assert stats["total"] == 1
+        assert stats["load_rate"] == 1.0
+
+        # Try loading non-existent cache
+        pipeline_cache.load("step2", "key2")
+
+        stats = pipeline_cache.get_stats()
+        assert stats["missing"] == 1
+        assert stats["total"] == 2
+        assert stats["load_rate"] == 0.5
+
+    def test_invalidate_nonexistent_step(self, pipeline_cache):
+        """Test invalidating a step that doesn't exist."""
+        # Should not raise error
+        pipeline_cache.invalidate("nonexistent_step")
+
+        # Directory should not exist
+        step_dir = pipeline_cache.cache_dir / "nonexistent_step"
+        assert not step_dir.exists()

@@ -92,8 +92,6 @@ def step_field(
 
     # Else pass specific steps list
     elif required_in_steps and len(required_in_steps) > 0:
-        field_kwargs["json_schema_extra"]["required_in_steps"] = (
-            required_in_steps
-        )
+        field_kwargs["json_schema_extra"]["required_in_steps"] = required_in_steps
 
     return Field(**field_kwargs)

@@ -175,20 +175,14 @@ class TestCustomValidators:
             """Check that trips are not unreasonably long (>4 hours)."""
             errors = []
             unlinked_trips = unlinked_trips.with_columns(
-                (
-                    (
-                        pl.col("arrive_time") - pl.col("depart_time")
-                    ).dt.total_seconds()
-                    / 3600
-                ).alias("duration_hours")
+                ((pl.col("arrive_time") - pl.col("depart_time")).dt.total_seconds() / 3600).alias(
+                    "duration_hours"
+                )
             )
             long_trips = unlinked_trips.filter(pl.col("duration_hours") > 4)
             if len(long_trips) > 0:
                 trip_ids = long_trips["trip_id"].to_list()[:5]
-                errors.append(
-                    f"Found {len(long_trips)} trips longer "
-                    f"than 4 hours: {trip_ids}"
-                )
+                errors.append(f"Found {len(long_trips)} trips longer than 4 hours: {trip_ids}")
             return errors
 
         # Include all required fields for UnlinkedTripModel
@@ -229,9 +223,7 @@ class TestCustomValidators:
                 "arrive_time": [
                     datetime(2024, 1, 15, 10, 30, 0),
                     datetime(2024, 1, 15, 11, 30, 0),
-                    datetime(
-                        2024, 1, 15, 18, 0, 0
-                    ),  # 10 hours later - too long!
+                    datetime(2024, 1, 15, 18, 0, 0),  # 10 hours later - too long!
                 ],
             }
         )

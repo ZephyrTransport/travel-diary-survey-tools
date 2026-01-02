@@ -50,6 +50,7 @@ class PipelineCache:
             "missing": 0,  # No cache found
             "stale": 0,  # Cache outdated/corrupted
         }
+        logger.info("Pipeline cache initialized at: %s", cache_dir)
 
     def get_cache_key(
         self,
@@ -96,9 +97,7 @@ class PipelineCache:
                         # Hash all rows - Polars does this efficiently
                         data_hash = str(df.hash_rows().sum())
 
-                    hash_parts.append(
-                        f"{table_name}:{schema_str}:{row_count}:{data_hash}"
-                    )
+                    hash_parts.append(f"{table_name}:{schema_str}:{row_count}:{data_hash}")
 
         # Hash parameters
         if params:
@@ -138,17 +137,13 @@ class PipelineCache:
 
         if not cache_path.exists():
             self._stats["missing"] += 1
-            logger.debug(
-                "Cache not found for %s (key: %s)", step_name, cache_key
-            )
+            logger.debug("Cache not found for %s (key: %s)", step_name, cache_key)
             return None
 
         metadata_path = cache_path / "metadata.json"
         if not metadata_path.exists():
             self._stats["stale"] += 1
-            logger.warning(
-                "Cache corrupted: missing metadata for %s", step_name
-            )
+            logger.warning("Cache corrupted: missing metadata for %s", step_name)
             return None
 
         # Load metadata
@@ -164,9 +159,7 @@ class PipelineCache:
         outputs = {}
         load_info = []
         for table_name in metadata.get("tables", []):
-            table_type = metadata.get("table_types", {}).get(
-                table_name, "polars"
-            )
+            table_type = metadata.get("table_types", {}).get(table_name, "polars")
             obj = _load_data(cache_path, table_name, table_type)
 
             if obj is None:
@@ -192,9 +185,7 @@ class PipelineCache:
             size_str = f" [{file_size_mb:.2f} MB]"
             format_name = "pickle" if table_type == "pickle" else "parquet"
 
-            load_info.append(
-                f"  ← {table_name} {obj_type}: {format_name}{shape}{size_str}"
-            )
+            load_info.append(f"  ← {table_name} {obj_type}: {format_name}{shape}{size_str}")
 
         self._stats["loaded"] += 1
         logger.info(
@@ -240,8 +231,7 @@ class PipelineCache:
                 "tables": list(outputs.keys()),
                 "table_types": table_types,  # Add type info
                 "row_counts": {
-                    name: len(df) if df is not None else 0
-                    for name, df in outputs.items()
+                    name: len(df) if df is not None else 0 for name, df in outputs.items()
                 },
             }
             metadata_path = cache_path / "metadata.json"
@@ -260,6 +250,13 @@ class PipelineCache:
             # Clean up partial cache
             if cache_path.exists():
                 shutil.rmtree(cache_path)
+
+    def clear(self) -> None:
+        """Clear the entire cache."""
+        if self.cache_dir.exists():
+            shutil.rmtree(self.cache_dir)
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            logger.info("Cleared entire cache at %s", self.cache_dir)
 
     def invalidate(self, step_name: str | None = None) -> None:
         """Invalidate cache for a step or all steps.
@@ -307,10 +304,7 @@ class PipelineCache:
                             metadata = json.load(f)
 
                         # Calculate total size
-                        total_size = sum(
-                            p.stat().st_size
-                            for p in cache_dir.glob("*.parquet")
-                        )
+                        total_size = sum(p.stat().st_size for p in cache_dir.glob("*.parquet"))
 
                         cached_steps.append(
                             {
@@ -334,11 +328,7 @@ class PipelineCache:
             Dict with 'loaded', 'missing', 'stale', 'total',
             and 'load_rate' keys
         """
-        total = (
-            self._stats["loaded"]
-            + self._stats["missing"]
-            + self._stats["stale"]
-        )
+        total = self._stats["loaded"] + self._stats["missing"] + self._stats["stale"]
         load_rate = self._stats["loaded"] / total if total > 0 else 0.0
 
         return {
@@ -426,8 +416,6 @@ def _save_data(cache_path: Path, name: str, obj: Any) -> tuple[str, str]:  # noq
 
     # Build info string (common for all types)
     file_size_mb = obj_path.stat().st_size / (1024 * 1024)
-    info = (
-        f"  → {name} {obj_type}: {format_name}{shape} [{file_size_mb:.2f} MB]"
-    )
+    info = f"  → {name} {obj_type}: {format_name}{shape} [{file_size_mb:.2f} MB]"
 
     return data_type, info

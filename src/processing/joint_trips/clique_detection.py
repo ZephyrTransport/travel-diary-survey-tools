@@ -53,9 +53,7 @@ def _build_similarity_graph(
         u, v = row["linked_trip_id"], row["linked_trip_id_b"]
         mahal = row.get("mahalanobis_distance", 0.0) if has_mahalanobis else 0.0
         overlap = row.get("temporal_overlap_min", 0.0) if has_overlap else 0.0
-        edge_data.append(
-            (u, v, {"mahalanobis": mahal, "overlap_time": overlap})
-        )
+        edge_data.append((u, v, {"mahalanobis": mahal, "overlap_time": overlap}))
 
     graph.add_edges_from(edge_data)
 
@@ -272,16 +270,8 @@ def detect_disjoint_cliques(
     )
 
     num_joint_trips = len(trip_to_joint)
-    pct_joint = (
-        100 * num_joint_trips / len(all_trip_ids)
-        if len(all_trip_ids) > 0
-        else 0
-    )
-    avg_clique_size = (
-        num_joint_trips / len(disjoint_cliques)
-        if len(disjoint_cliques) > 0
-        else 0
-    )
+    pct_joint = 100 * num_joint_trips / len(all_trip_ids) if len(all_trip_ids) > 0 else 0
+    avg_clique_size = num_joint_trips / len(disjoint_cliques) if len(disjoint_cliques) > 0 else 0
     logger.info(
         "%d trips in %d joint groups (%.1f%% of all trips, avg size %.1f)",
         num_joint_trips,

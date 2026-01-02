@@ -8,6 +8,7 @@ survey_dir: "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Full Weighted
 output_dir: "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Processed/pipeline_20251230"
 TM1_shapefile_dir: "E:/GitHub/travel-model-one/utilities/geographies"
 TM2_shapefile_dir: "E:/GitHub/TM2/tm2py-utils/tm2py_utils/inputs/maz_taz/shapefiles"
+log_file: "{{ output_dir }}/pipeline.log" # If not set, logs just to console, if not absolute saves to .cache directory
 
 # Pipeline configuration
 steps:
@@ -65,7 +66,7 @@ steps:
   #   validate_input: true
   #   cache: true
 
-  - name: custom_add_zone_ids
+  - name: add_zone_ids
     validate_input: false
     cache: true
     params:
@@ -77,7 +78,7 @@ steps:
           shapefile: "{{ TM2_shapefile_dir }}/mazs_TM2_2_5.shp"
           zone_id_field: "MAZ_NODE"
         # Add additional zone geographies as needed:
-        - zone_name: "TAZ1454" 
+        - zone_name: "TAZ1454"
           shapefile: "{{ TM1_shapefile_dir }}/bayarea_rtaz1454_rev1_WGS84.shp"
           zone_id_field: "TAZ1454"
   # - name: final_check

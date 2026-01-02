@@ -37,7 +37,7 @@ def format_days(
         - wkathome: Minutes worked at home
         - pwxcord, pwycord, psxcord, psycord: Work/school coordinates
         - pdexpfac: Person-day expansion factor
-    """  # noqa: E501
+    """
     logger.info("Formatting person-day data for DaySim")
 
     # Get tour counts by purpose for each day

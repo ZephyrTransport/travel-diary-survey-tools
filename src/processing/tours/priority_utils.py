@@ -48,17 +48,11 @@ def get_purpose_priority(
     # Get priority from nested map
     purpose_priority_map = config.purpose_priority_by_persontype
     if person_category_str not in purpose_priority_map:
-        msg = (
-            f"PersonCategory '{person_category_str}' "
-            f"not in purpose_priority_by_persontype"
-        )
+        msg = f"PersonCategory '{person_category_str}' not in purpose_priority_by_persontype"
         raise ValueError(msg)
     purpose_priorities = purpose_priority_map[person_category_str]
     if purpose_cat not in purpose_priorities:
-        msg = (
-            f"PurposeCategory {purpose_cat} not mapped for "
-            f"PersonCategory '{person_category_str}'"
-        )
+        msg = f"PurposeCategory {purpose_cat} not mapped for PersonCategory '{person_category_str}'"
         raise ValueError(msg)
     return purpose_priorities[purpose_cat]
 
@@ -96,10 +90,7 @@ def add_purpose_priority_column(
         # Get priority from nested map
         purpose_priority_map = config.purpose_priority_by_persontype
         if person_category_str not in purpose_priority_map:
-            msg = (
-                f"PersonCategory '{person_category_str}' "
-                f"not in purpose_priority_by_persontype"
-            )
+            msg = f"PersonCategory '{person_category_str}' not in purpose_priority_by_persontype"
             raise ValueError(msg)
         purpose_priorities = purpose_priority_map[person_category_str]
         if purpose_cat not in purpose_priorities:
@@ -173,10 +164,7 @@ def add_activity_duration_column(
     """
     return df.with_columns(
         [
-            (
-                pl.col("depart_time").shift(-1).over(["person_id", "day_id"])
-                - pl.col("arrive_time")
-            )
+            (pl.col("depart_time").shift(-1).over(["person_id", "day_id"]) - pl.col("arrive_time"))
             .dt.total_minutes()
             .fill_null(default_minutes)
             .alias(alias)

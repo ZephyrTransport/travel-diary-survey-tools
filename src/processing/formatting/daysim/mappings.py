@@ -245,9 +245,7 @@ STUDENT_MAP = {k.value: v.value for k, v in STUDENT_TO_DAYSIM.items()}
 WORK_PARK_MAP = {k.value: v.value for k, v in WORK_PARK_TO_DAYSIM.items()}
 PURPOSE_MAP = {k.value: v.value for k, v in PURPOSE_TO_DAYSIM.items()}
 MODE_TYPE_MAP = {k.value: v.value for k, v in MODE_TYPE_TO_DAYSIM.items()}
-MODE_TYPE_TO_ACCESS_EGRESS_MAP = {
-    k.value: v.value for k, v in MODE_TYPE_TO_ACCESS_EGRESS.items()
-}
+MODE_TYPE_TO_ACCESS_EGRESS_MAP = {k.value: v.value for k, v in MODE_TYPE_TO_ACCESS_EGRESS.items()}
 RENTOWN_MAP = {k.value: v.value for k, v in RENTOWN_TO_DAYSIM.items()}
 RESTYPE_MAP = {k.value: v.value for k, v in RESIDENCE_TYPE_TO_DAYSIM.items()}
 
@@ -255,9 +253,7 @@ RESTYPE_MAP = {k.value: v.value for k, v in RESIDENCE_TYPE_TO_DAYSIM.items()}
 # =============================================================================
 # Custom Step Functions
 # =============================================================================
-def determine_tour_mode(
-    tours: pl.DataFrame, linked_trips: pl.DataFrame
-) -> pl.DataFrame:
+def determine_tour_mode(tours: pl.DataFrame, linked_trips: pl.DataFrame) -> pl.DataFrame:
     """Determine DaySim tour mode from mode_type, passengers, and access mode.
 
     Args:

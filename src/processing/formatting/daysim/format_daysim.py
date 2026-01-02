@@ -77,12 +77,8 @@ def format_daysim(  # noqa: PLR0913
     if drop_invalid_tours:
         n_og_tours = len(tours)
         n_og_trips = len(linked_trips)
-        tours = tours.filter(
-            pl.col("tour_data_quality") == TourDataQuality.VALID.value
-        )
-        linked_trips = linked_trips.filter(
-            pl.col("tour_id").is_in(tours["tour_id"].implode())
-        )
+        tours = tours.filter(pl.col("tour_data_quality") == TourDataQuality.VALID.value)
+        linked_trips = linked_trips.filter(pl.col("tour_id").is_in(tours["tour_id"].implode()))
 
         # NOTE: We keep all days even if their tours are invalid
         # Days with invalid tours become "no travel" days in the model
@@ -100,12 +96,8 @@ def format_daysim(  # noqa: PLR0913
     if drop_partial_tours:
         n_og_tours = len(tours)
         n_og_trips = len(linked_trips)
-        tours = tours.filter(
-            pl.col("tour_category") == TourCategory.COMPLETE.value
-        )
-        linked_trips = linked_trips.filter(
-            pl.col("tour_id").is_in(tours["tour_id"].implode())
-        )
+        tours = tours.filter(pl.col("tour_category") == TourCategory.COMPLETE.value)
+        linked_trips = linked_trips.filter(pl.col("tour_id").is_in(tours["tour_id"].implode()))
         # NOTE: We keep all days even if their tours are partial/incomplete
         # Days with partial tours become "no travel" days in the model
         logger.info(
@@ -125,19 +117,12 @@ def format_daysim(  # noqa: PLR0913
         n_og_tours = len(tours)
 
         households = households.filter(
-            households["home_taz"].is_not_null()
-            & (households["home_taz"] != -1)
+            households["home_taz"].is_not_null() & (households["home_taz"] != -1)
         )
-        persons = persons.filter(
-            pl.col("hh_id").is_in(households["hh_id"].implode())
-        )
+        persons = persons.filter(pl.col("hh_id").is_in(households["hh_id"].implode()))
         days = days.filter(pl.col("hh_id").is_in(households["hh_id"].implode()))
-        linked_trips = linked_trips.filter(
-            pl.col("hh_id").is_in(households["hh_id"].implode())
-        )
-        tours = tours.filter(
-            pl.col("hh_id").is_in(households["hh_id"].implode())
-        )
+        linked_trips = linked_trips.filter(pl.col("hh_id").is_in(households["hh_id"].implode()))
+        tours = tours.filter(pl.col("hh_id").is_in(households["hh_id"].implode()))
         logger.info(
             "Dropped %d households without TAZ/MAZ with "
             "%d persons, %d linked trips, and %d tours; "
@@ -164,9 +149,7 @@ def format_daysim(  # noqa: PLR0913
     days_daysim = format_days(persons, days, tours)
 
     # Format linked trips
-    linked_trips_daysim = format_linked_trips(
-        persons, unlinked_trips, linked_trips
-    )
+    linked_trips_daysim = format_linked_trips(persons, unlinked_trips, linked_trips)
 
     # Format tours
     tours_daysim = format_tours(persons, days, linked_trips, tours)

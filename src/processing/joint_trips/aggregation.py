@@ -37,9 +37,7 @@ def build_joint_trips_table(
     )
 
     # Filter to only trips that are part of joint trips
-    joint_members = trips_with_joints.filter(
-        pl.col("joint_trip_id").is_not_null()
-    )
+    joint_members = trips_with_joints.filter(pl.col("joint_trip_id").is_not_null())
 
     if len(joint_members) == 0:
         # No joint trips detected, return empty table with proper schema
@@ -112,40 +110,31 @@ def validate_against_num_travelers(
     )
 
     # Join back to trips to compare with num_travelers
-    trips_with_sizes = trips_with_joints.join(
-        joint_sizes, on="joint_trip_id", how="left"
-    ).filter(pl.col("joint_trip_id").is_not_null())
+    trips_with_sizes = trips_with_joints.join(joint_sizes, on="joint_trip_id", how="left").filter(
+        pl.col("joint_trip_id").is_not_null()
+    )
 
     if len(trips_with_sizes) == 0:
-        logger.info(
-            "No joint trips detected, no validation against num_travelers"
-        )
+        logger.info("No joint trips detected, no validation against num_travelers")
         return
 
     # Compare detected vs reported
-    matches = trips_with_sizes.filter(
-        pl.col("detected_size") == pl.col("num_travelers")
-    )
-    mismatches = trips_with_sizes.filter(
-        pl.col("detected_size") != pl.col("num_travelers")
-    )
+    matches = trips_with_sizes.filter(pl.col("detected_size") == pl.col("num_travelers"))
+    mismatches = trips_with_sizes.filter(pl.col("detected_size") != pl.col("num_travelers"))
 
     total = len(trips_with_sizes)
     num_matches = len(matches)
     match_rate = num_matches / total if total > 0 else 0
 
     logger.info(
-        "Detected joint trips validation: %d/%d trips match reported "
-        "num_travelers (%.1f%%)",
+        "Detected joint trips validation: %d/%d trips match reported num_travelers (%.1f%%)",
         num_matches,
         total,
         100 * match_rate,
     )
 
     if log_discrepancies and len(mismatches) > 0:
-        logger.debug(
-            "Found %d trips with mismatched joint trip sizes:", len(mismatches)
-        )
+        logger.debug("Found %d trips with mismatched joint trip sizes:", len(mismatches))
         for row in mismatches.head(20).iter_rows(named=True):
             logger.debug(
                 "  Trip %d (hh=%d, person=%d): detected=%d, reported=%d",
@@ -156,6 +145,4 @@ def validate_against_num_travelers(
                 row["num_travelers"],
             )
         if len(mismatches) > 20:  # noqa: PLR2004
-            logger.debug(
-                "  ... and %d more discrepancies", len(mismatches) - 20
-            )
+            logger.debug("  ... and %d more discrepancies", len(mismatches) - 20)

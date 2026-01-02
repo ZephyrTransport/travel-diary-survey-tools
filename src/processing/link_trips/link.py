@@ -110,14 +110,10 @@ def link_trip_ids(
     # If empty dataframe just extend the schema and return
     if unlinked_trips.is_empty():
         logger.info("No trips to link; returning empty DataFrame.")
-        return unlinked_trips.with_columns(
-            pl.lit(None).cast(pl.Utf8).alias("linked_trip_id")
-        )
+        return unlinked_trips.with_columns(pl.lit(None).cast(pl.Utf8).alias("linked_trip_id"))
 
     # Step 1: Sort trips by person, day, and departure time
-    unlinked_trips = unlinked_trips.sort(
-        ["person_id", "day_id", "depart_time", "arrive_time"]
-    )
+    unlinked_trips = unlinked_trips.sort(["person_id", "day_id", "depart_time", "arrive_time"])
 
     # Step 2: Get previous trip purpose category within the same person
     unlinked_trips = unlinked_trips.with_columns(
@@ -147,11 +143,7 @@ def link_trip_ids(
                     > dwell_buffer_distance
                 )
                 | (
-                    (
-                        (
-                            pl.col("depart_time") - pl.col("prev_arrive_time")
-                        ).dt.total_minutes()
-                    )
+                    ((pl.col("depart_time") - pl.col("prev_arrive_time")).dt.total_minutes())
                     > max_dwell_time
                 )
             )
@@ -163,10 +155,7 @@ def link_trip_ids(
     # Step 4: Assign linked trip IDs using cumulative sum
     unlinked_trips = unlinked_trips.with_columns(
         [
-            pl.col("new_trip_flag")
-            .cum_sum()
-            .over("person_id")
-            .alias("linked_trip_num"),
+            pl.col("new_trip_flag").cum_sum().over("person_id").alias("linked_trip_num"),
         ]
     )
 
@@ -218,9 +207,7 @@ def aggregate_linked_trips(
         # Calculate trip durations
         .with_columns(
             [
-                (pl.col("arrive_time") - pl.col("depart_time")).alias(
-                    "trip_duration"
-                ),
+                (pl.col("arrive_time") - pl.col("depart_time")).alias("trip_duration"),
             ]
         )
         # sort so longest trip per linked_trip_id is first
@@ -259,9 +246,7 @@ def aggregate_linked_trips(
         unlinked_trips.sort(["linked_trip_id", "depart_time", "arrive_time"])
         .with_columns(
             [
-                pl.col("mode_type")
-                .is_in(transit_mode_codes)
-                .alias("is_transit"),
+                pl.col("mode_type").is_in(transit_mode_codes).alias("is_transit"),
             ]
         )
         .group_by("linked_trip_id")
@@ -316,9 +301,7 @@ def aggregate_linked_trips(
                 # Trip distance (sum of segment distances)
                 pl.col("distance_meters").sum(),
                 # Travel duration (sum of segment durations)
-                pl.col("duration_minutes")
-                .sum()
-                .alias("travel_duration_minutes"),
+                pl.col("duration_minutes").sum().alias("travel_duration_minutes"),
                 # Total trip duration
                 (pl.col("arrive_time").max() - pl.col("depart_time").min())
                 .dt.total_minutes()
@@ -326,10 +309,7 @@ def aggregate_linked_trips(
                 # Dwell duration at change_mode locations:
                 # duration_minutes - travel_duration_minutes
                 (
-                    (
-                        pl.col("arrive_time").max()
-                        - pl.col("depart_time").min()
-                    ).dt.total_minutes()
+                    (pl.col("arrive_time").max() - pl.col("depart_time").min()).dt.total_minutes()
                     - pl.col("duration_minutes").sum()
                 ).alias("dwell_duration_minutes"),
                 # Number of segments in linked trip
@@ -343,9 +323,7 @@ def aggregate_linked_trips(
                 .then(pl.col("driver").first())
                 # If missing entirely
                 .when(
-                    pl.col("driver")
-                    .filter(pl.col("driver") != Driver.MISSING.value)
-                    .n_unique()
+                    pl.col("driver").filter(pl.col("driver") != Driver.MISSING.value).n_unique()
                     == 0
                 )
                 .then(pl.lit(Driver.MISSING.value))  # All missing
@@ -362,19 +340,11 @@ def aggregate_linked_trips(
         .with_columns(
             [
                 pl.when(pl.col("access_mode").is_not_null())
-                .then(
-                    pl.col("access_mode").replace_strict(
-                        MODE_TYPE_TO_ACCESS_EGRESS
-                    )
-                )
+                .then(pl.col("access_mode").replace_strict(MODE_TYPE_TO_ACCESS_EGRESS))
                 .otherwise(pl.lit(None))
                 .alias("access_mode"),
                 pl.when(pl.col("egress_mode").is_not_null())
-                .then(
-                    pl.col("egress_mode").replace_strict(
-                        MODE_TYPE_TO_ACCESS_EGRESS
-                    )
-                )
+                .then(pl.col("egress_mode").replace_strict(MODE_TYPE_TO_ACCESS_EGRESS))
                 .otherwise(pl.lit(None))
                 .alias("egress_mode"),
             ]

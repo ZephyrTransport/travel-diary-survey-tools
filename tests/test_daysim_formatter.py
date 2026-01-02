@@ -77,9 +77,7 @@ class TestDayCompleteness:
         assert result["mon_complete"][0] == 1
         assert result["tue_complete"][0] == 0
         assert result["num_days_complete_3dayweekday"][0] == 0  # Tue+Wed+Thu
-        assert (
-            result["num_days_complete_4dayweekday"][0] == 1
-        )  # Mon+Tue+Wed+Thu
+        assert result["num_days_complete_4dayweekday"][0] == 1  # Mon+Tue+Wed+Thu
         assert result["num_days_complete_5dayweekday"][0] == 1  # Mon-Fri
 
     def test_compute_day_completeness_full_week(self):
@@ -771,9 +769,7 @@ class TestHouseholdFormatting:
             ]
         )
 
-        persons_daysim = pl.DataFrame(
-            [{"hhno": 1, "pno": 1, "pptyp": 1, "pwtyp": 1}]
-        )
+        persons_daysim = pl.DataFrame([{"hhno": 1, "pno": 1, "pptyp": 1, "pwtyp": 1}])
 
         result = format_households(households, persons_daysim)
 
@@ -793,9 +789,7 @@ class TestHouseholdFormatting:
             ]
         )
 
-        persons_daysim = pl.DataFrame(
-            [{"hhno": 1, "pno": 1, "pptyp": 1, "pwtyp": 1}]
-        )
+        persons_daysim = pl.DataFrame([{"hhno": 1, "pno": 1, "pptyp": 1, "pwtyp": 1}])
 
         result = format_households(households, persons_daysim)
 
@@ -831,11 +825,7 @@ class TestTripFormatting:
     def test_format_linked_trips_sov(self):
         """Test trip formatting for drive alone (SOV)."""
         persons = pl.DataFrame(
-            [
-                DaysimTestDataBuilder.create_person(
-                    person_id=101, hh_id=1, person_num=1
-                )
-            ]
+            [DaysimTestDataBuilder.create_person(person_id=101, hh_id=1, person_num=1)]
         )
 
         unlinked_trips = pl.DataFrame(
@@ -877,11 +867,7 @@ class TestTripFormatting:
     def test_format_linked_trips_hov2(self):
         """Test trip formatting for HOV2."""
         persons = pl.DataFrame(
-            [
-                DaysimTestDataBuilder.create_person(
-                    person_id=101, hh_id=1, person_num=1
-                )
-            ]
+            [DaysimTestDataBuilder.create_person(person_id=101, hh_id=1, person_num=1)]
         )
 
         unlinked_trips = pl.DataFrame(
@@ -921,11 +907,7 @@ class TestTripFormatting:
     def test_format_linked_trips_hov3(self):
         """Test trip formatting for HOV3+."""
         persons = pl.DataFrame(
-            [
-                DaysimTestDataBuilder.create_person(
-                    person_id=101, hh_id=1, person_num=1
-                )
-            ]
+            [DaysimTestDataBuilder.create_person(person_id=101, hh_id=1, person_num=1)]
         )
 
         unlinked_trips = pl.DataFrame(
@@ -965,11 +947,7 @@ class TestTripFormatting:
     def test_format_linked_trips_walk(self):
         """Test trip formatting for walk."""
         persons = pl.DataFrame(
-            [
-                DaysimTestDataBuilder.create_person(
-                    person_id=101, hh_id=1, person_num=1
-                )
-            ]
+            [DaysimTestDataBuilder.create_person(person_id=101, hh_id=1, person_num=1)]
         )
 
         unlinked_trips = pl.DataFrame(
@@ -1010,11 +988,7 @@ class TestTripFormatting:
     def test_format_linked_trips_bike(self):
         """Test trip formatting for bike."""
         persons = pl.DataFrame(
-            [
-                DaysimTestDataBuilder.create_person(
-                    person_id=101, hh_id=1, person_num=1
-                )
-            ]
+            [DaysimTestDataBuilder.create_person(person_id=101, hh_id=1, person_num=1)]
         )
 
         unlinked_trips = pl.DataFrame(
@@ -1054,11 +1028,7 @@ class TestTripFormatting:
     def test_format_linked_trips_purpose_mapping(self):
         """Test purpose code mapping."""
         persons = pl.DataFrame(
-            [
-                DaysimTestDataBuilder.create_person(
-                    person_id=101, hh_id=1, person_num=1
-                )
-            ]
+            [DaysimTestDataBuilder.create_person(person_id=101, hh_id=1, person_num=1)]
         )
 
         unlinked_trips = pl.DataFrame(
@@ -1095,11 +1065,7 @@ class TestTripFormatting:
     def test_format_linked_trips_time_conversion(self):
         """Test time conversion to minutes after midnight."""
         persons = pl.DataFrame(
-            [
-                DaysimTestDataBuilder.create_person(
-                    person_id=101, hh_id=1, person_num=1
-                )
-            ]
+            [DaysimTestDataBuilder.create_person(person_id=101, hh_id=1, person_num=1)]
         )
 
         unlinked_trips = pl.DataFrame(
@@ -1140,11 +1106,7 @@ class TestTourFormatting:
     def test_format_tours_basic(self):
         """Test basic tour formatting."""
         persons = pl.DataFrame(
-            [
-                DaysimTestDataBuilder.create_person(
-                    person_id=101, hh_id=1, person_num=1
-                )
-            ]
+            [DaysimTestDataBuilder.create_person(person_id=101, hh_id=1, person_num=1)]
         )
 
         days = pl.DataFrame(
@@ -1196,11 +1158,7 @@ class TestTourFormatting:
     def test_format_tours_purpose_mapping(self):
         """Test tour purpose mapping."""
         persons = pl.DataFrame(
-            [
-                DaysimTestDataBuilder.create_person(
-                    person_id=101, hh_id=1, person_num=1
-                )
-            ]
+            [DaysimTestDataBuilder.create_person(person_id=101, hh_id=1, person_num=1)]
         )
 
         days = pl.DataFrame(
@@ -1245,11 +1203,7 @@ class TestTourFormatting:
     def test_format_tours_time_conversion(self):
         """Test tour time conversion to minutes after midnight."""
         persons = pl.DataFrame(
-            [
-                DaysimTestDataBuilder.create_person(
-                    person_id=101, hh_id=1, person_num=1
-                )
-            ]
+            [DaysimTestDataBuilder.create_person(person_id=101, hh_id=1, person_num=1)]
         )
 
         days = pl.DataFrame(
@@ -1299,9 +1253,7 @@ class TestEndToEndDaysimFormatting:
 
     def test_format_daysim_simple_work_tour(self):
         """Test end-to-end formatting with simple work tour scenario."""
-        households, persons, days, linked_trips, tours = (
-            DaysimScenarioBuilder.simple_work_tour()
-        )
+        households, persons, days, linked_trips, tours = DaysimScenarioBuilder.simple_work_tour()
 
         # Need unlinked trips for mode aggregation
         unlinked_trips = pl.DataFrame(
@@ -1335,9 +1287,7 @@ class TestEndToEndDaysimFormatting:
             ]
         )
 
-        result = format_daysim(
-            persons, households, unlinked_trips, linked_trips, tours, days
-        )
+        result = format_daysim(persons, households, unlinked_trips, linked_trips, tours, days)
 
         # Verify all expected keys present
         assert "households_daysim" in result
@@ -1353,9 +1303,7 @@ class TestEndToEndDaysimFormatting:
 
     def test_format_daysim_transit_commute(self):
         """Test end-to-end formatting with transit commute scenario."""
-        households, persons, days, linked_trips, tours = (
-            DaysimScenarioBuilder.transit_commute()
-        )
+        households, persons, days, linked_trips, tours = DaysimScenarioBuilder.transit_commute()
 
         # Create unlinked trips representing walk-BART-walk
         unlinked_trips = pl.DataFrame(
@@ -1447,9 +1395,7 @@ class TestEndToEndDaysimFormatting:
             ]
         )
 
-        result = format_daysim(
-            persons, households, unlinked_trips, linked_trips, tours, days
-        )
+        result = format_daysim(persons, households, unlinked_trips, linked_trips, tours, days)
 
         # Verify transit mode detected
         trips_result = result["linked_trips_daysim"]
@@ -1505,9 +1451,7 @@ class TestEndToEndDaysimFormatting:
             ]
         )
 
-        result = format_daysim(
-            persons, households, unlinked_trips, linked_trips, tours, days
-        )
+        result = format_daysim(persons, households, unlinked_trips, linked_trips, tours, days)
 
         # Verify household composition
         hh_result = result["households_daysim"]
@@ -1520,52 +1464,31 @@ class TestEndToEndDaysimFormatting:
         # Verify person types
         persons_result = result["persons_daysim"]
         assert len(persons_result) == 4
-        assert (
-            PersonType.FULL_TIME_WORKER.value
-            in persons_result["pptyp"].to_list()
-        )
-        assert (
-            PersonType.PART_TIME_WORKER.value
-            in persons_result["pptyp"].to_list()
-        )
-        assert (
-            PersonType.HIGH_SCHOOL_STUDENT.value
-            in persons_result["pptyp"].to_list()
-        )
+        assert PersonType.FULL_TIME_WORKER.value in persons_result["pptyp"].to_list()
+        assert PersonType.PART_TIME_WORKER.value in persons_result["pptyp"].to_list()
+        assert PersonType.HIGH_SCHOOL_STUDENT.value in persons_result["pptyp"].to_list()
         assert PersonType.CHILD_5_15.value in persons_result["pptyp"].to_list()
 
     def test_format_daysim_filters_null_taz(self):
         """Test that households without TAZ are filtered out."""
         households = pl.DataFrame(
             [
-                DaysimTestDataBuilder.create_household(
-                    hh_id=1, home_taz=100, home_maz=1000
-                ),
-                DaysimTestDataBuilder.create_household(
-                    hh_id=2, home_taz=None, home_maz=None
-                ),
+                DaysimTestDataBuilder.create_household(hh_id=1, home_taz=100, home_maz=1000),
+                DaysimTestDataBuilder.create_household(hh_id=2, home_taz=None, home_maz=None),
             ]
         )
 
         persons = pl.DataFrame(
             [
-                DaysimTestDataBuilder.create_person(
-                    person_id=101, hh_id=1, person_num=1
-                ),
-                DaysimTestDataBuilder.create_person(
-                    person_id=201, hh_id=2, person_num=1
-                ),
+                DaysimTestDataBuilder.create_person(person_id=101, hh_id=1, person_num=1),
+                DaysimTestDataBuilder.create_person(person_id=201, hh_id=2, person_num=1),
             ]
         )
 
         days = pl.DataFrame(
             [
-                DaysimTestDataBuilder.create_day(
-                    day_id=1, person_id=101, hh_id=1, person_num=1
-                ),
-                DaysimTestDataBuilder.create_day(
-                    day_id=2, person_id=201, hh_id=2, person_num=1
-                ),
+                DaysimTestDataBuilder.create_day(day_id=1, person_id=101, hh_id=1, person_num=1),
+                DaysimTestDataBuilder.create_day(day_id=2, person_id=201, hh_id=2, person_num=1),
             ]
         )
 
@@ -1601,18 +1524,12 @@ class TestEndToEndDaysimFormatting:
 
         tours = pl.DataFrame(
             [
-                DaysimTestDataBuilder.create_tour(
-                    tour_id=1, person_id=101, hh_id=1, person_num=1
-                ),
-                DaysimTestDataBuilder.create_tour(
-                    tour_id=2, person_id=201, hh_id=2, person_num=1
-                ),
+                DaysimTestDataBuilder.create_tour(tour_id=1, person_id=101, hh_id=1, person_num=1),
+                DaysimTestDataBuilder.create_tour(tour_id=2, person_id=201, hh_id=2, person_num=1),
             ]
         )
 
-        result = format_daysim(
-            persons, households, unlinked_trips, linked_trips, tours, days
-        )
+        result = format_daysim(persons, households, unlinked_trips, linked_trips, tours, days)
 
         # Only household 1 should remain
         assert len(result["households_daysim"]) == 1
@@ -1631,9 +1548,7 @@ class TestEndToEndDaysimFormatting:
 
     def test_format_daysim_output_schema(self):
         """Test that output DataFrames have expected DaySim columns."""
-        households, persons, days, linked_trips, tours = (
-            DaysimScenarioBuilder.simple_work_tour()
-        )
+        households, persons, days, linked_trips, tours = DaysimScenarioBuilder.simple_work_tour()
 
         unlinked_trips = pl.DataFrame(
             [
@@ -1646,9 +1561,7 @@ class TestEndToEndDaysimFormatting:
             ]
         )
 
-        result = format_daysim(
-            persons, households, unlinked_trips, linked_trips, tours, days
-        )
+        result = format_daysim(persons, households, unlinked_trips, linked_trips, tours, days)
 
         # Check household columns
         hh_expected_cols = [

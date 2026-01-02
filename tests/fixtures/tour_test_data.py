@@ -251,11 +251,7 @@ class ScenarioBuilder:
         work = (37.75, -122.45)
 
         hh = pl.DataFrame(
-            [
-                TestDataBuilder.create_minimal_household(
-                    home_lat=home[0], home_lon=home[1]
-                )
-            ]
+            [TestDataBuilder.create_minimal_household(home_lat=home[0], home_lon=home[1])]
         )
 
         persons = pl.DataFrame(
@@ -318,11 +314,7 @@ class ScenarioBuilder:
         lunch = (37.76, -122.46)
 
         hh = pl.DataFrame(
-            [
-                TestDataBuilder.create_minimal_household(
-                    home_lat=home[0], home_lon=home[1]
-                )
-            ]
+            [TestDataBuilder.create_minimal_household(home_lat=home[0], home_lon=home[1])]
         )
 
         persons = pl.DataFrame(
@@ -409,11 +401,7 @@ class ScenarioBuilder:
         shop = (37.71, -122.41)
 
         hh = pl.DataFrame(
-            [
-                TestDataBuilder.create_minimal_household(
-                    home_lat=home[0], home_lon=home[1]
-                )
-            ]
+            [TestDataBuilder.create_minimal_household(home_lat=home[0], home_lon=home[1])]
         )
 
         persons = pl.DataFrame(
@@ -499,11 +487,7 @@ class ScenarioBuilder:
         work_dest = (37.75, -122.45)
 
         hh = pl.DataFrame(
-            [
-                TestDataBuilder.create_minimal_household(
-                    home_lat=home[0], home_lon=home[1]
-                )
-            ]
+            [TestDataBuilder.create_minimal_household(home_lat=home[0], home_lon=home[1])]
         )
 
         persons = pl.DataFrame(

@@ -36,9 +36,7 @@ def get_foreign_key_fields(
         if fk_to:
             # Parse "parent_table.parent_column" format
             if "." not in fk_to:
-                msg = (
-                    f"Invalid fk_to format: '{fk_to}'. Expected 'table.column'"
-                )
+                msg = f"Invalid fk_to format: '{fk_to}'. Expected 'table.column'"
                 raise ValueError(msg)
 
             parent_table, parent_column = fk_to.split(".", 1)
@@ -67,10 +65,7 @@ def get_required_children_fields(
         if extra.get("required_child", False):
             fk_to = extra.get("fk_to")
             if not fk_to:
-                msg = (
-                    f"Field '{field_name}' has required_child=True "
-                    f"but no fk_to specified"
-                )
+                msg = f"Field '{field_name}' has required_child=True but no fk_to specified"
                 raise ValueError(msg)
 
             parent_table, parent_column = fk_to.split(".", 1)
@@ -104,8 +99,7 @@ def validate_fk_references(
             # (table may be created by a later pipeline step)
             if parent_table not in models:
                 logger.debug(
-                    "Skipping FK validation for %s.%s -> %s.%s "
-                    "(parent table not in models yet)",
+                    "Skipping FK validation for %s.%s -> %s.%s (parent table not in models yet)",
                     table_name,
                     field_name,
                     parent_table,
@@ -167,8 +161,7 @@ def check_foreign_keys(
             # Actual FK constraint validated when tables in same
             # CanonicalData
             logger.debug(
-                "Skipping FK validation for %s.%s -> %s.%s: "
-                "parent table not found",
+                "Skipping FK validation for %s.%s -> %s.%s: parent table not found",
                 table_name,
                 child_col,
                 parent_table,
@@ -182,10 +175,7 @@ def check_foreign_keys(
                 table=table_name,
                 rule="foreign_key",
                 column=child_col,
-                message=(
-                    f"Referenced column '{parent_col}' not found "
-                    f"in table '{parent_table}'"
-                ),
+                message=(f"Referenced column '{parent_col}' not found in table '{parent_table}'"),
             )
 
         # Get non-null child values

@@ -74,12 +74,8 @@ def format_households(
     # Map income categories to midpoint values
     # (fill null first to avoid type issues)
     households_daysim = households_daysim.with_columns(
-        pl.col("income_detailed")
-        .fill_null(-1)
-        .replace(INCOME_DETAILED_TO_MIDPOINT),
-        pl.col("income_followup")
-        .fill_null(-1)
-        .replace(INCOME_FOLLOWUP_TO_MIDPOINT),
+        pl.col("income_detailed").fill_null(-1).replace(INCOME_DETAILED_TO_MIDPOINT),
+        pl.col("income_followup").fill_null(-1).replace(INCOME_FOLLOWUP_TO_MIDPOINT),
         hownrent=pl.col("residence_rent_own").replace(RENTOWN_MAP),
         hrestype=pl.col("residence_type").replace(RESTYPE_MAP),
     )
@@ -92,9 +88,7 @@ def format_households(
     )
 
     # Join household composition and add default fields
-    households_daysim = households_daysim.join(
-        hh_composition, on="hhno", how="left"
-    ).with_columns(
+    households_daysim = households_daysim.join(hh_composition, on="hhno", how="left").with_columns(
         samptype=pl.lit(0),
     )
 

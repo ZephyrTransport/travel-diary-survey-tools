@@ -96,9 +96,7 @@ def classify_trip_locations(
     logger.info("Classifying trip locations...")
 
     # Join person locations
-    linked_trips = linked_trips.join(
-        person_locations, on="person_id", how="left"
-    )
+    linked_trips = linked_trips.join(person_locations, on="person_id", how="left")
 
     # Calculate distances to all known locations
     linked_trips = _add_distance_columns(linked_trips)
@@ -120,9 +118,7 @@ def classify_trip_locations(
         "school_lon",
         "person_type",
     ]
-    drop_cols = [
-        c for c in linked_trips.columns if "dist_to" in c or c in temp_cols
-    ]
+    drop_cols = [c for c in linked_trips.columns if "dist_to" in c or c in temp_cols]
 
     logger.info("Location classification complete")
     return linked_trips.drop(drop_cols)
@@ -150,9 +146,7 @@ def _add_distance_columns(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns(distance_cols)
 
 
-def _add_location_flags(
-    df: pl.DataFrame, distance_thresholds: dict
-) -> pl.DataFrame:
+def _add_location_flags(df: pl.DataFrame, distance_thresholds: dict) -> pl.DataFrame:
     """Create boolean flags for location matches.
 
     Uses hybrid strategy: matches if EITHER purpose code OR distance
@@ -189,14 +183,9 @@ def _add_location_flags(
     for loc, (loc_type, null_check, purpose_cats) in location_configs.items():
         for end in ["o", "d"]:
             # Distance-based check
-            distance_check = (
-                pl.col(f"{end}_dist_to_{loc}_meters")
-                <= distance_thresholds[loc_type]
-            )
+            distance_check = pl.col(f"{end}_dist_to_{loc}_meters") <= distance_thresholds[loc_type]
             if null_check:
-                distance_check = (
-                    distance_check & pl.col(null_check).is_not_null()
-                )
+                distance_check = distance_check & pl.col(null_check).is_not_null()
 
             # Purpose-based check
             purpose_col = f"{end}_purpose_category"
@@ -237,9 +226,7 @@ def _add_location_types(df: pl.DataFrame) -> pl.DataFrame:
             LocationType.HOME,
         ]:
             col_name = f"{prefix}_is_{loc_type.name.lower()}"
-            expr = (
-                pl.when(pl.col(col_name)).then(pl.lit(loc_type)).otherwise(expr)
-            )
+            expr = pl.when(pl.col(col_name)).then(pl.lit(loc_type)).otherwise(expr)
         return expr
 
     return df.with_columns(
