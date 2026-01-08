@@ -80,6 +80,7 @@ from .detection_helpers import (
     expand_anchor_periods,
     identify_home_based_tours,
 )
+from .joint_tour_helpers import identify_joint_tours
 from .location_helpers import (
     classify_trip_locations,
     prepare_person_locations,
@@ -98,6 +99,7 @@ def extract_tours(
     households: pl.DataFrame,
     unlinked_trips: pl.DataFrame,
     linked_trips: pl.DataFrame,
+    joint_trips: pl.DataFrame | None = None,
     **kwargs: dict[str, Any],
 ) -> dict[str, pl.DataFrame]:
     """Extract tours from linked trip data.
@@ -108,18 +110,21 @@ def extract_tours(
     3. Expand anchor periods and detect subtours (assigns subtour_id)
     4. Aggregate to tour-level records with attributes
     5. Assign half-tour classification
+    6. Identify joint tours from stable joint trip participant groups
 
     Args:
         persons: DataFrame with person attributes
         households: DataFrame with household attributes
         unlinked_trips: DataFrame with unlinked trip data
         linked_trips: DataFrame with linked trip data
+        joint_trips: Optional DataFrame with joint trip aggregations
         **kwargs: Additional configuration parameters for TourConfig
 
     Returns:
         Dict with keys:
-        - linked_trips: Input trips with tour_id and subtour_id added
-        - tours: Aggregated tour records with purpose, mode, timing
+        - linked_trips: Input trips with tour_id, subtour_id, joint_tour_id
+        - tours: Aggregated tour records with
+            purpose, mode, timing, joint_tour_id
     """
     logger.info("Building tours from linked trip data...")
 
@@ -171,12 +176,25 @@ def extract_tours(
         config,
     )
 
-    # Step 6: Validate tours and correct data quality issues
-    tours = validate_and_correct_tours(tours, linked_trips_with_tour_ids)
+    # Step 6: Identify joint tours (tours where all trips involve same group)
+    if joint_trips is not None and len(joint_trips) > 0:
+        linked_trips_with_tour_dir, tours = identify_joint_tours(
+            linked_trips_with_tour_dir,
+            tours,
+        )
+    else:
+        # No joint trips, add null joint_tour_id columns
+        linked_trips_with_tour_dir = linked_trips_with_tour_dir.with_columns(
+            pl.lit(None, dtype=pl.Int64).alias("joint_tour_id")
+        )
+        tours = tours.with_columns(pl.lit(None, dtype=pl.Int64).alias("joint_tour_id"))
 
-    # Step 7: Add tour_id to unlinked_trips
+    # Step 7: Validate tours and correct data quality issues
+    tours = validate_and_correct_tours(tours, linked_trips_with_tour_dir)
+
+    # Step 8: Add tour_id and joint_tour_id to unlinked_trips
     unlinked_trips_with_tour_ids = unlinked_trips.join(
-        linked_trips_with_tour_dir.select("linked_trip_id", "tour_id"),
+        linked_trips_with_tour_dir.select("linked_trip_id", "tour_id", "joint_tour_id"),
         on="linked_trip_id",
         how="left",
     )

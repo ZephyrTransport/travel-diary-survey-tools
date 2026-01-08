@@ -12,7 +12,7 @@ from data_canon.codebook.persons import (
     SchoolType,
     Student,
 )
-from data_canon.codebook.trips import Driver, ModeType, PurposeCategory
+from data_canon.codebook.trips import Driver, ModeType, Purpose, PurposeCategory
 from processing import link_trips
 from processing.tours.extraction import extract_tours
 
@@ -98,6 +98,8 @@ def test_duration_tiebreaker_equal_priority():
                 "duration_minutes": 30,
                 "o_purpose_category": PurposeCategory.HOME.value,
                 "d_purpose_category": PurposeCategory.ERRAND.value,
+                "o_purpose": Purpose.HOME.value,
+                "d_purpose": Purpose.ERRAND_NO_APPT.value,
                 "mode_type": ModeType.CAR.value,
                 "num_travelers": 1,
                 "driver": Driver.DRIVER.value,
@@ -120,6 +122,8 @@ def test_duration_tiebreaker_equal_priority():
                 "duration_minutes": 30,
                 "o_purpose_category": PurposeCategory.ERRAND.value,
                 "d_purpose_category": PurposeCategory.ERRAND.value,
+                "o_purpose": Purpose.ERRAND_NO_APPT.value,
+                "d_purpose": Purpose.ERRAND_NO_APPT.value,
                 "mode_type": ModeType.CAR.value,
                 "num_travelers": 1,
                 "driver": Driver.DRIVER.value,
@@ -142,6 +146,8 @@ def test_duration_tiebreaker_equal_priority():
                 "duration_minutes": 30,
                 "o_purpose_category": PurposeCategory.ERRAND.value,
                 "d_purpose_category": PurposeCategory.HOME.value,
+                "o_purpose": Purpose.ERRAND_NO_APPT.value,
+                "d_purpose": Purpose.HOME.value,
                 "mode_type": ModeType.CAR.value,
                 "driver": Driver.DRIVER.value,
                 "num_travelers": 1,
@@ -210,6 +216,8 @@ def test_duration_tiebreaker_different_priority():
                 "d_lon": -122.4100,  # Shopping
                 "o_purpose_category": PurposeCategory.WORK.value,
                 "d_purpose_category": PurposeCategory.SHOP.value,
+                "o_purpose": Purpose.PRIMARY_WORKPLACE.value,
+                "d_purpose": Purpose.ERRAND_NO_APPT.value,
                 "mode_type": ModeType.CAR.value,
                 "distance_meters": 2000,
                 "duration_minutes": 30,
@@ -231,6 +239,8 @@ def test_duration_tiebreaker_different_priority():
                 "d_lon": -122.4194,  # Home
                 "o_purpose_category": PurposeCategory.SHOP.value,
                 "d_purpose_category": PurposeCategory.HOME.value,
+                "o_purpose": Purpose.SHOPPING_ERRANDS.value,
+                "d_purpose": Purpose.HOME.value,
                 "mode_type": ModeType.CAR.value,
                 "distance_meters": 3000,
                 "duration_minutes": 30,
@@ -296,6 +306,8 @@ def test_activity_duration_last_trip():
                 "d_lon": -122.4194,  # Home
                 "o_purpose_category": PurposeCategory.WORK.value,
                 "d_purpose_category": PurposeCategory.HOME.value,
+                "o_purpose": Purpose.PRIMARY_WORKPLACE.value,
+                "d_purpose": Purpose.HOME.value,
                 "mode_type": ModeType.CAR.value,
                 "distance_meters": 10000,
                 "duration_minutes": 60,

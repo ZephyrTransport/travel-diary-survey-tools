@@ -19,21 +19,32 @@ This matrix shows which columns are required in which pipeline steps.
 | **households** | `hh_id` | int | ≥ 1, UNIQUE |  |  |  |  | ✓ |  |  |  |
 |  | `home_lat` | float | ≥ -90, ≤ 90 |  |  |  |  | ✓ |  |  |  |
 |  | `home_lon` | float | ≥ -180, ≤ 180 |  |  |  |  | ✓ |  |  |  |
+|  | `home_taz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
+|  | `home_maz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
 |  | `residence_rent_own` | ResidenceRentOwn |  |  |  |  |  |  |  | ✓ |  |
 |  | `residence_type` | ResidenceType |  |  |  |  |  |  |  | ✓ |  |
 | **persons** | `person_id` | int | ≥ 1, UNIQUE |  |  |  |  | ✓ |  |  |  |
 |  | `hh_id` | int | ≥ 1, FK → `households.hh_id`, REQ_CHILD |  |  |  |  |  |  |  |  |
+|  | `person_num` | int | ≥ 1 |  |  |  |  |  |  | ✓ |  |
 |  | `age` | AgeCategory |  |  |  |  |  | ✓ |  |  |  |
+|  | `gender` | Gender |  |  |  |  |  |  |  |  |  |
 |  | `work_lat` | float or None | ≥ -90, ≤ 90 |  |  |  |  | ✓ |  |  |  |
 |  | `work_lon` | float or None | ≥ -180, ≤ 180 |  |  |  |  | ✓ |  |  |  |
 |  | `school_lat` | float or None | ≥ -90, ≤ 90 |  |  |  |  | ✓ |  |  |  |
 |  | `school_lon` | float or None | ≥ -180, ≤ 180 |  |  |  |  | ✓ |  |  |  |
+|  | `work_taz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
+|  | `school_taz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
+|  | `work_maz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
+|  | `school_maz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
 |  | `person_type` | PersonType |  |  |  |  |  |  |  |  |  |
+|  | `job_type` | data_canon.codebook.persons.JobType or None |  |  |  |  |  |  |  |  |  |
 |  | `employment` | Employment |  |  |  |  |  | ✓ |  |  |  |
 |  | `student` | Student |  |  |  |  |  | ✓ |  |  |  |
 |  | `school_type` | data_canon.codebook.persons.SchoolType or None |  |  |  |  |  | ✓ |  |  |  |
 |  | `work_park` | data_canon.codebook.persons.WorkParking or None |  |  |  |  |  |  |  | ✓ |  |
 |  | `work_mode` | data_canon.codebook.trips.Mode or None |  |  |  |  |  |  |  | ✓ |  |
+|  | `commute_subsidy_use_3` | data_canon.codebook.generic.BooleanYesNo or None |  |  |  |  |  |  |  |  |  |
+|  | `commute_subsidy_use_4` | data_canon.codebook.generic.BooleanYesNo or None |  |  |  |  |  |  |  |  |  |
 |  | `is_proxy` | bool |  |  |  |  |  |  |  | ✓ |  |
 |  | `num_days_complete` | int | ≥ 0 |  |  |  |  |  |  |  |  |
 | **days** | `person_id` | int | ≥ 1, FK → `persons.person_id`, REQ_CHILD |  |  |  |  |  |  |  |  |
@@ -71,11 +82,12 @@ This matrix shows which columns are required in which pipeline steps.
 |  | `distance_meters` | float | ≥ 0 |  |  |  |  |  |  |  |  |
 |  | `depart_time` | datetime.datetime or None |  |  |  | ✓ |  | ✓ |  |  |  |
 |  | `arrive_time` | datetime.datetime or None |  |  |  | ✓ |  | ✓ |  |  |  |
+|  | `num_travelers` | int | ≥ 1 |  |  |  |  |  |  |  |  |
 | **linked_trips** | `day_id` | int | ≥ 1, FK → `days.day_id` |  |  |  |  | ✓ |  |  |  |
 |  | `person_id` | int | ≥ 1, FK → `persons.person_id` |  |  |  |  |  |  |  |  |
 |  | `hh_id` | int | ≥ 1, FK → `households.hh_id` |  |  |  |  |  |  |  |  |
 |  | `linked_trip_id` | int | ≥ 1, UNIQUE |  |  |  |  |  |  |  |  |
-|  | `joint_trip_id` | int or None | ≥ 1, FK → `joint_trips.joint_trip_id` |  |  |  |  |  |  |  |  |
+|  | `joint_trip_id` | int or None | ≥ 1, FK → `joint_trips.joint_trip_id` |  |  |  |  | ✓ |  |  |  |
 |  | `tour_id` | int | ≥ 1, FK → `tours.tour_id` |  |  |  |  |  |  | ✓ |  |
 |  | `travel_dow` | TravelDow |  |  |  |  |  | ✓ |  |  |  |
 |  | `depart_date` | datetime |  |  |  |  |  |  |  |  |  |
@@ -86,12 +98,18 @@ This matrix shows which columns are required in which pipeline steps.
 |  | `arrive_hour` | int | ≥ 0, ≤ 23 |  |  |  |  |  |  |  |  |
 |  | `arrive_minute` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |
 |  | `arrive_seconds` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |
+|  | `o_purpose` | Purpose |  |  |  |  |  |  |  |  |  |
 |  | `o_purpose_category` | int |  |  |  |  |  |  |  |  |  |
 |  | `o_lat` | float | ≥ -90, ≤ 90 |  |  |  | ✓ |  |  |  |  |
 |  | `o_lon` | float | ≥ -180, ≤ 180 |  |  |  | ✓ |  |  |  |  |
+|  | `d_purpose` | Purpose |  |  |  |  |  |  |  |  |  |
 |  | `d_purpose_category` | int |  |  |  |  |  | ✓ |  |  |  |
 |  | `d_lat` | float | ≥ -90, ≤ 90 |  |  |  | ✓ |  |  |  |  |
 |  | `d_lon` | float | ≥ -180, ≤ 180 |  |  |  | ✓ |  |  |  |  |
+|  | `o_taz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
+|  | `d_taz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
+|  | `o_maz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
+|  | `d_maz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
 |  | `mode_type` | ModeType |  |  |  |  |  | ✓ |  |  |  |
 |  | `driver` | Driver |  |  |  | ✓ |  |  |  | ✓ |  |
 |  | `num_travelers` | int | ≥ 1 |  |  |  |  |  |  |  |  |
@@ -108,6 +126,7 @@ This matrix shows which columns are required in which pipeline steps.
 |  | `tour_num` | int | ≥ 1 |  |  |  |  |  |  |  |  |
 |  | `subtour_num` | int | ≥ 0 |  |  |  |  |  |  |  |  |
 |  | `parent_tour_id` | int | ≥ 1, FK → `tours.tour_id` |  |  |  |  |  |  |  |  |
+|  | `joint_tour_id` | int or None | ≥ 1 |  |  |  |  |  |  |  |  |
 |  | `tour_purpose` | data_canon.codebook.trips.PurposeCategory or None |  |  |  |  |  |  |  |  |  |
 |  | `tour_category` | TourCategory |  |  |  |  |  |  |  |  |  |
 |  | `single_trip_tour` | bool |  |  |  |  |  |  |  |  |  |
@@ -121,11 +140,16 @@ This matrix shows which columns are required in which pipeline steps.
 |  | `o_lon` | float | ≥ -180, ≤ 180 |  |  |  |  |  |  |  |  |
 |  | `d_lat` | float | ≥ -90, ≤ 90 |  |  |  |  |  |  |  |  |
 |  | `d_lon` | float | ≥ -180, ≤ 180 |  |  |  |  |  |  |  |  |
+|  | `o_taz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
+|  | `d_taz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
+|  | `o_maz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
+|  | `d_maz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
 |  | `o_location_type` | LocationType |  |  |  |  |  |  |  |  |  |
 |  | `d_location_type` | LocationType |  |  |  |  |  |  |  |  |  |
 |  | `tour_mode` | ModeType |  |  |  |  |  |  |  |  |  |
 |  | `outbound_mode` | data_canon.codebook.trips.ModeType or None |  |  |  |  |  |  |  |  |  |
 |  | `inbound_mode` | data_canon.codebook.trips.ModeType or None |  |  |  |  |  |  |  |  |  |
+|  | `num_travelers` | int | ≥ 1 |  |  |  |  |  |  |  |  |
 
 
 # Codebook Enum Values
@@ -220,26 +244,6 @@ This section shows the categorical values and labels for custom enum fields.
 | 8 | Less than monthly |
 | 995 | Missing Response |
 | 996 | Never |
-
-## CommuteSubsidy
-
-**Field name:** `commute_subsidy`
-
-| Value | Label |
-| --- | --- |
-| 1 | Free parking provided by employer |
-| 2 | Discounted (partially subsidized) parking provided by employer |
-| 3 | Free/discounted transit fare provided by employer |
-| 4 | Free/discounted vanpool service provided by employer |
-| 5 | Cash in lieu for carpooling, biking, or walking |
-| 6 | Free/discounted rideshare / TNC (e.g., Uber, Lyft) provided by employer |
-| 7 | Free/discounted carshare membership provided by employer (e.g., Zipcar, Car2Go) |
-| 8 | Free/discounted shuttle service to/from work provided by employer |
-| 9 | Free/discounted bikeshare membership provided by employer |
-| 10 | Free/discounted bike maintenance or bike parking provided by employer |
-| 11 | Other commute subsidy provided by employer |
-| 12 | No commute subsidies provided by employer |
-| 13 | Don't know |
 
 ## Delivery
 
@@ -424,9 +428,9 @@ This section shows the categorical values and labels for custom enum fields.
 | 995 | Missing Response |
 | 997 | Other, please specify |
 
-## JobCommuteType
+## JobType
 
-**Field name:** `job_commute_type`
+**Field name:** `job_type`
 
 | Value | Label |
 | --- | --- |

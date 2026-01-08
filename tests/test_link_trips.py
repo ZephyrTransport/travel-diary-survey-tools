@@ -4,6 +4,7 @@ from datetime import datetime
 
 import polars as pl
 
+from data_canon.codebook.trips import ModeType, Purpose, PurposeCategory
 from processing.link_trips.link import (
     aggregate_linked_trips,
     link_trip_ids,
@@ -34,6 +35,11 @@ class TestLinkTripIds:
                     datetime(2024, 1, 1, 8, 45),
                 ],
                 "d_purpose_category": [10, 1],  # change_mode, then work
+                "o_purpose": [Purpose.HOME.value, Purpose.MODE_CHANGE.value],
+                "d_purpose": [
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                ],
                 "o_lat": [37.7, 37.71],
                 "o_lon": [-122.4, -122.41],
                 "d_lat": [37.71, 37.75],
@@ -67,6 +73,14 @@ class TestLinkTripIds:
                     datetime(2024, 1, 1, 9, 30),
                 ],
                 "d_purpose_category": [1, 2],  # work, then shop
+                "o_purpose": [
+                    Purpose.HOME.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                ],
+                "d_purpose": [
+                    Purpose.PRIMARY_WORKPLACE.value,
+                    Purpose.GROCERY.value,
+                ],
                 "o_lat": [37.7, 37.75],
                 "o_lon": [-122.4, -122.45],
                 "d_lat": [37.75, 37.8],
@@ -99,6 +113,11 @@ class TestLinkTripIds:
                     datetime(2024, 1, 1, 8, 35),
                 ],
                 "d_purpose_category": [10, 10],
+                "o_purpose": [Purpose.HOME.value, Purpose.HOME.value],
+                "d_purpose": [
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.MODE_CHANGE.value,
+                ],
                 "o_lat": [37.7, 37.7],
                 "o_lon": [-122.4, -122.4],
                 "d_lat": [37.71, 37.71],
@@ -131,6 +150,11 @@ class TestLinkTripIds:
                     datetime(2024, 1, 1, 11, 0),
                 ],
                 "d_purpose_category": [10, 1],
+                "o_purpose": [Purpose.HOME.value, Purpose.MODE_CHANGE.value],
+                "d_purpose": [
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                ],
                 "o_lat": [37.7, 37.71],
                 "o_lon": [-122.4, -122.41],
                 "d_lat": [37.71, 37.75],
@@ -163,6 +187,11 @@ class TestLinkTripIds:
                     datetime(2024, 1, 1, 8, 45),
                 ],
                 "d_purpose_category": [10, 1],
+                "o_purpose": [Purpose.HOME.value, Purpose.MODE_CHANGE.value],
+                "d_purpose": [
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                ],
                 "o_lat": [37.7, 38.5],  # Far apart (~55 miles)
                 "o_lon": [-122.4, -122.4],
                 "d_lat": [37.71, 38.51],
@@ -201,6 +230,16 @@ class TestLinkTripIds:
                     10,
                     1,
                 ],  # change_mode, change_mode, work
+                "o_purpose": [
+                    Purpose.HOME.value,
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.MODE_CHANGE.value,
+                ],
+                "d_purpose": [
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                ],
                 "o_lat": [37.7, 37.71, 37.72],
                 "o_lon": [-122.4, -122.41, -122.42],
                 "d_lat": [37.71, 37.72, 37.75],
@@ -238,6 +277,18 @@ class TestLinkTripIds:
                     datetime(2024, 1, 2, 9, 30),
                 ],
                 "d_purpose_category": [1, 2, 1, 2],
+                "o_purpose": [
+                    Purpose.HOME.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                    Purpose.HOME.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                ],
+                "d_purpose": [
+                    Purpose.PRIMARY_WORKPLACE.value,
+                    Purpose.GROCERY.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                    Purpose.GROCERY.value,
+                ],
                 "o_lat": [37.7, 37.75, 37.7, 37.75],
                 "o_lon": [-122.4, -122.45, -122.4, -122.45],
                 "d_lat": [37.75, 37.8, 37.75, 37.8],
@@ -270,6 +321,11 @@ class TestLinkTripIds:
                     datetime(2024, 1, 1, 8, 30),  # Same time
                 ],
                 "d_purpose_category": [10, 1],
+                "o_purpose": [Purpose.HOME.value, Purpose.MODE_CHANGE.value],
+                "d_purpose": [
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                ],
                 "o_lat": [37.7, 37.71],
                 "o_lon": [-122.4, -122.41],
                 "d_lat": [37.71, 37.75],
@@ -345,13 +401,21 @@ class TestAggregateLinkedTrips:
                 "arrive_hour": [8, 9],
                 "arrive_minute": [10, 30],
                 "arrive_seconds": [0, 0],
-                "o_purpose_category": [1, 11],
-                "d_purpose_category": [11, 2],
+                "o_purpose_category": [
+                    PurposeCategory.HOME.value,
+                    PurposeCategory.CHANGE_MODE.value,
+                ],
+                "d_purpose_category": [
+                    PurposeCategory.CHANGE_MODE.value,
+                    PurposeCategory.WORK.value,
+                ],
+                "o_purpose": [Purpose.HOME.value, Purpose.MODE_CHANGE.value],
+                "d_purpose": [Purpose.MODE_CHANGE.value, Purpose.GROCERY.value],
                 "o_lat": [37.7, 37.71],
                 "o_lon": [-122.4, -122.41],
                 "d_lat": [37.71, 37.75],
                 "d_lon": [-122.41, -122.45],
-                "mode_type": [1, 6],  # walk, transit
+                "mode_type": [ModeType.WALK.value, ModeType.TRANSIT.value],
                 "num_travelers": [1, 1],
                 "driver": [0, 0],
                 "distance_meters": [804.67, 8046.7],
@@ -360,7 +424,7 @@ class TestAggregateLinkedTrips:
             }
         )
 
-        result = aggregate_linked_trips(trips, transit_mode_codes=[6, 7])
+        result = aggregate_linked_trips(trips, transit_mode_codes=[ModeType.TRANSIT.value])
 
         # Should have one aggregated trip
         assert len(result) == 1
@@ -381,7 +445,8 @@ class TestAggregateLinkedTrips:
         # Check aggregated fields
         assert row["distance_meters"] == 804.67 + 8046.7
         assert row["num_segments"] == 2
-        assert row["mode_type"] == 6  # Transit takes precedence
+        # Transit takes precedence
+        assert row["mode_type"] == ModeType.TRANSIT.value
 
     def test_transit_mode_precedence(self):
         """Should select transit mode when present in any segment."""
@@ -413,11 +478,25 @@ class TestAggregateLinkedTrips:
                 "arrive_seconds": [0, 0, 0],
                 "o_purpose_category": [0, 10, 10],
                 "d_purpose_category": [10, 10, 1],
+                "o_purpose": [
+                    Purpose.HOME.value,
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.MODE_CHANGE.value,
+                ],
+                "d_purpose": [
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                ],
                 "o_lat": [37.7, 37.71, 37.75],
                 "o_lon": [-122.4, -122.41, -122.45],
                 "d_lat": [37.71, 37.75, 37.8],
                 "d_lon": [-122.41, -122.45, -122.5],
-                "mode_type": [1, 6, 1],  # walk, transit, walk
+                "mode_type": [
+                    ModeType.WALK.value,
+                    ModeType.TRANSIT.value,
+                    ModeType.WALK.value,
+                ],
                 "distance_meters": [804.67, 8046.7, 482.8],
                 "num_travelers": [1, 1, 1],
                 "driver": [0, 0, 0],
@@ -426,10 +505,10 @@ class TestAggregateLinkedTrips:
             }
         )
 
-        result = aggregate_linked_trips(trips, transit_mode_codes=[6, 7])
+        result = aggregate_linked_trips(trips, transit_mode_codes=[ModeType.TRANSIT.value])
 
         # Should select transit mode
-        assert result["mode_type"][0] == 6
+        assert result["mode_type"][0] == ModeType.TRANSIT.value
 
     def test_longest_duration_mode_without_transit(self):
         """Should select longest duration mode when no transit."""
@@ -459,11 +538,19 @@ class TestAggregateLinkedTrips:
                 "arrive_seconds": [0, 0],
                 "o_purpose_category": [0, 10],
                 "d_purpose_category": [10, 1],
+                "o_purpose": [Purpose.HOME.value, Purpose.MODE_CHANGE.value],
+                "d_purpose": [
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                ],
                 "o_lat": [37.7, 37.71],
                 "o_lon": [-122.4, -122.41],
                 "d_lat": [37.71, 37.75],
                 "d_lon": [-122.41, -122.45],
-                "mode_type": [1, 3],  # walk 10 min, drive 30 min
+                "mode_type": [
+                    ModeType.WALK.value,
+                    ModeType.CAR.value,
+                ],
                 "distance_meters": [804.67, 8046.7],
                 "num_travelers": [1, 1],
                 "driver": [0, 0],
@@ -472,10 +559,10 @@ class TestAggregateLinkedTrips:
             }
         )
 
-        result = aggregate_linked_trips(trips, transit_mode_codes=[6, 7])
+        result = aggregate_linked_trips(trips, transit_mode_codes=[ModeType.TRANSIT.value])
 
         # Should select drive (mode 3) as longest duration
-        assert result["mode_type"][0] == 3
+        assert result["mode_type"][0] == ModeType.CAR.value
 
     def test_dwell_duration_calculation(self):
         """Should calculate dwell time correctly."""
@@ -505,11 +592,16 @@ class TestAggregateLinkedTrips:
                 "arrive_seconds": [0, 0],
                 "o_purpose_category": [0, 10],
                 "d_purpose_category": [10, 1],
+                "o_purpose": [Purpose.HOME.value, Purpose.MODE_CHANGE.value],
+                "d_purpose": [
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                ],
                 "o_lat": [37.7, 37.71],
                 "o_lon": [-122.4, -122.41],
                 "d_lat": [37.71, 37.75],
                 "d_lon": [-122.41, -122.45],
-                "mode_type": [1, 1],
+                "mode_type": [ModeType.WALK.value] * 2,
                 "distance_meters": [804.67, 8046.7],
                 "num_travelers": [1, 1],
                 "driver": [0, 0],
@@ -518,7 +610,7 @@ class TestAggregateLinkedTrips:
             }
         )
 
-        result = aggregate_linked_trips(trips, transit_mode_codes=[6, 7])
+        result = aggregate_linked_trips(trips, transit_mode_codes=[ModeType.TRANSIT.value])
 
         row = result.row(0, named=True)
         # Total duration: 8:00 to 8:45 = 45 min
@@ -560,11 +652,28 @@ class TestAggregateLinkedTrips:
                 "arrive_seconds": [0, 0, 0, 0],
                 "o_purpose_category": [0, 10, 1, 10],
                 "d_purpose_category": [10, 1, 10, 0],
+                "o_purpose": [
+                    Purpose.HOME.value,
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                    Purpose.MODE_CHANGE.value,
+                ],
+                "d_purpose": [
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.HOME.value,
+                ],
                 "o_lat": [37.7, 37.71, 37.75, 37.71],
                 "o_lon": [-122.4, -122.41, -122.45, -122.41],
                 "d_lat": [37.71, 37.75, 37.71, 37.7],
                 "d_lon": [-122.41, -122.45, -122.41, -122.4],
-                "mode_type": [1, 6, 6, 1],
+                "mode_type": [
+                    ModeType.WALK.value,
+                    ModeType.TRANSIT.value,
+                    ModeType.TRANSIT.value,
+                    ModeType.WALK.value,
+                ],
                 "distance_meters": [804.67, 8046.7, 8046.7, 804.67],
                 "num_travelers": [1, 1, 1, 1],
                 "driver": [0, 0, 0, 0],
@@ -573,7 +682,7 @@ class TestAggregateLinkedTrips:
             }
         )
 
-        result = aggregate_linked_trips(trips, transit_mode_codes=[6, 7])
+        result = aggregate_linked_trips(trips, transit_mode_codes=[ModeType.TRANSIT.value])
 
         # Should have two aggregated trips
         assert len(result) == 2
@@ -611,13 +720,35 @@ class TestLinkTripsIntegration:
                 "arrive_hour": [8, 8, 17],
                 "arrive_minute": [10, 45, 30],
                 "arrive_seconds": [0, 0, 0],
-                "o_purpose_category": [1, 11, 2],
-                "d_purpose_category": [11, 2, 1],
+                "o_purpose_category": [
+                    PurposeCategory.HOME.value,
+                    PurposeCategory.CHANGE_MODE.value,
+                    PurposeCategory.WORK.value,
+                ],
+                "d_purpose_category": [
+                    PurposeCategory.CHANGE_MODE.value,
+                    PurposeCategory.WORK.value,
+                    PurposeCategory.HOME.value,
+                ],
+                "o_purpose": [
+                    Purpose.HOME.value,
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                ],
+                "d_purpose": [
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                    Purpose.HOME.value,
+                ],
                 "o_lat": [37.7, 37.71, 37.75],
                 "o_lon": [-122.4, -122.41, -122.45],
                 "d_lat": [37.71, 37.75, 37.7],
                 "d_lon": [-122.41, -122.45, -122.4],
-                "mode_type": [1, 6, 6],
+                "mode_type": [
+                    ModeType.WALK.value,
+                    ModeType.TRANSIT.value,
+                    ModeType.TRANSIT.value,
+                ],
                 "distance_meters": [804.67, 8046.7, 8046.7],
                 "num_travelers": [1, 1, 1],
                 "driver": [0, 0, 0],
@@ -628,8 +759,8 @@ class TestLinkTripsIntegration:
 
         result = link_trips(
             trips,
-            change_mode_code=11,
-            transit_mode_codes=[6, 7],
+            change_mode_code=PurposeCategory.CHANGE_MODE.value,
+            transit_mode_codes=[ModeType.TRANSIT.value],
             max_dwell_time=120,
             dwell_buffer_distance=100,
         )
@@ -666,13 +797,15 @@ class TestLinkTripsIntegration:
                 "arrive_hour": [8],
                 "arrive_minute": [30],
                 "arrive_seconds": [0],
-                "o_purpose_category": [1],
-                "d_purpose_category": [2],
+                "o_purpose_category": [PurposeCategory.HOME.value],
+                "d_purpose_category": [PurposeCategory.WORK.value],
+                "o_purpose": [Purpose.HOME.value],
+                "d_purpose": [Purpose.GROCERY.value],
                 "o_lat": [37.7],
                 "o_lon": [-122.4],
                 "d_lat": [37.75],
                 "d_lon": [-122.45],
-                "mode_type": [1],
+                "mode_type": [ModeType.WALK.value],
                 "distance_meters": [804.67],
                 "num_travelers": [1],
                 "driver": [0],
@@ -684,7 +817,8 @@ class TestLinkTripsIntegration:
         result = link_trips(
             trips,
             change_mode_code=10,
-            transit_mode_codes=[6, 7],
+            transit_mode_codes=[ModeType.TRANSIT.value],
+            max_dwell_time=120,
         )
 
         linked_trips = result["linked_trips"]
@@ -832,13 +966,40 @@ class TestTableLevelUniqueness:
                 "arrive_hour": [8, 8, 17, 8],
                 "arrive_minute": [10, 45, 30, 30],
                 "arrive_seconds": [0, 0, 0, 0],
-                "o_purpose_category": [1, 11, 2, 1],
-                "d_purpose_category": [11, 2, 1, 2],
+                "o_purpose_category": [
+                    PurposeCategory.HOME.value,
+                    PurposeCategory.CHANGE_MODE.value,
+                    PurposeCategory.WORK.value,
+                    PurposeCategory.HOME.value,
+                ],
+                "d_purpose_category": [
+                    PurposeCategory.CHANGE_MODE.value,
+                    PurposeCategory.WORK.value,
+                    PurposeCategory.HOME.value,
+                    PurposeCategory.WORK.value,
+                ],
+                "o_purpose": [
+                    Purpose.HOME.value,
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                    Purpose.HOME.value,
+                ],
+                "d_purpose": [
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                    Purpose.HOME.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                ],
                 "o_lat": [37.7, 37.71, 37.75, 37.7],
                 "o_lon": [-122.4, -122.41, -122.45, -122.4],
                 "d_lat": [37.71, 37.75, 37.7, 37.75],
                 "d_lon": [-122.41, -122.45, -122.4, -122.45],
-                "mode_type": [1, 6, 6, 1],
+                "mode_type": [
+                    ModeType.WALK.value,
+                    ModeType.TRANSIT.value,
+                    ModeType.TRANSIT.value,
+                    ModeType.WALK.value,
+                ],
                 "distance_meters": [804.67, 8046.7, 8046.7, 804.67],
                 "num_travelers": [1, 1, 1, 1],
                 "driver": [0, 0, 0, 0],
@@ -848,7 +1009,9 @@ class TestTableLevelUniqueness:
         )
 
         # Aggregate into linked trips table
-        linked_trips = aggregate_linked_trips(unlinked_trips, transit_mode_codes=[6, 7])
+        linked_trips = aggregate_linked_trips(
+            unlinked_trips, transit_mode_codes=[ModeType.TRANSIT.value]
+        )
 
         # CRITICAL: linked_trips table MUST have unique linked_trip_ids
         assert linked_trips["linked_trip_id"].n_unique() == len(linked_trips), (
@@ -894,13 +1057,40 @@ class TestTableLevelUniqueness:
                 "arrive_hour": [8, 8, 8, 17],
                 "arrive_minute": [5, 15, 45, 30],
                 "arrive_seconds": [0, 0, 0, 0],
-                "o_purpose_category": [1, 10, 10, 2],
-                "d_purpose_category": [10, 10, 2, 1],
+                "o_purpose_category": [
+                    PurposeCategory.HOME.value,
+                    PurposeCategory.ERRAND.value,
+                    PurposeCategory.ERRAND.value,
+                    PurposeCategory.WORK.value,
+                ],
+                "d_purpose_category": [
+                    PurposeCategory.ERRAND.value,
+                    PurposeCategory.ERRAND.value,
+                    PurposeCategory.WORK.value,
+                    PurposeCategory.HOME.value,
+                ],
+                "o_purpose": [
+                    Purpose.HOME.value,
+                    Purpose.ERRAND_NO_APPT.value,
+                    Purpose.ERRAND_NO_APPT.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                ],
+                "d_purpose": [
+                    Purpose.ERRAND_NO_APPT.value,
+                    Purpose.ERRAND_NO_APPT.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                    Purpose.HOME.value,
+                ],
                 "o_lat": [37.7, 37.71, 37.72, 37.75],
                 "o_lon": [-122.4, -122.41, -122.42, -122.45],
                 "d_lat": [37.71, 37.72, 37.75, 37.7],
                 "d_lon": [-122.41, -122.42, -122.45, -122.4],
-                "mode_type": [1, 6, 1, 6],
+                "mode_type": [
+                    ModeType.WALK.value,
+                    ModeType.TRANSIT.value,
+                    ModeType.WALK.value,
+                    ModeType.TRANSIT.value,
+                ],
                 "distance_meters": [804.67, 1000.0, 8046.7, 8046.7],
                 "num_travelers": [1, 1, 1, 1],
                 "driver": [0, 0, 0, 0],
@@ -909,7 +1099,9 @@ class TestTableLevelUniqueness:
             }
         )
 
-        linked_trips = aggregate_linked_trips(unlinked_trips, transit_mode_codes=[6, 7])
+        linked_trips = aggregate_linked_trips(
+            unlinked_trips, transit_mode_codes=[ModeType.TRANSIT.value]
+        )
 
         # 4 unlinked segments become 2 linked trips
         assert len(unlinked_trips) == 4
@@ -962,13 +1154,45 @@ class TestTableLevelUniqueness:
                 "arrive_hour": [8, 8, 17, 8, 17],
                 "arrive_minute": [10, 45, 30, 30, 30],
                 "arrive_seconds": [0, 0, 0, 0, 0],
-                "o_purpose_category": [1, 11, 2, 1, 2],
-                "d_purpose_category": [11, 2, 1, 2, 1],
+                "o_purpose_category": [
+                    PurposeCategory.HOME.value,
+                    PurposeCategory.CHANGE_MODE.value,
+                    PurposeCategory.WORK.value,
+                    PurposeCategory.HOME.value,
+                    PurposeCategory.WORK.value,
+                ],
+                "d_purpose_category": [
+                    PurposeCategory.CHANGE_MODE.value,
+                    PurposeCategory.WORK.value,
+                    PurposeCategory.HOME.value,
+                    PurposeCategory.WORK.value,
+                    PurposeCategory.HOME.value,
+                ],
+                "o_purpose": [
+                    Purpose.HOME.value,
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                    Purpose.HOME.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                ],
+                "d_purpose": [
+                    Purpose.MODE_CHANGE.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                    Purpose.HOME.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                    Purpose.HOME.value,
+                ],
                 "o_lat": [37.7, 37.71, 37.75, 37.7, 37.75],
                 "o_lon": [-122.4, -122.41, -122.45, -122.4, -122.45],
                 "d_lat": [37.71, 37.75, 37.7, 37.75, 37.7],
                 "d_lon": [-122.41, -122.45, -122.4, -122.45, -122.4],
-                "mode_type": [1, 6, 6, 1, 6],
+                "mode_type": [
+                    ModeType.WALK.value,
+                    ModeType.TRANSIT.value,
+                    ModeType.TRANSIT.value,
+                    ModeType.WALK.value,
+                    ModeType.TRANSIT.value,
+                ],
                 "distance_meters": [804.67, 8046.7, 8046.7, 804.67, 8046.7],
                 "num_travelers": [1, 1, 1, 1, 1],
                 "driver": [0, 0, 0, 0, 0],
@@ -979,8 +1203,9 @@ class TestTableLevelUniqueness:
 
         result = link_trips(
             trips,
-            change_mode_code=11,
-            transit_mode_codes=[6, 7],
+            change_mode_code=PurposeCategory.CHANGE_MODE.value,
+            transit_mode_codes=[ModeType.TRANSIT.value],
+            max_dwell_time=120,
         )
 
         unlinked_trips = result["unlinked_trips"]

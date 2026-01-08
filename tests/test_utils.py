@@ -3,9 +3,11 @@
 import polars as pl
 import pytest
 
+from data_canon.codebook.households import IncomeDetailed, IncomeFollowup
 from utils.helpers import (
     add_time_columns,
     expr_haversine,
+    get_income_midpoint,
 )
 
 # Test constants
@@ -146,3 +148,100 @@ def test_expr_haversine_known_distance() -> None:
     # Distance should be roughly 13 km (13000 meters)
     distance = result["distance"][0]
     assert EXPECTED_SF_OAKLAND_DISTANCE_MIN < distance < EXPECTED_SF_OAKLAND_DISTANCE_MAX
+
+
+# Income Midpoint Tests --------------------------------------------------------
+
+
+def test_get_income_midpoint_range_format() -> None:
+    """Test income midpoint calculation for range format ($X-$Y)."""
+    # $50,000-$74,999 should yield midpoint rounded to nearest $1000
+    midpoint = get_income_midpoint(IncomeDetailed.INCOME_50TO75)
+    assert midpoint == 62000  # round((50000 + 74999) / 2, -3)
+
+    # $25,000-$49,999 should yield midpoint rounded to nearest $1000
+    midpoint = get_income_midpoint(IncomeFollowup.INCOME_25TO50)
+    assert midpoint == 37000  # round((25000 + 49999) / 2, -3)
+
+
+def test_get_income_midpoint_under_format() -> None:
+    """Test income midpoint calculation for 'Under $X' format."""
+    # "Under $15,000" should use $0 as lower bound, rounded to nearest $1000
+    # Midpoint = round(15000 / 2, -3) = round(7500, -3) = 8000
+    midpoint = get_income_midpoint(IncomeDetailed.INCOME_UNDER15)
+    assert midpoint == 8000
+
+    # "Under $25,000" should use $0 as lower bound, rounded to nearest $1000
+    # Midpoint = round(25000 / 2, -3) = round(12500, -3) = 12000
+    midpoint = get_income_midpoint(IncomeFollowup.INCOME_UNDER25)
+    assert midpoint == 12000
+
+
+def test_get_income_midpoint_or_more_format() -> None:
+    """Test income midpoint calculation for '$X or more' format."""
+    # "$250,000 or more" should use 1.25x multiplier, rounded to nearest $1000
+    # Upper bound = 250000 * 1.25 = 312500
+    # Midpoint = round((250000 + 312500) / 2, -3) = 281000
+    midpoint = get_income_midpoint(IncomeDetailed.INCOME_250_OR_MORE)
+    assert midpoint == 281000
+
+    # "$200,000 or more" should use 1.25x multiplier, rounded to nearest $1000
+    # Upper bound = 200000 * 1.25 = 250000
+    # Midpoint = round((200000 + 250000) / 2, -3) = 225000 (already at 1000s)
+    midpoint = get_income_midpoint(IncomeFollowup.INCOME_200_OR_MORE)
+    assert midpoint == 225000
+
+
+def test_get_income_midpoint_pnta_raises_error() -> None:
+    """Test that PNTA (Prefer not to answer) raises ValueError."""
+    with pytest.raises(ValueError, match="Cannot calculate midpoint"):
+        get_income_midpoint(IncomeDetailed.PNTA)
+
+    with pytest.raises(ValueError, match="Cannot calculate midpoint"):
+        get_income_midpoint(IncomeFollowup.PNTA)
+
+
+def test_get_income_midpoint_missing_raises_error() -> None:
+    """Test that Missing response raises ValueError."""
+    with pytest.raises(ValueError, match="Cannot calculate midpoint"):
+        get_income_midpoint(IncomeFollowup.MISSING)
+
+
+def test_get_income_midpoint_all_income_detailed() -> None:
+    """Test that all IncomeDetailed categories can be processed."""
+    expected_midpoints = {
+        IncomeDetailed.INCOME_UNDER15: 8000,
+        IncomeDetailed.INCOME_15TO25: 20000,
+        IncomeDetailed.INCOME_25TO35: 30000,
+        IncomeDetailed.INCOME_35TO50: 42000,
+        IncomeDetailed.INCOME_50TO75: 62000,
+        IncomeDetailed.INCOME_75TO100: 87000,
+        IncomeDetailed.INCOME_100TO150: 125000,
+        IncomeDetailed.INCOME_150TO200: 175000,
+        IncomeDetailed.INCOME_200TO250: 225000,
+        IncomeDetailed.INCOME_250_OR_MORE: 281000,
+    }
+
+    for income_cat, expected in expected_midpoints.items():
+        midpoint = get_income_midpoint(income_cat)
+        assert midpoint == expected, (
+            f"Failed for {income_cat.name}: got {midpoint}, expected {expected}"
+        )
+
+
+def test_get_income_midpoint_all_income_followup() -> None:
+    """Test that all IncomeFollowup categories can be processed."""
+    expected_midpoints = {
+        IncomeFollowup.INCOME_UNDER25: 12000,
+        IncomeFollowup.INCOME_25TO50: 37000,
+        IncomeFollowup.INCOME_50TO75: 62000,
+        IncomeFollowup.INCOME_75TO100: 87000,
+        IncomeFollowup.INCOME_100TO200: 150000,
+        IncomeFollowup.INCOME_200_OR_MORE: 225000,
+    }
+
+    for income_cat, expected in expected_midpoints.items():
+        midpoint = get_income_midpoint(income_cat)
+        assert midpoint == expected, (
+            f"Failed for {income_cat.name}: got {midpoint}, expected {expected}"
+        )

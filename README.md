@@ -166,6 +166,8 @@ The data processing pipeline consists of modular steps that transform raw survey
 6. **[Extract Tours](src/processing/tours/README.md)** - Builds hierarchical tour structures (home-based tours and work-based subtours) from linked trips
 7. **Weighting** *(placeholder)* - Calculates expansion weights to match survey sample to population targets
 8. **[Format Output](src/processing/formatting/daysim/README.md)** - Transforms canonical data to model-specific formats (DaySim, ActivitySim, etc.)
+    - **[DaySim Format](src/processing/formatting/daysim/README.md)** - Formats data for DaySim model input
+    - **[CT-RAMP Format](src/processing/formatting/ctramp/README.md)** - Formats data for CT-RAMP model input
 9. **[Final Check](src/processing/final_check/README.md)** - Validates complete dataset against canonical schemas before export
 10. **[Write Data](src/processing/read_write/README.md)** - Writes processed tables to output files with optional validation
 
@@ -429,17 +431,26 @@ For more details, see:
 
 ## Work Plan
 
-1. **Minimal Viable Product (MVP)**
-   1. `[complete]` Core data models and validation
-   2. `[in progress]` Basic pipeline with to match existing legacy pipeline functionality
-2. **Align and iterate** data models with upstream/downstream needs
-   1. `[upcoming]` Engage with downstream stakeholders to identify needs and requirements
-   2. `[in progress]` Engage with upstream data providers to set expectations and requirements
-3. **Extend Functionality**
-   1. `[upcoming]` Additional processing steps (imputation, joint trips, weighting)
-   2. `[upcoming]` More output formats (ActivitySim, CT-RAMP, etc.)
-   3. `[upcoming]` Enhanced validation rules and custom validators
-   4. `[upcoming]` Advanced tour extraction logic (e.g., joint trips/tours, multi-modal tours, etc.)
+- **Minimal Viable Product (MVP)**
+  - [x] Core data models and validation
+    - [x] Define canonical data models for households, persons, days, trips, tours, vehicles
+    - [x] Implement validation framework with row, column, relational, and custom validators
+  - [x] Core pipeline orchestration
+  - [x] Basic pipeline to match existing legacy pipeline functionality. See [Daysim Comparison Analysis - Key Findings](projects/bats_2023/compare/comparison_findings.qmd) for a detailed comparison of the new pipeline versus the legacy pipeline, including methodology, key differences, and validation results.
+- **Align and iterate** data models with upstream/downstream needs
+  - [ ] Engage with downstream stakeholders to identify needs and requirements
+  - [ ] Engage with upstream data providers to set expectations and requirements
+- **Extend Functionality**
+  - [x] Implement trip linking algorithm as processing step
+  - [x] Implement joint trips detection algorithm processing step
+  - [x] Implement tour extraction processing step
+    - [x] enhanced tour extraction to handle joint tours/trips
+  - [ ] Implement imputation processing step
+  - [ ] Implement weighting processing step
+  - [ ] Implement bespoke output formats
+    - [x] Implement Daysim output format
+    - [ ] Implement ActivitySim output format
+    - [ ] Implement CT-RAMP format
 
 **The primary goal is to establish a solid foundation with the core data models, validation, and basic pipeline functionality, then build upon that iteratively based on stakeholder feedback and evolving needs.**
 
@@ -467,10 +478,10 @@ travel-diary-survey-tools/
 │   |   ├── pipeline.py
 │   |   ├── decoration.py
 │   └── processing/ <-------------- # Processing code go here!
-│       ├── load.py
-│       ├── imputation.py           # Not yet implemented
-│       ├── joint_trips/            # Not yet implemented
-│       ├── link.py
+│       ├── read_write/
+│       ├── imputation/             # Not yet implemented
+│       ├── joint_trips/
+│       ├── link_trips/
 │       ├── extract_tours/
 │       ├── weighting/              # Not yet implemented
 │       └── formatting/ <---------- # Define bespoke output formatting here!

@@ -95,6 +95,18 @@ def classify_trip_locations(
     """
     logger.info("Classifying trip locations...")
 
+    # Validate required columns before processing
+    if (
+        person_locations["home_lat"].null_count() > 0
+        or person_locations["home_lon"].null_count() > 0
+    ):
+        msg = (
+            "Person location data is missing required home_lat/home_lon "
+            "coordinates. All persons must have home coordinates for "
+            "location classification."
+        )
+        raise ValueError(msg)
+
     # Join person locations
     linked_trips = linked_trips.join(person_locations, on="person_id", how="left")
 

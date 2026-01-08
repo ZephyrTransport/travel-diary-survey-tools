@@ -5,7 +5,7 @@ This module imports and exposes all step functions for easy access.
 
 from .add_zone_ids import add_zone_ids
 from .final_check import final_check
-from .formatting.daysim.format_daysim import format_daysim
+from .formatting import format_daysim
 from .joint_trips import detect_joint_trips
 from .link_trips import link_trips
 from .read_write import load_data, write_data

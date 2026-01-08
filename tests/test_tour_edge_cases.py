@@ -18,7 +18,7 @@ from data_canon.codebook.persons import (
     Employment,
     Student,
 )
-from data_canon.codebook.trips import Driver, ModeType, PurposeCategory
+from data_canon.codebook.trips import Driver, ModeType, Purpose, PurposeCategory
 from processing import link_trips
 from processing.tours.extraction import extract_tours
 
@@ -66,6 +66,8 @@ def single_trip_tour_data():
             "arrive_time": [datetime(2024, 1, 15, 9, 15, 0)],
             "o_purpose_category": [PurposeCategory.HOME.value],
             "d_purpose_category": [PurposeCategory.SHOP.value],
+            "o_purpose": [Purpose.HOME.value],
+            "d_purpose": [Purpose.SHOPPING_ERRANDS.value],
             "mode_type": [ModeType.CAR.value],
             "o_lat": [37.8],
             "o_lon": [-122.4],
@@ -149,6 +151,16 @@ def partial_tour_data():
                 PurposeCategory.MEAL.value,
                 PurposeCategory.WORK.value,
                 PurposeCategory.HOME.value,
+            ],
+            "o_purpose": [
+                Purpose.PRIMARY_WORKPLACE.value,
+                Purpose.DINING.value,
+                Purpose.PRIMARY_WORKPLACE.value,
+            ],
+            "d_purpose": [
+                Purpose.DINING.value,
+                Purpose.PRIMARY_WORKPLACE.value,
+                Purpose.HOME.value,
             ],
             "mode_type": [
                 ModeType.WALK.value,
@@ -241,6 +253,16 @@ def distant_destinations_data():
                 PurposeCategory.WORK.value,
                 PurposeCategory.SOCIALREC.value,
                 PurposeCategory.HOME.value,
+            ],
+            "o_purpose": [
+                Purpose.HOME.value,
+                Purpose.PRIMARY_WORKPLACE.value,
+                Purpose.OTHER_SOCIAL.value,
+            ],
+            "d_purpose": [
+                Purpose.PRIMARY_WORKPLACE.value,
+                Purpose.OTHER_SOCIAL.value,
+                Purpose.HOME.value,
             ],
             "mode_type": [
                 ModeType.CAR.value,
@@ -391,6 +413,20 @@ def test_tour_num_sequential():
                 PurposeCategory.HOME.value,
                 PurposeCategory.SOCIALREC.value,
             ],
+            "o_purpose": [
+                Purpose.HOME.value,
+                Purpose.PRIMARY_WORKPLACE.value,
+                Purpose.HOME.value,
+                Purpose.GROCERY.value,
+                Purpose.HOME.value,
+            ],
+            "d_purpose": [
+                Purpose.PRIMARY_WORKPLACE.value,
+                Purpose.HOME.value,
+                Purpose.GROCERY.value,
+                Purpose.HOME.value,
+                Purpose.SOCIAL.value,
+            ],
             "mode_type": [ModeType.CAR.value] * 5,
             "o_lat": [37.8, 37.85, 37.8, 37.81, 37.8],
             "o_lon": [-122.4, -122.45, -122.4, -122.41, -122.4],
@@ -493,6 +529,18 @@ def test_all_tours_have_required_fields():
                 PurposeCategory.HOME.value,
                 PurposeCategory.SHOP.value,
                 PurposeCategory.HOME.value,
+            ],
+            "o_purpose": [
+                Purpose.HOME.value,
+                Purpose.PRIMARY_WORKPLACE.value,
+                Purpose.HOME.value,
+                Purpose.GROCERY.value,
+            ],
+            "d_purpose": [
+                Purpose.PRIMARY_WORKPLACE.value,
+                Purpose.HOME.value,
+                Purpose.GROCERY.value,
+                Purpose.HOME.value,
             ],
             "mode_type": [ModeType.CAR.value] * 4,
             "o_lat": [37.8, 37.85, 37.8, 37.81],

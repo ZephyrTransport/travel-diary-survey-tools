@@ -12,11 +12,13 @@ from datetime import datetime
 from pydantic import BaseModel, model_validator
 
 from data_canon.codebook.days import TravelDow
-from data_canon.codebook.generic import LocationType
+from data_canon.codebook.generic import BooleanYesNo, LocationType
 from data_canon.codebook.households import ResidenceRentOwn, ResidenceType
 from data_canon.codebook.persons import (
     AgeCategory,
     Employment,
+    Gender,
+    JobType,
     PersonType,
     SchoolType,
     Student,
@@ -41,6 +43,8 @@ class HouseholdModel(BaseModel):
     hh_id: int = step_field(ge=1, unique=True, required_in_steps=["extract_tours"])
     home_lat: float = step_field(ge=-90, le=90, required_in_steps=["extract_tours"])
     home_lon: float = step_field(ge=-180, le=180, required_in_steps=["extract_tours"])
+    home_taz: int | None = step_field(ge=1, required_in_steps=["format_daysim"])
+    home_maz: int | None = step_field(ge=1, required_in_steps=["format_daysim"])
     residence_rent_own: ResidenceRentOwn = step_field(required_in_steps=["format_daysim"])
     residence_type: ResidenceType = step_field(required_in_steps=["format_daysim"])
 
@@ -54,13 +58,20 @@ class PersonModel(BaseModel):
         fk_to="households.hh_id",
         required_child=True,
     )
+    person_num: int = step_field(ge=1, required_in_steps=["format_daysim"])
     age: AgeCategory = step_field(required_in_steps=["extract_tours"])
+    gender: Gender = step_field(required_in_steps=[])
     # These fields can be None if person is not employed or in school
     work_lat: float | None = step_field(ge=-90, le=90, required_in_steps=["extract_tours"])
     work_lon: float | None = step_field(ge=-180, le=180, required_in_steps=["extract_tours"])
     school_lat: float | None = step_field(ge=-90, le=90, required_in_steps=["extract_tours"])
     school_lon: float | None = step_field(ge=-180, le=180, required_in_steps=["extract_tours"])
+    work_taz: int | None = step_field(ge=1, required_in_steps=["format_daysim"])
+    school_taz: int | None = step_field(ge=1, required_in_steps=["format_daysim"])
+    work_maz: int | None = step_field(ge=1, required_in_steps=["format_daysim"])
+    school_maz: int | None = step_field(ge=1, required_in_steps=["format_daysim"])
     person_type: PersonType = step_field(required_in_steps=[])
+    job_type: JobType | None = step_field(required_in_steps=[], default=None)
     employment: Employment = step_field(required_in_steps=["extract_tours"])
     student: Student = step_field(required_in_steps=["extract_tours"])
     school_type: SchoolType | None = step_field(
@@ -71,6 +82,12 @@ class PersonModel(BaseModel):
     )
     work_mode: Mode | None = step_field(
         required_in_steps=["format_daysim"],
+    )
+    commute_subsidy_use_3: BooleanYesNo | None = step_field(
+        required_in_steps=[],
+    )
+    commute_subsidy_use_4: BooleanYesNo | None = step_field(
+        required_in_steps=[],
     )
     is_proxy: bool = step_field(required_in_steps=["format_daysim"])
     num_days_complete: int = step_field(ge=0, default=0)
@@ -132,6 +149,7 @@ class UnlinkedTripModel(BaseModel):
 
     depart_time: datetime | None = step_field(required_in_steps=["link_trips", "extract_tours"])
     arrive_time: datetime | None = step_field(required_in_steps=["link_trips", "extract_tours"])
+    num_travelers: int = step_field(ge=1)
 
     # You can add custom row-level validators here
     # Don't confuse with the constom DataFrame-level validators elsewhere
@@ -166,6 +184,7 @@ class LinkedTripModel(BaseModel):
     joint_trip_id: int | None = step_field(
         ge=1,
         fk_to="joint_trips.joint_trip_id",
+        required_in_steps=["extract_tours"],
         default=None,
     )
     tour_id: int = step_field(ge=1, fk_to="tours.tour_id", required_in_steps=["format_daysim"])
@@ -178,12 +197,26 @@ class LinkedTripModel(BaseModel):
     arrive_hour: int = step_field(ge=0, le=23)
     arrive_minute: int = step_field(ge=0, le=59)
     arrive_seconds: int = step_field(ge=0, le=59)
+    o_purpose: Purpose = step_field(required_in_steps=[])
     o_purpose_category: int = step_field()
     o_lat: float = step_field(ge=-90, le=90, required_in_steps=["detect_joint_trips"])
     o_lon: float = step_field(ge=-180, le=180, required_in_steps=["detect_joint_trips"])
+    d_purpose: Purpose = step_field(required_in_steps=[])
     d_purpose_category: int = step_field(required_in_steps=["extract_tours"])
     d_lat: float = step_field(ge=-90, le=90, required_in_steps=["detect_joint_trips"])
     d_lon: float = step_field(ge=-180, le=180, required_in_steps=["detect_joint_trips"])
+    o_taz: int | None = step_field(
+        ge=1,
+        required_in_steps=["format_daysim"],
+        default=None,
+    )
+    d_taz: int | None = step_field(
+        ge=1,
+        required_in_steps=["format_daysim"],
+        default=None,
+    )
+    o_maz: int | None = step_field(ge=1, required_in_steps=["format_daysim"], default=None)
+    d_maz: int | None = step_field(ge=1, required_in_steps=["format_daysim"], default=None)
     mode_type: ModeType = step_field(required_in_steps=["extract_tours"])
     driver: Driver = step_field(required_in_steps=["link_trips", "format_daysim"])
     num_travelers: int = step_field(ge=1)
@@ -210,6 +243,7 @@ class TourModel(BaseModel):
     tour_num: int = step_field(ge=1)
     subtour_num: int = step_field(ge=0)
     parent_tour_id: int = step_field(ge=1, fk_to="tours.tour_id")
+    joint_tour_id: int | None = step_field(ge=1, default=None)
 
     tour_purpose: PurposeCategory | None = step_field(default=None)
     tour_category: TourCategory = step_field()
@@ -239,6 +273,18 @@ class TourModel(BaseModel):
     o_lon: float = step_field(ge=-180, le=180)
     d_lat: float = step_field(ge=-90, le=90)
     d_lon: float = step_field(ge=-180, le=180)
+    o_taz: int | None = step_field(
+        ge=1,
+        required_in_steps=["format_daysim"],
+        default=None,
+    )
+    d_taz: int | None = step_field(
+        ge=1,
+        required_in_steps=["format_daysim"],
+        default=None,
+    )
+    o_maz: int | None = step_field(ge=1, required_in_steps=["format_daysim"], default=None)
+    d_maz: int | None = step_field(ge=1, required_in_steps=["format_daysim"], default=None)
     o_location_type: LocationType = step_field()
     d_location_type: LocationType = step_field()
 
@@ -246,6 +292,7 @@ class TourModel(BaseModel):
     tour_mode: ModeType = step_field()
     outbound_mode: ModeType | None = step_field()
     inbound_mode: ModeType | None = step_field()
+    num_travelers: int = step_field(ge=1, required_in_steps=[], default=1)
 
     @model_validator(mode="after")
     def validate_complete_tours(self) -> "TourModel":

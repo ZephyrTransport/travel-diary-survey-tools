@@ -12,9 +12,6 @@ from data_canon.core.dataclass import CanonicalData
 
 logger = logging.getLogger(__name__)
 
-# Canonical table names that can be validated
-CANONICAL_TABLES = set(CanonicalData.__annotations__.keys())
-
 
 def step(
     *,
@@ -83,9 +80,9 @@ def step(
             # Only pop canonical_data if function doesn't expect it
             sig = inspect.signature(func)
             if "canonical_data" in sig.parameters:
-                canonical_data = kwargs.get("canonical_data")
+                canonical_data: CanonicalData = kwargs.get("canonical_data", CanonicalData())
             else:
-                canonical_data = kwargs.pop("canonical_data", None)
+                canonical_data: CanonicalData = kwargs.pop("canonical_data", CanonicalData())
 
             # Check cache if enabled
             if should_cache and pipeline_cache:
@@ -130,7 +127,7 @@ def _update_canonical_data(
 ) -> None:
     """Update canonical_data instance with result DataFrames."""
     for key, value in result.items():
-        if _is_canonical_dataframe(key, value):
+        if key in canonical_data.models and isinstance(value, pl.DataFrame):
             logger.info("Updating canonical_data with output '%s'", key)
         else:
             logger.warning(
@@ -146,7 +143,7 @@ def _try_load_from_cache(
     pipeline_cache: Any,  # noqa: ANN401
     args: tuple,
     kwargs: dict,
-    canonical_data: CanonicalData | None,
+    canonical_data: CanonicalData,
 ) -> dict[str, pl.DataFrame] | None:
     """Try to load cached result for a step.
 
@@ -156,18 +153,21 @@ def _try_load_from_cache(
     bound = sig.bind(*args, **kwargs)
     bound.apply_defaults()
 
+    # Get canonical models for checking
+    models = canonical_data.models
+
     # Get input DataFrames for cache key generation
     input_dfs = {
         name: value
         for name, value in bound.arguments.items()
-        if _is_canonical_dataframe(name, value)
+        if name in models and isinstance(value, pl.DataFrame)
     }
 
     # Extract params (non-DataFrame arguments)
     params = {
         name: value
         for name, value in bound.arguments.items()
-        if name != "canonical_data" and not _is_canonical_dataframe(name, value)
+        if name != "canonical_data" and not (name in models and isinstance(value, pl.DataFrame))
     }
 
     # Generate cache key
@@ -181,9 +181,8 @@ def _try_load_from_cache(
     cached_result = pipeline_cache.load(func.__name__, cache_key)
     if cached_result is not None:
         # Update canonical_data with cached results
-        if canonical_data:
-            for key, value in cached_result.items():
-                setattr(canonical_data, key, value)
+        for key, value in cached_result.items():
+            setattr(canonical_data, key, value)
 
         return cached_result
 
@@ -208,18 +207,22 @@ def _save_to_cache(
     bound = sig.bind(*args, **kwargs)
     bound.apply_defaults()
 
+    # Get canonical models from canonical_data in bound arguments
+    canonical_data_instance = bound.arguments.get("canonical_data", CanonicalData())
+    models = canonical_data_instance.models
+
     # Get input DataFrames for cache key generation
     input_dfs = {
         name: value
         for name, value in bound.arguments.items()
-        if _is_canonical_dataframe(name, value)
+        if name in models and isinstance(value, pl.DataFrame)
     }
 
     # Extract params (non-DataFrame arguments)
     params = {
         name: value
         for name, value in bound.arguments.items()
-        if name != "canonical_data" and not _is_canonical_dataframe(name, value)
+        if name != "canonical_data" and not (name in models and isinstance(value, pl.DataFrame))
     }
 
     # Generate cache key
@@ -236,7 +239,7 @@ def _validates(
     func: Callable,
     args: tuple,
     kwargs: dict,
-    canonical_data: CanonicalData | None = None,
+    canonical_data: CanonicalData,
 ) -> None:
     """Validate input parameters that are canonical DataFrames."""
     sig = inspect.signature(func)
@@ -245,11 +248,14 @@ def _validates(
 
     # Use provided instance or check if one exists in kwargs
     validator = canonical_data
-    if validator is None and "canonical_data" in bound.arguments:
+    if "canonical_data" in bound.arguments:
         validator = bound.arguments["canonical_data"]
 
+    # Get models for checking
+    models = validator.models
+
     for param_name, param_value in bound.arguments.items():
-        if not _is_canonical_dataframe(param_name, param_value):
+        if not (param_name in models and isinstance(param_value, pl.DataFrame)):
             continue
 
         logger.info(
@@ -257,28 +263,23 @@ def _validates(
             param_name,
             func.__name__,
         )
-        # Use validator instance if available, otherwise create temporary
+        # Use validator instance
         step_name = func.__name__
-        if validator:
-            setattr(validator, param_name, param_value)
-            validator.validate(param_name, step=step_name)
-        else:
-            temp_validator = CanonicalData()
-            setattr(temp_validator, param_name, param_value)
-            temp_validator.validate(param_name, step=step_name)
+        setattr(validator, param_name, param_value)
+        validator.validate(param_name, step=step_name)
 
 
 def _validate_dict_outputs(
     result: dict,
     func_name: str,
-    canonical_data: CanonicalData | None = None,
+    canonical_data: CanonicalData,
 ) -> None:
     """Validate outputs in dict format."""
     for key, value in result.items():
-        if not _is_canonical_dataframe(key, value):
+        if key not in canonical_data.models and isinstance(value, pl.DataFrame):
             logger.warning(
                 "Output '%s' from step '%s' is not a canonical "
-                "table. This cannot be validated automatically.",
+                "table and cannot be validated automatically.",
                 key,
                 func_name,
             )
@@ -289,17 +290,6 @@ def _validate_dict_outputs(
             key,
             func_name,
         )
-        # Validate using canonical_data instance or create temporary
-        if canonical_data:
-            # Data already updated by wrapper, just validate
-            canonical_data.validate(key, step=func_name)
-        else:
-            # No canonical_data instance, validate with temporary
-            temp_validator = CanonicalData()
-            setattr(temp_validator, key, value)
-            temp_validator.validate(key, step=func_name)
-
-
-def _is_canonical_dataframe(name: str, value: Any) -> bool:  # noqa: ANN401
-    """Check if a value is a DataFrame for a canonical table."""
-    return name in CANONICAL_TABLES and isinstance(value, pl.DataFrame)
+        # Validate using canonical_data instance
+        # Data already updated by wrapper, just validate
+        canonical_data.validate(key, step=func_name)

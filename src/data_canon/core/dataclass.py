@@ -43,15 +43,8 @@ class CanonicalData:
     tours: pl.DataFrame | None = None
     joint_trips: pl.DataFrame | None = None
 
-    # Daysim-specific tables
-    households_daysim: pl.DataFrame | None = None
-    persons_daysim: pl.DataFrame | None = None
-    days_daysim: pl.DataFrame | None = None
-    linked_trips_daysim: pl.DataFrame | None = None
-    tours_daysim: pl.DataFrame | None = None
-
     # Model mapping for validation
-    _models: dict[str, type[BaseModel]] = field(
+    models: dict[str, type[BaseModel]] = field(
         default_factory=lambda: {
             "households": survey_models.HouseholdModel,
             "persons": survey_models.PersonModel,
@@ -65,7 +58,7 @@ class CanonicalData:
 
     # Custom validators: table_name -> list of validator functions
     # Populated from custom_validation.CUSTOM_VALIDATORS
-    _custom_validators: dict[str, list[Callable]] = field(
+    custom_validators: dict[str, list[Callable]] = field(
         default_factory=lambda: {
             table: list(validators) for table, validators in CUSTOM_VALIDATORS.items()
         }
@@ -73,7 +66,7 @@ class CanonicalData:
 
     def __post_init__(self) -> None:
         """Validate FK references point to unique fields."""
-        validate_fk_references(self._models)
+        validate_fk_references(self.models)
 
     def add_models(self, new_models: dict[str, type[BaseModel]]) -> None:
         """Add or override data models for validation.
@@ -84,9 +77,10 @@ class CanonicalData:
             new_models: Dictionary of table name to Pydantic model class
         """
         for table_name, model in new_models.items():
-            self._models[table_name] = model
+            self.models[table_name] = model
             if not hasattr(self, table_name):
                 setattr(self, table_name, None)
+                self.__annotations__[table_name] = pl.DataFrame | None
 
     def validate(self, table_name: str, step: str | None = None) -> None:
         """Validate a table through all validation layers.
@@ -103,10 +97,10 @@ class CanonicalData:
                  If None, validates all fields strictly.
 
         Raises:
-            DataDataValidationError: If any validation check fails
+            DataValidationError: If any validation check fails
         """
-        if table_name not in self._models:
-            valid_tables = ", ".join(self._models.keys())
+        if table_name not in self.models:
+            valid_tables = ", ".join(self.models.keys())
             msg = f"Invalid table name: {table_name}. Valid tables: {valid_tables}"
             raise ValueError(msg)
 
@@ -126,7 +120,7 @@ class CanonicalData:
 
         # 1. Column constraints (uniqueness)
         # Extract unique fields from model metadata
-        unique_fields = get_unique_fields(self._models[table_name])
+        unique_fields = get_unique_fields(self.models[table_name])
         if unique_fields:
             check_unique_constraints(
                 table_name,
@@ -136,7 +130,7 @@ class CanonicalData:
 
         # 2. Foreign key constraints
         # Extract FK fields from model metadata
-        fk_fields = get_foreign_key_fields(self._models[table_name])
+        fk_fields = get_foreign_key_fields(self.models[table_name])
         if fk_fields:
             check_foreign_keys(
                 table_name,
@@ -149,7 +143,7 @@ class CanonicalData:
         validate_dataframe_rows(
             table_name,
             df,
-            self._models[table_name],
+            self.models[table_name],
             step,
         )
 
@@ -178,10 +172,10 @@ class CanonicalData:
             table_name: Name of the table being validated
             df: DataFrame being validated
         """
-        if table_name not in self._custom_validators:
+        if table_name not in self.custom_validators:
             return
 
-        for validator_func in self._custom_validators[table_name]:
+        for validator_func in self.custom_validators[table_name]:
             # Inspect function signature to build arguments
             sig = inspect.signature(validator_func)
             kwargs = {}
@@ -230,7 +224,7 @@ class CanonicalData:
             df: DataFrame being validated
         """
         # Get the unique field from model metadata
-        unique_fields = get_unique_fields(self._models[table_name])
+        unique_fields = get_unique_fields(self.models[table_name])
         if not unique_fields:
             logger.warning(
                 "Skipping required children check: no unique field found for '%s'",
@@ -242,7 +236,7 @@ class CanonicalData:
         parent_ids = set(df[parent_col].to_list())
 
         # Find all child tables that have required_child FK to this table
-        for child_table_name, child_model in self._models.items():
+        for child_table_name, child_model in self.models.items():
             required_child_fields = get_required_children_fields(child_model)
 
             for child_fk_col, (
@@ -324,12 +318,12 @@ class CanonicalData:
 
         def decorator(func: Callable) -> Callable:
             for table_name in table_names:
-                if table_name not in self._models:
+                if table_name not in self.models:
                     msg = f"Unknown table: {table_name}"
                     raise ValueError(msg)
-                if table_name not in self._custom_validators:
-                    self._custom_validators[table_name] = []
-                self._custom_validators[table_name].append(func)
+                if table_name not in self.custom_validators:
+                    self.custom_validators[table_name] = []
+                self.custom_validators[table_name].append(func)
             return func
 
         return decorator

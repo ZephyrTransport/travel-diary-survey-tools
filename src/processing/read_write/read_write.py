@@ -6,6 +6,7 @@ from pathlib import Path
 import geopandas as gpd
 import polars as pl
 
+from data_canon.core.dataclass import CanonicalData
 from pipeline.decoration import step
 
 logger = logging.getLogger(__name__)
@@ -53,24 +54,32 @@ def load_data(
 @step()
 def write_data(
     output_paths: dict[str, str],
-    canonical_data: dict[str, pl.DataFrame | gpd.GeoDataFrame],
+    canonical_data: CanonicalData,
     validate_input: bool,
     create_dirs: bool = True,
 ) -> None:
     """Write all canonical tables to output paths."""
-    # Validate all tables first
-    for table in output_paths:
-        logger.info("Validating %s...", table)
-
-        # If the table is truly canonical, validate it
-        if table in canonical_data.__annotations__ and validate_input:
-            canonical_data.validate(table)
-
     for table, path in output_paths.items():
         logger.info("Writing %s to:\n%s...", table, path)
 
         df = getattr(canonical_data, table)
         file_path = Path(path)
+
+        # Check that the table exists at all
+        if not hasattr(canonical_data, table):
+            msg = f"CanonicalData missing table {table}; cannot write."
+            raise ValueError(msg)
+
+        # If the table is truly canonical, validate it
+        if validate_input:
+            if table in canonical_data.models:
+                logger.info("Validating %s...", table)
+                canonical_data.validate(table)
+            else:
+                logger.warning(
+                    "Table %s not in CanonicalData models; skipping validation.",
+                    table,
+                )
 
         if create_dirs:
             file_path.parent.mkdir(parents=True, exist_ok=True)

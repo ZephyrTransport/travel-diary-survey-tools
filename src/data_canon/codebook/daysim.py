@@ -154,6 +154,6 @@ class DaysimPersonType(LabeledEnum):
     RETIRED = (3, "Retired (65+)")
     NON_WORKER = (4, "Non-working adult")
     UNIVERSITY_STUDENT = (5, "University student")
-    HIGH_SCHOOL_STUDENT = (6, "High school student (16+)")
-    CHILD_5_15 = (7, "Child age 5-15")
+    CHILD_DRIVING_AGE = (6, "High school student (16+)")
+    CHILD_NON_DRIVING_AGE = (7, "Child age 5-15")
     CHILD_UNDER_5 = (8, "Child age 0-4")

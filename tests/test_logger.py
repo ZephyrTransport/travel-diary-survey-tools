@@ -86,17 +86,11 @@ class TestSetupLogging:
         """Test that setup_logging preserves pytest's caplog handler."""
         caplog.set_level(logging.INFO)
 
-        # Get initial handler count (includes pytest's handler)
-        root_logger = logging.getLogger()
-        initial_handlers = len(root_logger.handlers)
-
-        # Setup logging
+        # Setup logging (removes duplicate Stream/FileHandlers by design)
         setup_logging(log_file=None)
 
-        # Should have added our handler but not removed pytest's
-        assert len(root_logger.handlers) >= initial_handlers
-
-        # Caplog should still capture logs
+        # Caplog should still capture logs (LogCapture handler preserved)
+        root_logger = logging.getLogger()
         root_logger.info("Test message after setup")
         assert "Test message after setup" in caplog.text
 
@@ -136,20 +130,28 @@ class TestSetupLogging:
         # Should not add duplicate file handler
         assert count2 == count1
 
-    def test_different_file_handlers_can_coexist(self, tmp_path):
-        """Test that different file handlers can be added."""
+    def test_different_file_handlers_replace(self, tmp_path):
+        """Test that setup_logging replaces file handlers instead of accumulating."""
         log_file1 = tmp_path / "test1.log"
         log_file2 = tmp_path / "test2.log"
 
         logger1 = setup_logging(log_file=log_file1)
-        initial_count = len([h for h in logger1.handlers if isinstance(h, logging.FileHandler)])
+        logger1.info("Message to file 1")
 
-        # Add handler for different file
+        # Call again with different file - should replace the handler
         logger2 = setup_logging(log_file=log_file2)
-        final_count = len([h for h in logger2.handlers if isinstance(h, logging.FileHandler)])
+        file_handlers = [h for h in logger2.handlers if isinstance(h, logging.FileHandler)]
 
-        # Should have added second file handler
-        assert final_count == initial_count + 1
+        # Should only have 1 file handler (the new one)
+        assert len(file_handlers) == 1
+
+        # Verify it's pointing to the new file
+        logger2.info("Message to file 2")
+        for h in logger2.handlers:
+            h.flush()
+
+        assert log_file2.exists()
+        assert "Message to file 2" in log_file2.read_text()
 
     def test_log_formatter(self, tmp_path):
         """Test that log messages have correct format."""

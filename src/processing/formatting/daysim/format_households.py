@@ -51,8 +51,8 @@ def format_households(
         hhret=(pl.col("pptyp") == PersonType.RETIRED.value).sum(),
         hhoad=(pl.col("pptyp") == PersonType.NON_WORKER.value).sum(),
         hhuni=(pl.col("pptyp") == PersonType.UNIVERSITY_STUDENT.value).sum(),
-        hhhsc=(pl.col("pptyp") == PersonType.HIGH_SCHOOL_STUDENT.value).sum(),
-        hh515=(pl.col("pptyp") == PersonType.CHILD_5_15.value).sum(),
+        hhhsc=(pl.col("pptyp") == PersonType.CHILD_DRIVING_AGE.value).sum(),
+        hh515=(pl.col("pptyp") == PersonType.CHILD_NON_DRIVING_AGE.value).sum(),
         hhcu5=(pl.col("pptyp") == PersonType.CHILD_UNDER_5.value).sum(),
     )
 

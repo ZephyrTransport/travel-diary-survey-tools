@@ -28,6 +28,7 @@ class Pipeline:
         config_path: str | Path,
         steps: list[Callable] | None = None,
         caching: bool | Path | str = False,
+        data_models: dict[str, Any] | None = None,
     ) -> None:
         """Initialize the Pipeline with configuration and custom steps.
 
@@ -37,6 +38,8 @@ class Pipeline:
             caching: If False, disable caching.
                 If True, use default cache directory ".cache".
                 If str or Path, use specified directory for caching.
+            data_models: Optional dictionary of extra data models for validation.
+                These will be added to the default data models in CanonicalData object.
         """
         self.config_path = config_path
         self.config = self._load_config()
@@ -76,6 +79,10 @@ class Pipeline:
         # Scan cache and report status
         self._scan_cache()
         self.report_status()
+
+        # Add extra data models if provided
+        if data_models:
+            self.data.add_models(data_models)
 
     def _load_config(self) -> dict[str, Any]:
         """Load the pipeline configuration from a YAML file.
@@ -294,12 +301,7 @@ class Pipeline:
         for i, step_cfg in enumerate(self.config["steps"], start=1):
             step_name = step_cfg["name"]
 
-            if step_name not in self.steps:
-                msg = f"Step '{step_name}' not found in pipeline steps."
-                raise ValueError(msg)
-
             step_obj = self.steps.get(step_name)
-
             if step_obj is None:
                 msg = f"Step '{step_name}' not found in pipeline steps."
                 raise ValueError(msg)
@@ -398,6 +400,10 @@ class Pipeline:
         Raises:
             ValueError: If step has no cache or table not in step.
         """
+        if not self.cache:
+            msg = "Caching is disabled. Cannot load data from cache."
+            raise ValueError(msg)
+
         status_info = self._step_status.get(step_name)
         if not status_info or not status_info.get("has_cache"):
             msg = f"Step '{step_name}' has no cached data."

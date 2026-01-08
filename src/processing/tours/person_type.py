@@ -17,15 +17,7 @@ def derive_person_type(persons: pl.DataFrame) -> pl.DataFrame:
     This replicates the pptyp logic from the old pipeline's 02a-reformat
     step, converting employment/student/age data into person type categories.
 
-    Person types (see PersonType enum):
-        FULL_TIME_WORKER (1): Full-time worker
-        PART_TIME_WORKER (2): Part-time worker
-        RETIRED (3): Non-working adult 65+
-        NON_WORKER (4): Non-working adult < 65
-        UNIVERSITY_STUDENT (5): University student
-        HIGH_SCHOOL_STUDENT (6): High school student 16+
-        CHILD_5_15 (7): Child 5-15
-        CHILD_UNDER_5 (8): Child 0-4
+    Person types (see PersonType enum)
 
     Args:
         persons: DataFrame with age column (categorical AgeCategory),
@@ -90,17 +82,17 @@ def derive_person_type(persons: pl.DataFrame) -> pl.DataFrame:
         pl.when(is_under_5)
         .then(pl.lit(PersonType.CHILD_UNDER_5))
         .when(is_5_to_15)
-        .then(pl.lit(PersonType.CHILD_5_15))
+        .then(pl.lit(PersonType.CHILD_NON_DRIVING_AGE))
         # Teens: workers first, then students
         .when(is_16_to_17 & is_full_time)
         .then(pl.lit(PersonType.FULL_TIME_WORKER))
         .when(is_16_to_17 & is_student)
-        .then(pl.lit(PersonType.HIGH_SCHOOL_STUDENT))
+        .then(pl.lit(PersonType.CHILD_DRIVING_AGE))
         # Young adults: workers first, then HS students, then college, then PT
         .when(is_18_to_24 & is_full_time)
         .then(pl.lit(PersonType.FULL_TIME_WORKER))
         .when(is_18_to_24 & is_high_school & is_student)
-        .then(pl.lit(PersonType.HIGH_SCHOOL_STUDENT))
+        .then(pl.lit(PersonType.CHILD_DRIVING_AGE))
         .when(is_18_to_24 & is_student)
         .then(pl.lit(PersonType.UNIVERSITY_STUDENT))
         .when(is_18_to_24 & is_part_time)

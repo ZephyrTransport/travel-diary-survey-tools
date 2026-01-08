@@ -24,6 +24,7 @@ class BooleanYesNo(LabeledEnum):
 
     YES = (1, "Yes")
     NO = (0, "No")
+    MISSING = (995, "Missing Response")
 
 
 class LocationType(LabeledEnum):

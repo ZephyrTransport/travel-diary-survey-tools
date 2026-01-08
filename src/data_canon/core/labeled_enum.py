@@ -6,11 +6,15 @@ canonical field names for pydantic model mapping.
 """
 
 from enum import Enum, EnumType
-from typing import Optional
+from typing import Optional, overload
 
 
 class LabeledEnumMeta(EnumType):
     """Metaclass for LabeledEnum that reserves canonical_field_name."""
+
+    # Declare canonical_field_name as a class attribute
+    canonical_field_name: str | None = None
+    field_description: str | None = None
 
     @classmethod
     def __prepare__(metacls, cls, bases, **kwds):  # noqa: ANN001, ANN003, ANN206, N804
@@ -74,6 +78,8 @@ class LabeledEnum(Enum, metaclass=LabeledEnumMeta):
         found = Gender.from_label("Female")  # Returns Gender.FEMALE
     """
 
+    _label_: str
+
     def __new__(cls, value: int, label: str) -> "LabeledEnum":
         """Create a new enum member with value and label.
 
@@ -92,7 +98,7 @@ class LabeledEnum(Enum, metaclass=LabeledEnumMeta):
         return self._label_
 
     @property
-    def field_name(self) -> str:
+    def field_name(self) -> str | None:
         """Get the canonical field name for this enum.
 
         Returns the canonical_field_name class attribute if defined,
@@ -109,27 +115,45 @@ class LabeledEnum(Enum, metaclass=LabeledEnumMeta):
         """
         return getattr(self.__class__, "field_description", None)
 
+    @overload
     @classmethod
-    def from_value(cls, value: int) -> Optional["LabeledEnum"]:
+    def from_value(cls, value: int, strict: bool = True) -> "LabeledEnum": ...
+
+    @overload
+    @classmethod
+    def from_value(cls, value: int, strict: bool = False) -> Optional["LabeledEnum"]: ...
+
+    @classmethod
+    def from_value(cls, value: int, strict: bool = True) -> Optional["LabeledEnum"]:
         """Look up an enum member by its value.
 
         Args:
             value: The integer value to search for
+            strict: If True (default), raise ValueError if not found.
+                   If False, return None if not found.
 
         Returns:
-            The enum member with the matching value, or None if not found
+            The enum member with the matching value, or None if not found and strict=False
+
+        Raises:
+            ValueError: If value not found and strict=True
         """
         for member in cls:
             if member.value == value:
                 return member
+        if strict:
+            msg = f"{cls.__name__} has no member with value {value}"
+            raise ValueError(msg)
         return None
 
     @classmethod
-    def from_label(cls, label: str) -> Optional["LabeledEnum"]:
+    def from_label(cls, label: str, strict: bool = True) -> Optional["LabeledEnum"]:
         """Look up an enum member by its label.
 
         Args:
             label: The label to search for (case-sensitive)
+            strict: If True (default), raise ValueError if not found.
+                   If False, return None if not found.
 
         Returns:
             The enum member with the matching label, or None if not found
@@ -137,6 +161,9 @@ class LabeledEnum(Enum, metaclass=LabeledEnumMeta):
         for member in cls:
             if member.label == label:
                 return member
+        if strict:
+            msg = f"{cls.__name__} has no member with label '{label}'"
+            raise ValueError(msg)
         return None
 
     @classmethod

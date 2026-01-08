@@ -21,41 +21,6 @@ class AgeCategory(LabeledEnum):
     AGE_85_AND_UP = (11, "85 and up")
 
 
-class CommuteSubsidy(LabeledEnum):
-    """commute_subsidy value labels, parent class to be referenced by specific subsidy types."""
-
-    canonical_field_name = "commute_subsidy"
-
-    FREE_PARK = (1, "Free parking provided by employer")
-    DISCOUNT_PARKING = (
-        2,
-        "Discounted (partially subsidized) parking provided by employer",
-    )
-    TRANSIT = (3, "Free/discounted transit fare provided by employer")
-    VANPOOL = (4, "Free/discounted vanpool service provided by employer")
-    CASH_IN_LIEU = (5, "Cash in lieu for carpooling, biking, or walking")
-    TNC = (
-        6,
-        "Free/discounted rideshare / TNC (e.g., Uber, Lyft) provided by employer",
-    )
-    CARSHARE = (
-        7,
-        "Free/discounted carshare membership provided by employer (e.g., Zipcar, Car2Go)",
-    )
-    SHUTTLE = (
-        8,
-        "Free/discounted shuttle service to/from work provided by employer",
-    )
-    BIKESHARE = (9, "Free/discounted bikeshare membership provided by employer")
-    BIKE_MAINTENANCE = (
-        10,
-        "Free/discounted bike maintenance or bike parking provided by employer",
-    )
-    OTHER = (11, "Other commute subsidy provided by employer")
-    NONE = (12, "No commute subsidies provided by employer")
-    DONT_KNOW = (13, "Don't know")
-
-
 class Education(LabeledEnum):
     """education value labels."""
 
@@ -157,11 +122,12 @@ class Industry(LabeledEnum):
     OTHER_SPECIFY = (997, "Other, please specify")
 
 
-class JobCommuteType(LabeledEnum):
-    """job_commute_type value labels."""
+class JobType(LabeledEnum):
+    """job_type value labels."""
 
-    canonical_field_name = "job_commute_type"
+    canonical_field_name = "job_type"
 
+    # NONWORKER = (0, "Non-worker")
     FIXED = (1, "Go to one work location ONLY (outside of home)")
     VARIES = (2, "Work location regularly varies (different offices/jobsites)")
     WFH = (3, "Work ONLY from home or remotely (telework, self-employed)")
@@ -356,8 +322,8 @@ class PersonType(LabeledEnum):
     RETIRED = (3, "Non-working adult 65+")
     NON_WORKER = (4, "Non-working adult < 65")
     UNIVERSITY_STUDENT = (5, "University student")
-    HIGH_SCHOOL_STUDENT = (6, "High school student 16+")
-    CHILD_5_15 = (7, "Child 5-15")
+    CHILD_DRIVING_AGE = (6, "High school student 16+")
+    CHILD_NON_DRIVING_AGE = (7, "Child 5-15")
     CHILD_UNDER_5 = (8, "Child 0-4")
 
 

@@ -5,8 +5,11 @@ from datetime import datetime
 import polars as pl
 import pytest
 
+from data_canon.codebook.persons import AgeCategory, Gender
+from data_canon.codebook.trips import ModeType, Purpose, PurposeCategory
 from data_canon.core.dataclass import CanonicalData
 from data_canon.core.exceptions import DataValidationError
+from tests.fixtures import create_household, create_person
 
 
 class TestUniqueConstraints:
@@ -16,15 +19,33 @@ class TestUniqueConstraints:
         """Should pass with unique IDs."""
         data = CanonicalData()
         data.households = pl.DataFrame(
-            {
-                "hh_id": [1, 2, 3],
-                "home_taz": [100, 200, 300],
-                "home_lat": [37.7, 37.8, 37.9],
-                "home_lon": [-122.4, -122.5, -122.6],
-                "income": [50000, 75000, 100000],
-                "hh_size": [2, 3, 4],
-                "num_vehicles": [1, 2, 2],
-            }
+            [
+                create_household(
+                    hh_id=1,
+                    home_taz=100,
+                    income=50000,
+                    num_people=2,
+                    num_vehicles=1,
+                ),
+                create_household(
+                    hh_id=2,
+                    home_taz=200,
+                    home_lat=37.8,
+                    home_lon=-122.5,
+                    income=75000,
+                    num_people=3,
+                    num_vehicles=2,
+                ),
+                create_household(
+                    hh_id=3,
+                    home_taz=300,
+                    home_lat=37.9,
+                    home_lon=-122.6,
+                    income=100000,
+                    num_people=4,
+                    num_vehicles=2,
+                ),
+            ]
         )
         data.validate("households", step="link_trips")
 
@@ -32,15 +53,33 @@ class TestUniqueConstraints:
         """Should fail with duplicate IDs."""
         data = CanonicalData()
         data.households = pl.DataFrame(
-            {
-                "hh_id": [1, 2, 2],
-                "home_taz": [100, 200, 300],
-                "home_lat": [37.7, 37.8, 37.9],
-                "home_lon": [-122.4, -122.5, -122.6],
-                "income": [50000, 75000, 100000],
-                "hh_size": [2, 3, 4],
-                "num_vehicles": [1, 2, 2],
-            }
+            [
+                create_household(
+                    hh_id=1,
+                    home_taz=100,
+                    income=50000,
+                    num_people=2,
+                    num_vehicles=1,
+                ),
+                create_household(
+                    hh_id=2,
+                    home_taz=200,
+                    home_lat=37.8,
+                    home_lon=-122.5,
+                    income=75000,
+                    num_people=3,
+                    num_vehicles=2,
+                ),
+                create_household(
+                    hh_id=2,
+                    home_taz=300,
+                    home_lat=37.9,
+                    home_lon=-122.6,
+                    income=100000,
+                    num_people=4,
+                    num_vehicles=2,
+                ),
+            ]
         )
         with pytest.raises(DataValidationError) as exc:
             data.validate("households", step="link_trips")
@@ -54,25 +93,40 @@ class TestForeignKeys:
         """Should pass with valid FKs."""
         data = CanonicalData()
         data.households = pl.DataFrame(
-            {
-                "hh_id": [1, 2],
-                "home_taz": [100, 200],
-                "home_lat": [37.7, 37.8],
-                "home_lon": [-122.4, -122.5],
-                "income": [50000, 75000],
-                "hh_size": [1, 1],
-                "num_vehicles": [1, 2],
-            }
+            [
+                create_household(
+                    hh_id=1,
+                    home_taz=100,
+                    income=50000,
+                    num_people=1,
+                    num_vehicles=1,
+                ),
+                create_household(
+                    hh_id=2,
+                    home_taz=200,
+                    home_lat=37.8,
+                    home_lon=-122.5,
+                    income=75000,
+                    num_people=1,
+                    num_vehicles=2,
+                ),
+            ]
         )
         data.persons = pl.DataFrame(
-            {
-                "person_id": [101, 102],
-                "hh_id": [1, 2],
-                "age": [6, 8],
-                "gender": ["male", "female"],
-                "worker": [True, True],
-                "student": [False, False],
-            }
+            [
+                create_person(
+                    person_id=101,
+                    hh_id=1,
+                    age=AgeCategory.AGE_5_TO_15,
+                    gender=Gender.MALE,
+                ),
+                create_person(
+                    person_id=102,
+                    hh_id=2,
+                    age=AgeCategory.AGE_5_TO_15,
+                    gender=Gender.FEMALE,
+                ),
+            ]
         )
         data.validate("persons", step="link_trips")
 
@@ -80,25 +134,40 @@ class TestForeignKeys:
         """Should fail with orphaned FKs."""
         data = CanonicalData()
         data.households = pl.DataFrame(
-            {
-                "hh_id": [1, 2],
-                "home_taz": [100, 200],
-                "home_lat": [37.7, 37.8],
-                "home_lon": [-122.4, -122.5],
-                "income": [50000, 75000],
-                "hh_size": [1, 1],
-                "num_vehicles": [1, 2],
-            }
+            [
+                create_household(
+                    hh_id=1,
+                    home_taz=100,
+                    income=50000,
+                    num_people=1,
+                    num_vehicles=1,
+                ),
+                create_household(
+                    hh_id=2,
+                    home_taz=200,
+                    home_lat=37.8,
+                    home_lon=-122.5,
+                    income=75000,
+                    num_people=1,
+                    num_vehicles=2,
+                ),
+            ]
         )
         data.persons = pl.DataFrame(
-            {
-                "person_id": [101, 102],
-                "hh_id": [1, 999],
-                "age": [6, 8],
-                "gender": ["male", "female"],
-                "worker": [True, True],
-                "student": [False, False],
-            }
+            [
+                create_person(
+                    person_id=101,
+                    hh_id=1,
+                    age=AgeCategory.AGE_5_TO_15,
+                    gender=Gender.MALE,
+                ),
+                create_person(
+                    person_id=102,
+                    hh_id=999,
+                    age=AgeCategory.AGE_5_TO_15,
+                    gender=Gender.FEMALE,
+                ),
+            ]
         )
         with pytest.raises(DataValidationError) as exc:
             data.validate("persons", step="link_trips")
@@ -112,25 +181,40 @@ class TestRequiredChildren:
         """Should pass when all parents have children."""
         data = CanonicalData()
         data.households = pl.DataFrame(
-            {
-                "hh_id": [1, 2],
-                "home_taz": [100, 200],
-                "home_lat": [37.7, 37.8],
-                "home_lon": [-122.4, -122.5],
-                "income": [50000, 75000],
-                "hh_size": [1, 1],
-                "num_vehicles": [1, 2],
-            }
+            [
+                create_household(
+                    hh_id=1,
+                    home_taz=100,
+                    income=50000,
+                    num_people=1,
+                    num_vehicles=1,
+                ),
+                create_household(
+                    hh_id=2,
+                    home_taz=200,
+                    home_lat=37.8,
+                    home_lon=-122.5,
+                    income=75000,
+                    num_people=1,
+                    num_vehicles=2,
+                ),
+            ]
         )
         data.persons = pl.DataFrame(
-            {
-                "person_id": [101, 102],
-                "hh_id": [1, 2],
-                "age": [6, 8],
-                "gender": ["male", "female"],
-                "worker": [True, True],
-                "student": [False, False],
-            }
+            [
+                create_person(
+                    person_id=101,
+                    hh_id=1,
+                    age=AgeCategory.AGE_5_TO_15,
+                    gender=Gender.MALE,
+                ),
+                create_person(
+                    person_id=102,
+                    hh_id=2,
+                    age=AgeCategory.AGE_5_TO_15,
+                    gender=Gender.FEMALE,
+                ),
+            ]
         )
         data.validate("households", step="link_trips")
 
@@ -138,25 +222,49 @@ class TestRequiredChildren:
         """Should fail when parent missing children."""
         data = CanonicalData()
         data.households = pl.DataFrame(
-            {
-                "hh_id": [1, 2, 3],
-                "home_taz": [100, 200, 300],
-                "home_lat": [37.7, 37.8, 37.9],
-                "home_lon": [-122.4, -122.5, -122.6],
-                "income": [50000, 75000, 100000],
-                "hh_size": [1, 1, 1],
-                "num_vehicles": [1, 2, 2],
-            }
+            [
+                create_household(
+                    hh_id=1,
+                    home_taz=100,
+                    income=50000,
+                    num_people=1,
+                    num_vehicles=1,
+                ),
+                create_household(
+                    hh_id=2,
+                    home_taz=200,
+                    home_lat=37.8,
+                    home_lon=-122.5,
+                    income=75000,
+                    num_people=1,
+                    num_vehicles=2,
+                ),
+                create_household(
+                    hh_id=3,
+                    home_taz=300,
+                    home_lat=37.9,
+                    home_lon=-122.6,
+                    income=100000,
+                    num_people=1,
+                    num_vehicles=2,
+                ),
+            ]
         )
         data.persons = pl.DataFrame(
-            {
-                "person_id": [101, 102],
-                "hh_id": [1, 2],
-                "age": [6, 8],
-                "gender": ["male", "female"],
-                "worker": [True, True],
-                "student": [False, False],
-            }
+            [
+                create_person(
+                    person_id=101,
+                    hh_id=1,
+                    age=AgeCategory.AGE_5_TO_15,
+                    gender=Gender.MALE,
+                ),
+                create_person(
+                    person_id=102,
+                    hh_id=2,
+                    age=AgeCategory.AGE_5_TO_15,
+                    gender=Gender.FEMALE,
+                ),
+            ]
         )
         with pytest.raises(DataValidationError) as exc:
             data.validate("households", step="link_trips")
@@ -204,11 +312,31 @@ class TestCustomValidators:
                 "o_lat": [37.7749, 37.7749, 37.7749],
                 "d_lon": [-122.4094, -122.4094, -122.4094],
                 "d_lat": [37.7849, 37.7849, 37.7849],
-                "o_purpose": [1, 2, 1],  # HOME, WORK, HOME
-                "d_purpose": [2, 1, 1],  # WORK, HOME, HOME
-                "o_purpose_category": [1, 2, 1],  # HOME, WORK, HOME
-                "d_purpose_category": [2, 1, 1],  # WORK, HOME, HOME
-                "mode_type": [1, 2, 1],  # WALK, BIKE, WALK
+                "o_purpose": [
+                    Purpose.HOME.value,
+                    Purpose.PRIMARY_WORKPLACE.value,
+                    Purpose.HOME.value,
+                ],
+                "d_purpose": [
+                    Purpose.PRIMARY_WORKPLACE.value,
+                    Purpose.HOME.value,
+                    Purpose.HOME.value,
+                ],
+                "o_purpose_category": [
+                    PurposeCategory.HOME.value,
+                    PurposeCategory.WORK.value,
+                    PurposeCategory.HOME.value,
+                ],
+                "d_purpose_category": [
+                    PurposeCategory.WORK.value,
+                    PurposeCategory.HOME.value,
+                    PurposeCategory.HOME.value,
+                ],
+                "mode_type": [
+                    ModeType.WALK.value,
+                    ModeType.BIKE.value,
+                    ModeType.WALK.value,
+                ],
                 "duration_minutes": [
                     30.0,
                     30.0,
@@ -223,7 +351,7 @@ class TestCustomValidators:
                 "arrive_time": [
                     datetime(2024, 1, 15, 10, 30, 0),
                     datetime(2024, 1, 15, 11, 30, 0),
-                    datetime(2024, 1, 15, 18, 0, 0),  # 10 hours later - too long!
+                    datetime(2024, 1, 15, 18, 0, 0),  # 10 hours later!
                 ],
             }
         )
@@ -242,30 +370,45 @@ class TestCustomValidators:
         ) -> list[str]:
             actual = persons.group_by("hh_id").agg(pl.len().alias("n"))
             merged = households.join(actual, on="hh_id", how="left")
-            bad = merged.filter(pl.col("hh_size") != pl.col("n"))
+            bad = merged.filter(pl.col("num_people") != pl.col("n"))
             if len(bad) > 0:
                 return ["Size mismatch"]
             return []
 
         data.households = pl.DataFrame(
-            {
-                "hh_id": [1, 2],
-                "home_taz": [100, 200],
-                "home_lat": [37.7, 37.8],
-                "home_lon": [-122.4, -122.5],
-                "income": [50000, 75000],
-                "hh_size": [1, 1],
-                "num_vehicles": [1, 2],
-            }
+            [
+                create_household(
+                    hh_id=1,
+                    home_taz=100,
+                    income=50000,
+                    num_people=1,
+                    num_vehicles=1,
+                ),
+                create_household(
+                    hh_id=2,
+                    home_taz=200,
+                    home_lat=37.8,
+                    home_lon=-122.5,
+                    income=75000,
+                    num_people=1,
+                    num_vehicles=2,
+                ),
+            ]
         )
         data.persons = pl.DataFrame(
-            {
-                "person_id": [101, 102],
-                "hh_id": [1, 2],
-                "age": [6, 8],
-                "gender": ["male", "female"],
-                "worker": [True, True],
-                "student": [False, False],
-            }
+            [
+                create_person(
+                    person_id=101,
+                    hh_id=1,
+                    age=AgeCategory.AGE_5_TO_15,
+                    gender=Gender.MALE,
+                ),
+                create_person(
+                    person_id=102,
+                    hh_id=2,
+                    age=AgeCategory.AGE_5_TO_15,
+                    gender=Gender.FEMALE,
+                ),
+            ]
         )
         data.validate("persons", step="link_trips")

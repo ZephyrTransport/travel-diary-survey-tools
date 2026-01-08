@@ -115,6 +115,7 @@ if __name__ == "__main__":
         config_path=CONFIG_PATH,
         steps=processing_steps,
         caching=True,
+        data_models=new_models,
     )
 
     # Clear cache if requested

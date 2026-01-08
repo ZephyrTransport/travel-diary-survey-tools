@@ -16,7 +16,7 @@ import pytest
 from pydantic import ValidationError
 
 from data_canon.codebook.days import TravelDow
-from data_canon.codebook.trips import Driver, ModeType
+from data_canon.codebook.trips import Driver, ModeType, PurposeCategory
 from processing.joint_trips import (
     JointTripConfig,
     detect_joint_trips,
@@ -209,8 +209,14 @@ def two_person_household_matching_trips():
                 datetime(2024, 1, 15, 9, 30),
                 datetime(2024, 1, 15, 9, 31),
             ],
-            "o_purpose_category": [1, 1],
-            "d_purpose_category": [2, 2],
+            "o_purpose_category": [
+                PurposeCategory.HOME.value,
+                PurposeCategory.HOME.value,
+            ],
+            "d_purpose_category": [
+                PurposeCategory.WORK.value,
+                PurposeCategory.WORK.value,
+            ],
             "mode_type": [ModeType.CAR.value, ModeType.CAR.value],
             "driver": [Driver.DRIVER.value, Driver.PASSENGER.value],
             "num_travelers": [2, 2],
@@ -266,8 +272,14 @@ def two_person_household_non_matching_trips():
                 datetime(2024, 1, 15, 9, 30),
                 datetime(2024, 1, 15, 14, 30),  # No overlap
             ],
-            "o_purpose_category": [1, 1],
-            "d_purpose_category": [2, 2],
+            "o_purpose_category": [
+                PurposeCategory.HOME.value,
+                PurposeCategory.HOME.value,
+            ],
+            "d_purpose_category": [
+                PurposeCategory.WORK.value,
+                PurposeCategory.WORK.value,
+            ],
             "mode_type": [ModeType.CAR.value, ModeType.CAR.value],
             "driver": [Driver.DRIVER.value, Driver.DRIVER.value],
             "num_travelers": [1, 1],
@@ -357,8 +369,8 @@ def test_single_person_household():
             "d_lon": [-122.45],
             "depart_time": [datetime(2024, 1, 15, 9, 0)],
             "arrive_time": [datetime(2024, 1, 15, 9, 30)],
-            "o_purpose_category": [1],
-            "d_purpose_category": [2],
+            "o_purpose_category": [PurposeCategory.HOME.value],
+            "d_purpose_category": [PurposeCategory.WORK.value],
             "mode_type": [ModeType.CAR.value],
             "driver": [Driver.DRIVER.value],
             "num_travelers": [1],

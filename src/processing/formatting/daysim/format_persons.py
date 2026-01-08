@@ -166,7 +166,7 @@ def format_persons(persons: pl.DataFrame, days: pl.DataFrame) -> pl.DataFrame:
         pgend=pl.col("gender").replace(GENDER_MAP),
         # Map student status
         pstyp=pl.col("student").replace(STUDENT_MAP).fill_null(DaysimStudentType.NOT_STUDENT.value),
-        # Map work parking
+        # Map work parking (use work_park from canonical data)
         ppaidprk=pl.col("work_park").replace_strict(WORK_PARK_MAP),
     )
 
@@ -175,7 +175,7 @@ def format_persons(persons: pl.DataFrame, days: pl.DataFrame) -> pl.DataFrame:
         pptyp=pl.when(pl.col("pagey") < AgeThreshold.CHILD_PRESCHOOL)
         .then(pl.lit(DaysimPersonType.CHILD_UNDER_5.value))
         .when(pl.col("pagey") < AgeThreshold.CHILD_SCHOOL)
-        .then(pl.lit(DaysimPersonType.CHILD_5_15.value))
+        .then(pl.lit(DaysimPersonType.CHILD_NON_DRIVING_AGE.value))
         # Age >= 16:
         .when(
             pl.col("employment").is_in(
@@ -202,7 +202,7 @@ def format_persons(persons: pl.DataFrame, days: pl.DataFrame) -> pl.DataFrame:
                 )
             )
         )
-        .then(pl.lit(DaysimPersonType.HIGH_SCHOOL_STUDENT.value))
+        .then(pl.lit(DaysimPersonType.CHILD_DRIVING_AGE.value))
         .when(
             (pl.col("pagey") < AgeThreshold.ADULT)  # 18-24
             & (
@@ -224,7 +224,7 @@ def format_persons(persons: pl.DataFrame, days: pl.DataFrame) -> pl.DataFrame:
                 )
             )
         )
-        .then(pl.lit(DaysimPersonType.HIGH_SCHOOL_STUDENT.value))
+        .then(pl.lit(DaysimPersonType.CHILD_DRIVING_AGE.value))
         # Age >= 18:
         .when(
             pl.col("student").is_in(
@@ -267,7 +267,7 @@ def format_persons(persons: pl.DataFrame, days: pl.DataFrame) -> pl.DataFrame:
             pl.col("pptyp").is_in(
                 [
                     DaysimPersonType.UNIVERSITY_STUDENT.value,
-                    DaysimPersonType.HIGH_SCHOOL_STUDENT.value,
+                    DaysimPersonType.CHILD_DRIVING_AGE.value,
                 ]
             )
             & pl.col("employment").is_in(
