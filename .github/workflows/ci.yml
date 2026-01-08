@@ -76,17 +76,22 @@ jobs:
       - name: Aggregate results
         run: |
           if [ "${{ needs.lint.result }}" != "success" ] || [ "${{ needs.test.result }}" != "success" ]; then
-            echo "❌ One or more checks failed."
+            echo "One or more checks failed."
             exit 1
           fi
-          echo "✅ All checks passed successfully!"
+          echo "All checks passed successfully!"
 
   column_matrix:
     name: Generate Column Matrix
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -104,3 +109,25 @@ jobs:
       - name: Generate Column Matrix
         run: |
           uv run python scripts/generate_column_matrix.py
+
+      - name: Check for changes
+        id: verify_diff
+        run: |
+          git diff --quiet docs/COLUMN_REQUIREMENTS.md || echo "changed=true" >> $GITHUB_OUTPUT
+
+      - name: Verify file is up-to-date (PR only)
+        if: steps.verify_diff.outputs.changed == 'true' && github.event_name == 'pull_request'
+        run: |
+          echo "COLUMN_REQUIREMENTS.md is out of date!"
+          echo "Please run 'python scripts/generate_column_matrix.py' locally and commit the changes."
+          echo "Or ensure pre-commit hooks are installed: 'pre-commit install'"
+          exit 1
+
+      - name: Commit and push if changed (push only)
+        if: steps.verify_diff.outputs.changed == 'true' && github.event_name == 'push'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add docs/COLUMN_REQUIREMENTS.md
+          git commit -m "docs: auto-update column requirements matrix [skip ci]"
+          git push

@@ -16,12 +16,10 @@
             "name": "Python Debugger: Pipeline",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/examples/daysim/run.py",
+            "cwd": "${workspaceFolder}",
+            "program": "projects/bats_2023/run.py",
             "console": "integratedTerminal",
-            "args": [
-                "--config",
-                "config_daysim.yaml",
-            ]
+            "args": []
         }
     ]
 }
