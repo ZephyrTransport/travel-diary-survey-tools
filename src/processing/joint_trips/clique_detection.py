@@ -169,7 +169,7 @@ def detect_disjoint_cliques(
         Tuple of:
         - DataFrame with columns:
             - linked_trip_id: Trip identifier
-            - joint_trip_id: Assigned group ID (null for non-joint trips)
+            - clique_id: Sequential clique group ID (null for non-joint trips)
         - List of flagged cliques (conflicts resolved by pruning)
     """
     # Build weighted similarity graph
@@ -181,7 +181,7 @@ def detect_disjoint_cliques(
             pl.DataFrame(
                 {
                     "linked_trip_id": all_trip_ids,
-                    "joint_trip_id": [None] * len(all_trip_ids),
+                    "clique_id": [None] * len(all_trip_ids),
                 }
             ),
             [],
@@ -204,7 +204,7 @@ def detect_disjoint_cliques(
             pl.DataFrame(
                 {
                     "linked_trip_id": all_trip_ids,
-                    "joint_trip_id": [None] * len(all_trip_ids),
+                    "clique_id": [None] * len(all_trip_ids),
                 }
             ),
             [],
@@ -247,14 +247,14 @@ def detect_disjoint_cliques(
         len(flagged_cliques),
     )
 
-    # Build trip -> joint_trip_id mapping
-    trip_to_joint: dict[int, int] = {}
-    for joint_id, clique in enumerate(disjoint_cliques, start=1):
+    # Build trip -> clique_id mapping (simple sequential IDs)
+    trip_to_clique_id: dict[int, int] = {}
+    for clique_id, clique in enumerate(disjoint_cliques):
         for trip_id in clique:
-            trip_to_joint[trip_id] = joint_id
+            trip_to_clique_id[trip_id] = clique_id
 
-    # Create output DataFrame
-    joint_trip_assignments = pl.DataFrame(
+    # Create output DataFrame with clique_id assignments
+    clique_assignments = pl.DataFrame(
         {
             "linked_trip_id": all_trip_ids,
         }
@@ -262,22 +262,22 @@ def detect_disjoint_cliques(
         [
             pl.col("linked_trip_id")
             .map_elements(
-                lambda x: trip_to_joint.get(x),
+                lambda x: trip_to_clique_id.get(x),
                 return_dtype=pl.Int64,
             )
-            .alias("joint_trip_id")
+            .alias("clique_id")
         ]
     )
 
-    num_joint_trips = len(trip_to_joint)
+    num_joint_trips = len(trip_to_clique_id)
     pct_joint = 100 * num_joint_trips / len(all_trip_ids) if len(all_trip_ids) > 0 else 0
     avg_clique_size = num_joint_trips / len(disjoint_cliques) if len(disjoint_cliques) > 0 else 0
     logger.info(
-        "%d trips in %d joint groups (%.1f%% of all trips, avg size %.1f)",
+        "%d trips in %d cliques (%.1f%% of all trips, avg size %.1f)",
         num_joint_trips,
         len(disjoint_cliques),
         pct_joint,
         avg_clique_size,
     )
 
-    return joint_trip_assignments, flagged_cliques
+    return clique_assignments, flagged_cliques

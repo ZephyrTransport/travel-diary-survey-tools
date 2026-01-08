@@ -35,6 +35,7 @@ class TestAddZoneToDataframe:
 
         result = add_zone_to_dataframe(
             df=df,
+            df_index="id",
             shp=zones_gdf,
             lon_col="lon",
             lat_col="lat",
@@ -65,6 +66,7 @@ class TestAddZoneToDataframe:
 
         result = add_zone_to_dataframe(
             df=df,
+            df_index="id",
             shp=zones_gdf,
             lon_col="lon",
             lat_col="lat",
@@ -94,6 +96,7 @@ class TestAddZoneToDataframe:
 
         result = add_zone_to_dataframe(
             df=df,
+            df_index="id",
             shp=zones_gdf,
             lon_col="lon",
             lat_col="lat",
@@ -125,6 +128,7 @@ class TestAddZoneToDataframe:
 
         result = add_zone_to_dataframe(
             df=df,
+            df_index="id",
             shp=zones_gdf,
             lon_col="lon",
             lat_col="lat",
@@ -132,8 +136,8 @@ class TestAddZoneToDataframe:
             zone_id_field="zone_id",
         )
 
-        # Should be string "100", not integer 100
-        assert result["zone"][0] == "100"
+        # Should be integer
+        assert result["zone"][0] == 100
 
 
 class TestAddZoneIds:
@@ -209,7 +213,7 @@ class TestAddZoneIds:
         result = add_zone_ids(
             households=sample_households,
             persons=sample_persons,
-            linked_trips=sample_trips,
+            unlinked_trips=sample_trips,
             zone_geographies=zone_geographies,
         )
 
@@ -225,10 +229,10 @@ class TestAddZoneIds:
         assert result["persons"]["school_taz"][2] == "TAZ3"
 
         # Check trips has o_taz and d_taz
-        assert "o_taz" in result["linked_trips"].columns
-        assert "d_taz" in result["linked_trips"].columns
-        assert result["linked_trips"]["o_taz"][0] == "TAZ1"
-        assert result["linked_trips"]["d_taz"][1] == "TAZ3"
+        assert "o_taz" in result["unlinked_trips"].columns
+        assert "d_taz" in result["unlinked_trips"].columns
+        assert result["unlinked_trips"]["o_taz"][0] == "TAZ1"
+        assert result["unlinked_trips"]["d_taz"][1] == "TAZ3"
 
     def test_add_multiple_zone_geographies(
         self, sample_households, sample_persons, sample_trips, tmp_path
@@ -262,7 +266,7 @@ class TestAddZoneIds:
         result = add_zone_ids(
             households=sample_households,
             persons=sample_persons,
-            linked_trips=sample_trips,
+            unlinked_trips=sample_trips,
             zone_geographies=zone_geographies,
         )
 
@@ -290,7 +294,7 @@ class TestAddZoneIds:
         result = add_zone_ids(
             households=sample_households,
             persons=sample_persons,
-            linked_trips=sample_trips,
+            unlinked_trips=sample_trips,
             zone_geographies=zone_geographies,
         )
 
@@ -313,14 +317,14 @@ class TestAddZoneIds:
         result = add_zone_ids(
             households=sample_households,
             persons=sample_persons,
-            linked_trips=sample_trips,
+            unlinked_trips=sample_trips,
             zone_geographies=zone_geographies,
         )
 
         # Original columns should still exist
         assert "hh_id" in result["households"].columns
         assert "person_id" in result["persons"].columns
-        assert "trip_id" in result["linked_trips"].columns
+        assert "trip_id" in result["unlinked_trips"].columns
         assert "home_lon" in result["households"].columns
 
     def test_returns_all_three_tables(
@@ -338,13 +342,13 @@ class TestAddZoneIds:
         result = add_zone_ids(
             households=sample_households,
             persons=sample_persons,
-            linked_trips=sample_trips,
+            unlinked_trips=sample_trips,
             zone_geographies=zone_geographies,
         )
 
         assert "households" in result
         assert "persons" in result
-        assert "linked_trips" in result
+        assert "unlinked_trips" in result
         assert isinstance(result["households"], pl.DataFrame)
         assert isinstance(result["persons"], pl.DataFrame)
-        assert isinstance(result["linked_trips"], pl.DataFrame)
+        assert isinstance(result["unlinked_trips"], pl.DataFrame)
