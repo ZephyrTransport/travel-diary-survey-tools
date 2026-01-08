@@ -47,7 +47,7 @@ class TestJointTripConfig:
         config = JointTripConfig(
             method="mahalanobis",
             covariance=[7000, 7000, 20, 20],
-            distance_threshold=2.5,
+            space_threshold_meters=2.5,
         )
         assert config.method == "mahalanobis"
         assert config.covariance == [7000, 7000, 20, 20]
@@ -63,7 +63,7 @@ class TestJointTripConfig:
         config = JointTripConfig(
             method="mahalanobis",
             covariance=cov,
-            distance_threshold=2.5,
+            space_threshold_meters=2.5,
         )
         assert config.covariance == cov
 

@@ -19,6 +19,10 @@ spec = importlib.util.spec_from_file_location(
     / "survey_processing"
     / "02b-link_trips_week.py",
 )
+if spec is None or spec.loader is None:
+    msg = "Could not load legacy link_trips module"
+    raise ImportError(msg)
+
 link_trips_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(link_trips_module)
 link_trip_legacy = link_trips_module._link_trip_week

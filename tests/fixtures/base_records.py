@@ -5,7 +5,7 @@ Person types are derived automatically using the pipeline's
 derive_person_type() function.
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import polars as pl
 
@@ -257,7 +257,7 @@ def create_day(
     hh_id: int = 1,
     person_num: int = 1,
     day_num: int = 1,
-    travel_date: datetime | None = None,
+    travel_date: date | None = None,
     travel_dow: TravelDow = TravelDow.MONDAY,
     is_complete: bool = True,
     num_trips: int = 0,

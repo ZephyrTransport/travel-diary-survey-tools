@@ -128,7 +128,7 @@ def extract_tours(
     """
     logger.info("Building tours from linked trip data...")
 
-    config = TourConfig(**kwargs)
+    config = TourConfig(**kwargs)  # pyright: ignore[reportArgumentType]
 
     # Derive person_type column
     persons_ptype = derive_person_type(persons)

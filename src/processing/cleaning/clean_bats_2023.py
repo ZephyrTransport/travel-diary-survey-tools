@@ -108,7 +108,7 @@ def clean_2023_bats(
             # Construct default day_id (person_id * 100 + travel_dow)
             (pl.col("person_id") * 100 + pl.col("travel_dow")).alias("day_id")
         )
-        .select(PersonDayModel.model_json_schema().get("properties").keys())
+        .select(PersonDayModel.model_json_schema().get("properties", {}).keys())
     )
     # Add dummy days to days dataframe
     days = pl.concat([days, dummy_days], how="diagonal")

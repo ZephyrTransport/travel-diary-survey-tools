@@ -10,50 +10,22 @@ circular imports.
 
 import logging
 import time
-from typing import Any
+from typing import Any, cast
 
 import polars as pl
 from pydantic import BaseModel
 from pydantic import ValidationError as PydanticValidationError
 
 from data_canon.core.exceptions import DataValidationError
+from data_canon.core.validators import (
+    get_required_fields_for_step,
+)
 
 logger = logging.getLogger(__name__)
 
 
-# Step-Aware Row Validators -----------------------------------------------
-
-
-def get_required_fields_for_step(
-    model: type[BaseModel],
-    step_name: str,
-) -> set[str]:
-    """Get field names that are required for a specific step.
-
-    Args:
-        model: Pydantic model class
-        step_name: Name of the pipeline step
-
-    Returns:
-        Set of field names that are required in this step
-    """
-    required_fields = set()
-
-    for field_name, field_info in model.model_fields.items():
-        # Get step metadata from json_schema_extra
-        extra = field_info.json_schema_extra or {}
-
-        # Check if required in all steps
-        if extra.get("required_in_all_steps", False):
-            required_fields.add(field_name)
-            continue
-
-        # Check if required in this specific step
-        required_in_steps = extra.get("required_in_steps", [])
-        if step_name in required_in_steps:
-            required_fields.add(field_name)
-
-    return required_fields
+# DataFrame-Level Validation -----------------------------------------------
+# Note: Row-level validation functions imported from data_canon.core.validators
 
 
 def validate_row_for_step(
@@ -78,40 +50,43 @@ def validate_row_for_step(
     """
     if step_name is None:
         # No step specified - validate all fields strictly
-        model.model_validate(row_dict, strict=False, from_attributes=False)
+        model(**row_dict)
         return
 
     # Get fields required for this step
     required_fields = get_required_fields_for_step(model, step_name)
 
     # Check for missing required fields
-    # Note: A field is only "missing" if it's not in the dict at all
-    # Fields that are present but have None values are allowed if the
-    # field type is Optional (e.g., float | None)
     missing_fields = [field_name for field_name in required_fields if field_name not in row_dict]
 
     if missing_fields:
         msg = f"Missing required fields for step '{step_name}': {', '.join(missing_fields)}"
         raise ValueError(msg)
 
-    # Validate all fields present in row_dict (comprehensive validation)
-    # This ensures type checking and constraints are enforced on all present
-    # fields, regardless of whether they're required for this specific step
+    # Build dict with only non-None values to avoid Pydantic's
+    # required field enforcement for step-conditional fields
+    # Include all required fields (even if None) + all non-None fields
+    filtered_row = {k: v for k, v in row_dict.items() if v is not None or k in required_fields}
+
+    # Validate all present fields in a single pass using model_validate
+    # This is much faster than validating each field individually
     try:
-        # Create a model instance with only the present fields to avoid
-        # Pydantic's required field enforcement for non-required fields
-        model.model_validate(row_dict, strict=False, from_attributes=False)
+        model.model_validate(filtered_row, strict=False)
     except PydanticValidationError as e:
-        # Filter errors to only include fields that are present in the data
-        # This prevents errors about missing optional fields
-        present_fields = set(row_dict.keys())
+        # Only re-raise errors for fields that are actually present
+        # or required for this step
         relevant_errors = [
-            err for err in e.errors() if not err.get("loc") or err["loc"][0] in present_fields
+            err
+            for err in e.errors()
+            if (
+                err.get("loc", [None])[0] in filtered_row
+                or err.get("loc", [None])[0] in required_fields
+            )
         ]
         if relevant_errors:
             raise PydanticValidationError.from_exception_data(
                 model.__name__,
-                relevant_errors,
+                cast("list[Any]", relevant_errors),
             ) from e
 
 
@@ -226,47 +201,3 @@ def _report_errors(error_groups: dict[str, list[int]], table_name: str) -> None:
         rule="row_validation",
         message=summary_msg,
     )
-
-
-def get_step_validation_summary(
-    model: type[BaseModel],
-) -> dict[str, list[str]]:
-    """Get a summary of which fields are required in which steps.
-
-    Args:
-        model: Pydantic model class
-
-    Returns:
-        Dictionary mapping step names to lists of required field names
-    """
-    step_fields: dict[str, list[str]] = {}
-    all_steps_fields: list[str] = []
-
-    for field_name, field_info in model.model_fields.items():
-        extra = field_info.json_schema_extra or {}
-
-        if extra.get("required_in_all_steps", False):
-            all_steps_fields.append(field_name)
-            continue
-
-        required_in_steps = extra.get("required_in_steps", [])
-        for step in required_in_steps:
-            if step not in step_fields:
-                step_fields[step] = []
-            step_fields[step].append(field_name)
-
-    # Add "ALL" entry for fields required in all steps
-    if all_steps_fields:
-        step_fields["ALL"] = all_steps_fields
-
-    return step_fields
-
-
-# Public API ---------------------------------------------------------------
-
-__all__ = [
-    "get_required_fields_for_step",
-    "get_step_validation_summary",
-    "validate_dataframe_rows",
-    "validate_row_for_step",
-]

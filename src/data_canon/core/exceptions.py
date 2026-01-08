@@ -31,6 +31,3 @@ class DataValidationError(Exception):
         parts.append(f"- {self.rule}:")
         parts.append(self.message)
         return " ".join(parts)
-
-
-__all__ = ["DataValidationError"]

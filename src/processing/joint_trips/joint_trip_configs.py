@@ -30,6 +30,7 @@ Trips must have overlapping time windows to be joint (travelers physically
 together). Pre-filter: max(depart_A, depart_B) <= min(arrive_A, arrive_B)
 """
 
+from collections.abc import Sequence
 from typing import Literal
 
 import numpy as np
@@ -79,7 +80,7 @@ class JointTripConfig(BaseModel):
         description="Maximum spatial distance in meters for buffer method",
     )
 
-    covariance: list[float] | list[list[float]] | None = Field(
+    covariance: Sequence[float | int] | Sequence[Sequence[float | int]] | None = Field(
         default=None,
         description=(
             "Diagonal (4 values) or full (4x4) covariance matrix in units "
@@ -112,7 +113,7 @@ class JointTripConfig(BaseModel):
     )
 
     @staticmethod
-    def _validate_diagonal_covariance(v: list[float]) -> None:
+    def _validate_diagonal_covariance(v: Sequence[float]) -> None:
         """Validate diagonal covariance vector."""
         if len(v) != 4:  # noqa: PLR2004
             msg = f"Diagonal covariance must have 4 values, got {len(v)}"
@@ -122,7 +123,7 @@ class JointTripConfig(BaseModel):
             raise ValueError(msg)
 
     @staticmethod
-    def _validate_full_covariance(v: list[list[float]]) -> None:
+    def _validate_full_covariance(v: Sequence[Sequence[float]]) -> None:
         """Validate full covariance matrix."""
         if len(v) != 4:  # noqa: PLR2004
             msg = f"Full covariance must be 4x4, got {len(v)} rows"
@@ -147,8 +148,8 @@ class JointTripConfig(BaseModel):
     @field_validator("covariance")
     @classmethod
     def validate_covariance(
-        cls, v: list[float] | list[list[float]] | None
-    ) -> list[float] | list[list[float]] | None:
+        cls, v: Sequence[float] | Sequence[Sequence[float]] | None
+    ) -> Sequence[float] | Sequence[Sequence[float]] | None:
         """Validate covariance shape and values."""
         if v is None:
             return None
@@ -159,9 +160,11 @@ class JointTripConfig(BaseModel):
 
         # Check if diagonal (1D list) or full (2D list)
         if isinstance(v[0], (int, float)):
-            cls._validate_diagonal_covariance(v)
+            # Type narrow: v is Sequence[float]
+            cls._validate_diagonal_covariance(v)  # type: ignore[arg-type]
         elif isinstance(v[0], list):
-            cls._validate_full_covariance(v)
+            # Type narrow: v is Sequence[Sequence[float]]
+            cls._validate_full_covariance(v)  # type: ignore[arg-type]
         else:
             msg = "Covariance must be list of floats or list of lists"
             raise TypeError(msg)

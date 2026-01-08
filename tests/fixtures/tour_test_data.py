@@ -102,7 +102,7 @@ class TestDataBuilder:
             school_type = None
         elif person_type in [
             PersonType.UNIVERSITY_STUDENT,
-            PersonType.HIGH_SCHOOL_STUDENT,
+            PersonType.CHILD_DRIVING_AGE,
         ]:
             employment = Employment.UNEMPLOYED_NOT_LOOKING
             student = Student.FULLTIME_INPERSON
@@ -112,11 +112,11 @@ class TestDataBuilder:
                 else AgeCategory.AGE_16_TO_17.value
             )
             school_type = (
-                SchoolType.COLLEGE
+                SchoolType.COLLEGE_4YEAR
                 if person_type == PersonType.UNIVERSITY_STUDENT
                 else SchoolType.HIGH_SCHOOL
             )
-        elif person_type == PersonType.CHILD_AGE_5_15:
+        elif person_type == PersonType.CHILD_NON_DRIVING_AGE:
             employment = Employment.UNEMPLOYED_NOT_LOOKING
             student = Student.NONSTUDENT
             age = AgeCategory.AGE_5_TO_15.value
@@ -126,9 +126,9 @@ class TestDataBuilder:
             student = Student.NONSTUDENT
             age = (
                 AgeCategory.AGE_65_TO_74.value
-                if person_type == PersonType.RETIREE
+                if person_type == PersonType.RETIRED
                 else AgeCategory.AGE_25_TO_34.value
-                if person_type == PersonType.NON_WORKING_ADULT
+                if person_type == PersonType.NON_WORKER
                 else AgeCategory.AGE_UNDER_5.value
             )
             school_type = None

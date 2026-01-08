@@ -59,6 +59,9 @@ spec = importlib.util.spec_from_file_location(
     / "survey_processing"
     / "03a-tour_extract_week.py",
 )
+if spec is None or spec.loader is None:
+    msg = "Could not load tour extraction module"
+    raise ImportError(msg)
 tour_extract_module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(tour_extract_module)
 tour_extract_legacy = tour_extract_module._tour_extract_week_core

@@ -876,6 +876,9 @@ class TestTripFormatting:
             households=None,
         )
 
+        assert unlinked_trips_with_ids is not None
+        assert linked_trips is not None
+
         result = format_linked_trips(persons, unlinked_trips_with_ids, linked_trips)
 
         assert len(result) == 1
@@ -922,6 +925,9 @@ class TestTripFormatting:
             households=None,
         )
 
+        assert unlinked_trips_with_ids is not None
+        assert linked_trips is not None
+
         result = format_linked_trips(persons, unlinked_trips_with_ids, linked_trips)
 
         assert result["mode"][0] == DaysimMode.HOV2.value
@@ -966,6 +972,9 @@ class TestTripFormatting:
             households=None,
         )
 
+        assert unlinked_trips_with_ids is not None
+        assert linked_trips is not None
+
         result = format_linked_trips(persons, unlinked_trips_with_ids, linked_trips)
 
         assert result["mode"][0] == DaysimMode.HOV3.value
@@ -1009,6 +1018,9 @@ class TestTripFormatting:
             persons=persons,
             households=None,
         )
+
+        assert unlinked_trips_with_ids is not None
+        assert linked_trips is not None
 
         result = format_linked_trips(persons, unlinked_trips_with_ids, linked_trips)
 
@@ -1055,6 +1067,9 @@ class TestTripFormatting:
             households=None,
         )
 
+        assert unlinked_trips_with_ids is not None
+        assert linked_trips is not None
+
         result = format_linked_trips(persons, unlinked_trips_with_ids, linked_trips)
 
         assert result["mode"][0] == DaysimMode.BIKE.value
@@ -1094,6 +1109,9 @@ class TestTripFormatting:
             persons=persons,
             households=None,
         )
+
+        assert unlinked_trips_with_ids is not None
+        assert linked_trips is not None
 
         result = format_linked_trips(persons, unlinked_trips_with_ids, linked_trips)
 
@@ -1137,6 +1155,9 @@ class TestTripFormatting:
             persons=persons,
             households=None,
         )
+
+        assert unlinked_trips_with_ids is not None
+        assert linked_trips is not None
 
         result = format_linked_trips(persons, unlinked_trips_with_ids, linked_trips)
 

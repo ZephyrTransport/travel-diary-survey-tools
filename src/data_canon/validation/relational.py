@@ -5,6 +5,7 @@ bidirectional relationships (required children).
 """
 
 import logging
+from collections.abc import Callable
 
 import polars as pl
 from pydantic import BaseModel
@@ -34,6 +35,13 @@ def get_foreign_key_fields(
         fk_to = extra.get("fk_to")
 
         if fk_to:
+            # Ensure fk_to is a string
+            if not isinstance(fk_to, str):
+                msg = (
+                    f"Invalid fk_to type for {field_name}: {type(fk_to).__name__}. Expected string"
+                )
+                raise TypeError(msg)
+
             # Parse "parent_table.parent_column" format
             if "." not in fk_to:
                 msg = f"Invalid fk_to format: '{fk_to}'. Expected 'table.column'"
@@ -67,6 +75,12 @@ def get_required_children_fields(
             if not fk_to:
                 msg = f"Field '{field_name}' has required_child=True but no fk_to specified"
                 raise ValueError(msg)
+
+            if not isinstance(fk_to, str):
+                msg = (
+                    f"Invalid fk_to type for {field_name}: {type(fk_to).__name__}. Expected string"
+                )
+                raise TypeError(msg)
 
             parent_table, parent_column = fk_to.split(".", 1)
             required_children[field_name] = (parent_table, parent_column)
@@ -132,7 +146,7 @@ def check_foreign_keys(
     table_name: str,
     df: pl.DataFrame,
     fk_fields: dict[str, tuple[str, str]],
-    get_table_func: callable,
+    get_table_func: Callable,
 ) -> None:
     """Check foreign key constraints using FK metadata from models.
 
@@ -204,11 +218,3 @@ def check_foreign_keys(
                     f"{' ...' if len(orphaned) > max_display else ''}"
                 ),
             )
-
-
-__all__ = [
-    "check_foreign_keys",
-    "get_foreign_key_fields",
-    "get_required_children_fields",
-    "validate_fk_references",
-]

@@ -9,7 +9,7 @@ import polars as pl
 
 from data_canon.codebook.days import TravelDow
 from data_canon.codebook.tours import TourCategory, TourDataQuality
-from data_canon.codebook.trips import Mode, Purpose
+from data_canon.codebook.trips import Mode, PurposeCategory
 
 from .field_utils import add_optional_fields_batch
 
@@ -22,7 +22,7 @@ def create_tour(
     day_id: int = 1,
     day_num: int = 1,
     tour_num: int = 1,
-    tour_purpose: Purpose = Purpose.PRIMARY_WORKPLACE,
+    tour_purpose: PurposeCategory = PurposeCategory.WORK,
     tour_category: TourCategory = TourCategory.COMPLETE,
     o_taz: int = 100,
     d_taz: int = 200,

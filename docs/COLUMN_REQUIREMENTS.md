@@ -3,7 +3,7 @@ Generated automatically by `scripts/generate_column_matrix.py`.
 
 ***Do not edit this markdown file directly.***
 
-This matrix shows which columns are required in which pipeline steps. 
+This matrix shows which columns are required in which pipeline steps.
 - ✓ = required in step
 - \+ = created in step
 

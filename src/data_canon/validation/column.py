@@ -71,9 +71,3 @@ def check_unique_constraints(
                     f"{' ...' if len(dup_values) > 10 else ''}"  # noqa: PLR2004
                 ),
             )
-
-
-__all__ = [
-    "check_unique_constraints",
-    "get_unique_fields",
-]
