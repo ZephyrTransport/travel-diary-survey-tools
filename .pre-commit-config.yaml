@@ -1,4 +1,4 @@
-exclude: '^(scripts/daysim_old/|.*\.html$|uv\.lock$)'
+exclude: '^(archive/|.*\.html$|uv\.lock$)'
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.3.0

@@ -54,7 +54,7 @@ lint.ignore = [
     "ERA001",  # Ignore commented out code
 ]
 lint.pydocstyle.convention = "google"
-exclude = ["scripts/daysim_old", "*.html", "uv.lock"]
+exclude = ["archive", "*.html", "uv.lock"]
 
 
 [tool.ruff.lint.per-file-ignores]

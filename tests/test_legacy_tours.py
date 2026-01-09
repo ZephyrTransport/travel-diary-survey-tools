@@ -54,10 +54,10 @@ from tests.fixtures.scenario_builders import (
 spec = importlib.util.spec_from_file_location(
     "tour_extract_module",
     Path(__file__).parent.parent
-    / "scripts"
-    / "daysim_old"
+    / "archive"
     / "survey_processing"
-    / "03a-tour_extract_week.py",
+    / "SFCTA"
+    / "03a-tour_extract_week_func.py",
 )
 if spec is None or spec.loader is None:
     msg = "Could not load tour extraction module"

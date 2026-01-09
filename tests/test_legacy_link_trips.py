@@ -14,9 +14,9 @@ from processing import link_trips
 spec = importlib.util.spec_from_file_location(
     "link_trips_week_module",
     Path(__file__).parent.parent
-    / "scripts"
-    / "daysim_old"
+    / "archive"
     / "survey_processing"
+    / "SFCTA"
     / "02b-link_trips_week.py",
 )
 if spec is None or spec.loader is None:

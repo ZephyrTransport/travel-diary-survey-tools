@@ -41,20 +41,30 @@ def reformat(config):
     reformat_dir = Path(config["02a-reformat"]["dir"])
     reformat_dir.mkdir(exist_ok=True)
 
+    # Determine weight column names based on rmove_only setting
+    rmove_only = config["rmove_only"]
+    weight_suffix = "_rmove_only" if rmove_only else ""
+    person_weight_col = f"person_weight{weight_suffix}"
+    hh_weight_col = f"hh_weight{weight_suffix}"
+    trip_weight_col = f"trip_weight{weight_suffix}"
+
     person = reformat_person(
         taz_spatial_join_dir / config["person_filename"],
         load_day_completeness(Path(config["raw"]["dir"]) / config["day_filename"]),
         config["weighted"],
+        person_weight_col,
     )
     person.write_csv(reformat_dir / config["person_filename"])
     reformat_hh(
         taz_spatial_join_dir / config["hh_filename"],
         person,
         config["weighted"],
+        hh_weight_col,
     ).write_csv(reformat_dir / config["hh_filename"])
     reformat_trip(
         taz_spatial_join_dir / config["trip_filename"],
         config["weighted"],
+        trip_weight_col,
     ).write_csv(reformat_dir / config["trip_filename"])
     return
 
@@ -117,7 +127,7 @@ def load_day_completeness(in_day_filepath):
     )
 
 
-def reformat_person(in_person_filepath, day_with_completeness, weighted: bool):
+def reformat_person(in_person_filepath, day_with_completeness, weighted: bool, person_weight_col):
     """
     Reformat person data to Daysim format with comprehensive demographic mapping.
 
@@ -230,7 +240,7 @@ def reformat_person(in_person_filepath, day_with_completeness, weighted: bool):
         "num_days_complete",
     ]
     if weighted:
-        person_out_cols.append("person_weight")
+        person_out_cols.append(person_weight_col)
     person = (
         pl.read_csv(
             in_person_filepath,
@@ -375,7 +385,7 @@ def reformat_person(in_person_filepath, day_with_completeness, weighted: bool):
     return person
 
 
-def reformat_hh(in_hh_filepath, person, weighted: bool):
+def reformat_hh(in_hh_filepath, person, weighted: bool, hh_weight_col):
     """
     Reformat household data to Daysim format.
 
@@ -427,7 +437,7 @@ def reformat_hh(in_hh_filepath, person, weighted: bool):
         "hycord",
     ]
     if weighted:
-        hh_out_cols.append("hh_weight")
+        hh_out_cols.append(hh_weight_col)
     person = (
         person.select("hhno", "pownrent", "prestype")
         .group_by("hhno")
@@ -469,7 +479,7 @@ def reformat_hh(in_hh_filepath, person, weighted: bool):
     return hh
 
 
-def reformat_trip(in_trip_filepath, weighted: bool):
+def reformat_trip(in_trip_filepath, weighted: bool, trip_weight_col):
     """
     Reformat trip data to Daysim format with comprehensive mode and purpose mapping.
 
@@ -527,7 +537,7 @@ def reformat_trip(in_trip_filepath, weighted: bool):
         "mode_type",
     ]
     if weighted:
-        trip_out_cols.append("trip_weight")
+        trip_out_cols.append(trip_weight_col)
     trip = (
         pl.read_csv(
             in_trip_filepath,

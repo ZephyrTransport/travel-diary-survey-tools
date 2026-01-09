@@ -90,7 +90,12 @@ def assign_day(config):
     # out_dir = 'wt_cap'
 
     WT_CAP = None
-    person_wt_col = "person_weight"
+    person_weight_col = "person_weight"
+
+    # Determine weight column names based on rmove_only setting
+    rmove_only = config["rmove_only"]
+    weight_suffix = "_rmove_only" if rmove_only else ""
+    person_weight_col = f"person_weight{weight_suffix}"
 
     out_dir = out_dir / "wt-wkday_3day"
     wt_dows = [2, 3, 4]
@@ -132,7 +137,7 @@ def assign_day(config):
     person_reformatted_cols = ["hhno", "pno"]
     if weighted:
         person_reformatted_cols += [
-            person_wt_col,
+            person_weight_col,
             "mon_complete",
             "tue_complete",
             "wed_complete",
@@ -148,16 +153,16 @@ def assign_day(config):
     if WT_CAP is not None:
         # replace person weights above WT_CAP by the WT_CAP
         person_reformatted.loc[
-            person_reformatted[person_wt_col] > WT_CAP, person_wt_col
+            person_reformatted[person_weight_col] > WT_CAP, person_weight_col
         ] = WT_CAP
     if not weighted:
         # assign weights of 1 if dataset unweighted
-        person_reformatted[person_wt_col] = 1
+        person_reformatted[person_weight_col] = 1
     # this is just the person-`day_weight` (not fully clear whether the raw data's
     # `day_weight` is the person or the hh weight divided by the num of complete days):
     # once we verify that, just use `day_weight` directly from the day table
     person_reformatted["personday_weight"] = person_reformatted[
-        person_wt_col
+        person_weight_col
     ] / person_reformatted[wt_dow_complete_cols].sum(axis=1)
 
     # read in raw/00-preprocess trip file for dow info
@@ -364,8 +369,8 @@ def assign_day(config):
     pday_out.to_csv(out_dir / "personday.csv", index=False)
 
     # assign person weight
-    per = per.merge(person_reformatted[["hhno", "pno", person_wt_col]], how="left")
-    per["psexpfac"] = per[person_wt_col]
+    per = per.merge(person_reformatted[["hhno", "pno", person_weight_col]], how="left")
+    per["psexpfac"] = per[person_weight_col]
     per["psexpfac"] = per["psexpfac"].fillna(0)
     per = per[per_cols]
     per.to_csv(out_dir / "person.csv", index=False)
