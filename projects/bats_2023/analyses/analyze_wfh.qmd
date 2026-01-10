@@ -1,0 +1,2265 @@
+---
+title: "Work From Home Analysis - BATS 2023"
+format:
+  html:
+    code-fold: true
+    toc: true
+    toc-depth: 3
+jupyter: python3
+---
+
+# Overview
+
+This report analyzes work-from-home (WFH) patterns among employed persons in the BATS 2023 survey data. The analysis examines:
+
+-   Telework frequency (days per week working from home)
+-   Commute frequency (days per week commuting to workplace)
+-   Telework ratio (proportion of work days spent at home)
+-   Temporal validation (identifying impossible telework/commute combinations)
+
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Setup](#setup)
+3. [Run Pipeline](#run-pipeline)
+4. [Data Preparation](#data-preparation)
+    - [Telework frequency](#telework-frequency)
+    - [Impute commute_freq](#impute-commute_freq)
+    - [Data filtering](#data-filtering)
+    - [Survey Code Reference](#survey-code-reference)
+5. [Analysis](#analysis)
+    - [Temporal Validation](#temporal-validation)
+    - [Classification Rules](#classification-rules)
+    - [Categorize Telework Frequency](#categorize-telework-frequency)
+    - [Categorize Commute Frequency](#categorize-commute-frequency)
+    - [Calculate Telework Ratio](#calculate-telework-ratio)
+6. [Results](#results)
+    - [Telework Frequency Distribution](#telework-frequency-distribution)
+    - [Commute Frequency Distribution](#commute-frequency-distribution)
+    - [Compare Telework frequency with Flavia's analysis](#compare-telework-frequency-with-flavias-analysis)
+    - [Combined Telework and Commute Frequency Distribution](#combined-telework-and-commute-frequency-distribution)
+    - [Telework shift plots](#telework-shift-plots)
+    - [Telework Ratio (Proportion of Work Days at Home)](#telework-ratio-proportion-of-work-days-at-home)
+    - [Telework Summary](#telework-summary)
+7. [Stated vs Observed Commute Frequency Validation](#stated-vs-observed-commute-frequency-validation)
+    - [Classify Weekdays as Commute Days](#classify-weekdays-as-commute-days)
+    - [Calculate Observed Frequencies](#calculate-observed-frequencies)
+    - [Merge with Stated Frequencies](#merge-with-stated-frequencies)
+    - [Observed Frequency Distributions](#observed-frequency-distributions)
+    - [Stated vs Observed Comparison](#stated-vs-observed-comparison)
+
+
+## Setup
+
+```{python}
+#| label: imports
+
+import logging
+from enum import IntEnum
+from pathlib import Path
+
+import polars as pl
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+from pipeline.pipeline import Pipeline
+from processing import link_trips, load_data, write_data
+from processing.cleaning.clean_bats_2023 import clean_2023_bats
+from data_canon.core.labeled_enum import LabeledEnum
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+)
+logger = logging.getLogger(__name__)
+```
+
+```{python}
+#| label: mount-drives
+#| output: false
+
+import os
+
+# Try to mount network drives if not already mounted
+try:
+    os.system(r"net use M: \\models.ad.mtc.ca.gov\data\models")
+    logger.info("Mounted M: drive")
+except Exception as e:
+    logger.warning(f"Could not mount M: drive: {e}")
+
+try:
+    os.system(r"net use X: \\model3-a\Model3A-Share")
+    logger.info("Mounted X: drive")
+except Exception as e:
+    logger.warning(f"Could not mount X: drive: {e}")
+```
+
+## Run Pipeline
+
+```{python}
+#| label: constants
+
+# Custom enums for categorizing responses
+class FrequencyCategory(LabeledEnum):
+    """Ordered frequency categories for sorting."""
+    ALWAYS = (8, "Always")
+    SIX_SEVEN = (7, "6-7 days per week")
+    FIVE = (6, "5 days per week")
+    FOUR = (5, "4 days per week")
+    TWO_THREE = (4, "2-3 days per week")
+    ONE = (3, "1 day per week")
+    ONE_TO_THREE_MONTHLY = (2, "1-3 days a month")
+    LESS_THAN_MONTHLY = (1, "Less than monthly")
+    NEVER = (0, "Never")
+    MISSING = (-1, "Missing Response")
+
+
+class TeleworkRatio(LabeledEnum):
+    """Ordered telework ratio categories for sorting."""
+    ALWAYS = (4, "Always")
+    MORE_THAN_60 = (3, "More than 60% of the time")
+    ABOUT_HALF = (2, "About half (40-60%)")
+    LESS_THAN_40 = (1, "Less than 40% of the time")
+    NEVER = (0, "Never, or less than once a week")
+    MISSING = (-1, "Missing Response")
+
+# Employment codes we care about (from data_canon.codebook.persons.Employment)
+EMPLOYED_CODES = [1]  # Fulltime employed persons only
+
+# Configuration
+CONFIG_PATH = Path("config.yaml")
+CACHE_PATH = ".cache"
+```
+
+```{python}
+#| label: load-data
+#| output: false
+
+# Load the 2019 and 2023 persons data
+data_dir_23 = Path(
+    "E:/Box/Modeling and Surveys/Surveys/Travel Diary Survey/BATS_2023/MTC_RSG_Partner Repository/"
+    "5.Deliverables/Task 10 - Weighting and Expansion Data Files/UnweightedDataset/"
+)
+data_dir_19 = Path(
+    "M:/Data/HomeInterview/Bay Area Travel Study 2018-2019/Data/Final Version with Imputations/"
+    "Final Updated Dataset as of 10-18-2021/"
+)
+weights_dir_23 = Path(
+    "X:/survey_repos/ProjRoot_Mon-Thu20251201/WgtRoot_Mon-Thu20251201_nocommutemode/output/"
+)
+
+# Load the 2019 data
+households_19 = pl.read_csv(
+    data_dir_19 / "hh.tsv",
+    separator="\t",
+    ignore_errors=True,
+)
+persons_19 = pl.read_csv(
+    data_dir_19 / "person.tsv",
+    separator="\t",
+    ignore_errors=True,
+)
+
+# Load 2023 data and replace the old weights
+households_23 = pl.read_csv(data_dir_23 / "hh.csv")
+
+person_weights_23 = pl.read_csv(weights_dir_23 / "person_weights.csv")
+persons_23 = pl.read_csv(data_dir_23 / "person.csv")
+persons_23 = (
+    persons_23.drop("person_weight")
+    .join(
+        person_weights_23.select("person_id", "person_weight"),
+        on="person_id",
+        how="left",
+    )
+)
+
+# Load trip and day data for 2019
+trips_19 = pl.read_csv(
+    data_dir_19 / "trip.tsv",
+    separator="\t",
+    ignore_errors=True,
+)
+days_19 = pl.read_csv(
+    data_dir_19 / "day.tsv",
+    separator="\t",
+    ignore_errors=True,
+)
+
+# Create day_id in 2019 data for joining weights
+days_19 = days_19.with_columns(
+    (
+        pl.col("person_id").cast(pl.Utf8) +
+        pl.col("day_num").cast(pl.Utf8).cast(pl.Utf8).str.pad_start(2, "0")
+    ).cast(pl.Int64).alias("day_id")
+)
+trips_19 = trips_19.with_columns(
+    (
+        pl.col("person_id").cast(pl.Utf8) +
+        pl.col("day_num").cast(pl.Utf8).str.pad_start(2, "0")
+    ).cast(pl.Int64).alias("day_id")
+)
+
+# Load trip and day data for 2023
+trips_23 = pl.read_csv(data_dir_23 / "trip.csv")
+days_23 = pl.read_csv(data_dir_23 / "day.csv")
+
+# Load and apply revised 2023 day weights
+day_weights_23 = pl.read_csv(weights_dir_23 / "day_weights.csv")
+days_23 = (
+    days_23.drop("day_weight")
+    .join(
+        day_weights_23.select("day_id", "day_weight"),
+        on="day_id",
+        how="left",
+    )
+)
+
+logger.info(f"Loaded 2019 trips: {len(trips_19):,}, days: {len(days_19):,}")
+logger.info(f"Loaded 2023 trips: {len(trips_23):,}, days: {len(days_23):,}")
+
+```
+
+## Data Preparation
+
+### Telework frequency
+
+The 2- and 3-day telework/commute frequencies are binned in 2019 and will need to be binned in 2023 for consistency.
+
+| 2019 Code | Label                 | 2023 Code | Label                 |
+|-----------|-----------------------|-----------|-----------------------|
+| 1         | 6-7 Days a week       | 1         | 6-7 Days a week       |
+| 2         | 5 Days a week         | 2         | 5 Days a week         |
+| 3         | 4 Days a week         | 3         | 4 Days a week         |
+| 4         | 2-3 Days a week       | 4         | 3 Days a week         |
+| 4         | 2-3 Days a week       | 5         | 2 Days a week         |
+| 5         | 1 Day a week          | 6         | 1 Day a week          |
+| 6         | 1-3 days a month      | 7         | 1-3 days a month      |
+| 7         | Less than monthly     | 8         | Less than monthly     |
+| 8         | Never                 | 996       | Never                 |
+| 995       | Missing               | 995       | Missing               |
+
+
+```{python}
+#| label: downcode-telework
+#|
+
+# Maps 2023 to 2019 codes for telework and commute freq
+downcode_map = {
+    1: 1,
+    2: 2,
+    3: 3,
+    4: 4,
+    5: 4,
+    6: 5,
+    7: 6,
+    8: 7,
+    996: 8,
+    995: 995,
+}
+
+# Apply the downcoding to the 2023 data
+persons_23 = persons_23.with_columns(
+    # Copy original data
+    telework_freq_original=pl.col("telework_freq"),
+    commute_freq_original=pl.col("commute_freq"),
+    # Apply downcoding
+    telework_freq=pl.col("telework_freq").replace_strict(downcode_map),
+    commute_freq=pl.col("commute_freq").replace_strict(downcode_map),
+)
+
+```
+
+### Impute commute_freq
+There is no `commute_freq` data in the 2019 survey, we will need to approximate days/week from `hours_work` minus `telework_hours` (assuming 8 hours is a typical workday).
+
+```{python}
+#| label: impute-commute-freq
+#| output: false
+
+# Hours vary greatly week to week
+hours_work = {
+    1: 55,
+    2: 44,
+    3: 36,
+    4: 32,
+    5: 24,
+    6: 16,
+    7: 8,
+    8: None,
+    995: None,
+    -9998: None,
+}
+
+telework_hours = {
+    1: 48,
+    2: 40,
+    3: 32,
+    4: 16,
+    5: 8,
+    6: 0,
+    7: 0,
+    8: 0,
+    996: 0,
+    995: None,
+}
+
+commute_freq_map = {
+    0: 8,
+    1: 5,
+    2: 4,
+    3: 4,
+    4: 3,
+    5: 2,
+    6: 1,
+    7: 1,
+    None: 995,
+}
+
+# Impute commute frequency for 2019 data
+persons_19 = persons_19.with_columns(
+    commute_freq_days=(
+        (
+            pl.col("hours_work").replace_strict(hours_work) -
+            pl.col("telework_freq").replace_strict(telework_hours)
+        ).clip(lower_bound=0)
+    ) // 8,
+)
+
+# Map commute days to the 2019 frequency codes
+persons_19 = persons_19.with_columns(
+    commute_freq=pl.col("commute_freq_days").replace_strict(commute_freq_map),
+)
+# Rename person_weight_rmove_only to person_weight
+persons_19 = persons_19.with_columns(
+    person_weight=pl.col("wt_sphone_wkday"),
+    job_type=pl.when(pl.col("job_type") == -9998).then(995).otherwise(pl.col("job_type")),
+)
+
+# Distribution of imputed commute freq
+fig = px.histogram(
+    persons_19.filter(pl.col("employment").is_in(EMPLOYED_CODES)),
+    x="commute_freq_days",
+    title="Distribution of Imputed Commute Frequency (2019)",
+    labels={"commute_freq": "Days per week commuting to workplace"},
+    nbins=10,
+)
+fig.update_layout(
+    xaxis_title="Days per week commuting to workplace",
+    yaxis_title="Number of persons",
+    bargap=0.1,
+)
+fig.show()
+
+persons_19.group_by("commute_freq").len()
+
+```
+
+### Data filtering
+
+For `job_type==3` (WFH always), it is ambiguous to know if someone simply never commutes because they hardly work outside the home, or if they truly never commute. Therefore, for simplicity, we will narrow the analysis to only full-time employed persons.
+
+```{python}
+#| label: prepare-data
+
+# Key columns to select
+key_columns = [
+    "person_id",
+    "employment",
+    "telework_freq",
+    "commute_freq",
+    "job_type",
+    "person_weight",
+]
+
+# Combine the data
+persons = pl.concat([
+    persons_19.select(key_columns).with_columns(year=pl.lit(2019, pl.Utf8)),
+    persons_23.select(key_columns).with_columns(year=pl.lit(2023, pl.Utf8)),
+    ],
+    rechunk=True
+)
+
+# Prepare person table
+persons_clean = (
+    # Drop rows with missing weights (incomplete days etc.)
+    persons
+    .filter(
+        pl.col("person_weight").is_not_null()
+        & (pl.col("person_weight") > 0)
+    )
+)
+
+# Check person sum for reasonableness
+person_weight_sum = persons_clean.select("person_weight").sum().item()
+logger.info(f"Sum of person weights: {person_weight_sum:.2f}")
+
+# Filter just employed persons
+employed_persons = persons_clean.filter(
+    # Must be employed AND not missing job type
+    # pl.col("employment").is_in(EMPLOYED_CODES) &
+    (pl.col("job_type") != 995)
+).select(
+    "person_id",
+    "employment",
+    "telework_freq",
+    "commute_freq",
+    "job_type",
+    "person_weight",
+    "year",
+)
+
+logger.info(f"Total employed persons: {len(employed_persons):,}")
+logger.info(f"Weighted employed persons: {employed_persons['person_weight'].sum():.0f}")
+```
+
+### Survey Code Reference
+
+**Employment Codes:**
+
+- 1: Employed full-time (paid)
+- 2: Employed part-time (paid)
+- 3: Self-employed
+- 5: Not employed and not looking for work
+- 6: Unemployed and looking for work
+- 7: Unpaid volunteer or intern
+- 8: Employed, but not currently working
+- 995: Missing Response
+
+**Telework/Commute Frequency Codes:**
+
+- 1: 6-7 days a week
+- 2: 5 days a week
+- 3: 4 days a week
+- 4: 3 days a week
+- 5: 2 days a week
+- 6: 1 day a week
+- 7: 1-3 days a month
+- 8: Less than monthly
+- 995: Missing Response
+- 996: Never
+
+**Job Type Codes:**
+
+- 1: One work location
+- 2: Multiple work locations
+- 3: WFH always
+- 4: Travel for work
+- 5: Hybrid
+- 995: Missing Response
+
+## Analysis
+
+### Temporal Validation
+
+Check for impossible combinations where telework + commute frequency exceeds 7 days/week.
+
+```{python}
+#| label: temporal-violations
+#| output: false
+
+# Check for temporal violations:
+# Bad telework/commute freq combos where sum < 7 days/week
+# ignoring the less than weekly and never categories
+bad_freqs = employed_persons.filter(
+    (pl.col("telework_freq") + pl.col("commute_freq") < 7)
+    & (pl.col("telework_freq") < 8)
+    & (pl.col("commute_freq") < 8)
+)
+
+bad_freqs_summary = pl.DataFrame(
+    {
+        "Count": [len(bad_freqs)],
+        "Weighted count": [round(bad_freqs["person_weight"].sum(), 2)],
+        "% (wtd)": [
+            round(
+                100
+                * bad_freqs["person_weight"].sum()
+                / employed_persons["person_weight"].sum(),
+                2,
+            )
+        ],"% (unwtd)": [
+            round(100 * bad_freqs.shape[0] / employed_persons.shape[0], 2),
+        ],
+    }
+)
+```
+
+So about `{python} bad_freqs_summary['% (unwtd)'].item()`% unweighted and `{python} bad_freqs_summary['% (wtd)'].item()`% weighted count of employed persons have impossible telework/commute frequency combinations. This is a relatively small proportion, but noticeable. The importance of this is that the following telework/commute frequency categories treat these as independent, which means these persons may be double counted in the analysis.
+
+### Classification Rules
+
+#### Telework / Commute Frequency Categorization
+Simple definition of telework and commute frequency categorization.\
+Mirrored for commute freq using commute_freq instead of telework_freq
+| Days per Week Category | Telework Frequency Rules                                             | Commute Frequency Rules                                                     |
+|------------------------|----------------------------------------------------------------------|-----------------------------------------------------------------------------|
+| Always                 | `job_type` == 3                                                      | `telework_freq` == 8 AND `job_type` != 3 AND `commute_freq` not in [8, 995] |
+| 6-7 days per week      | `telework_freq` == 1 AND `job_type` != 3                             | `commute_freq` == 1 AND `telework_freq` != 8 AND `job_type` != 3            |
+| 5 days per week        | `telework_freq` == 2 AND `job_type` != 3                             | `commute_freq` == 2 AND `telework_freq` != 8 AND `job_type` != 3            |
+| 4 days per week        | `telework_freq` == 3 AND `job_type` != 3                             | `commute_freq` == 3 AND `telework_freq` != 8 AND `job_type` != 3            |
+| 2-3 days per week      | `telework_freq` == 4 AND `job_type` != 3                             | `commute_freq` == 4 AND `telework_freq` != 8 AND `job_type` != 3            |
+| 1 day per week         | `telework_freq` == 5 AND `job_type` != 3                             | `commute_freq` == 5 AND `telework_freq` != 8 AND `job_type` != 3            |
+| 1-3 days a month       | `telework_freq` == 6 AND `job_type` != 3                             | `commute_freq` == 6 AND `telework_freq` != 8 AND `job_type` != 3            |
+| Less than monthly      | `telework_freq` == 7 AND `job_type` != 3                             | `commute_freq` == 7 AND `telework_freq` != 8 AND `job_type` != 3            |
+| Never                  | (`telework_freq` == 8 OR `telework_freq` == 995) AND `job_type` != 3 | `commute_freq` == 8 OR `job_type` == 3                                      |
+| Missing Response       | N/A (combined with Never)                                            | `commute_freq` == 995 AND `job_type` != 3                                   |
+
+#### Telework Ratio Categorization
+
+While more broad, this categorization accounts for part-time or over-time work scenarios (<5 and >5 days/week).
+
+| Telework Ratio Category           | Rules                                                                                               |
+|-----------------------------------|-----------------------------------------------------------------------------------------------------|
+| Never, or less than once a week   | `telework_freq` in [995, 6, 7, 8] AND `job_type` != 3                                               |
+| Less than 40% of the time         | `telework_freq` > `commute_freq` + 1 AND both < 7 (weekly+) AND both != 995 AND `job_type` != 3     |
+| About half (40-60%)               | \|`telework_freq` - `commute_freq`\| ≤ 1 AND both < 7 (weekly+) AND both != 995 AND `job_type` != 3 |
+| More than 60% of the time         | `commute_freq` > `telework_freq` + 1 AND both < 7 (weekly+) AND both != 995 AND `job_type` != 3     |
+| Always                            | (`telework_freq` in [1, 2] AND `commute_freq` == 8) OR `job_type` == 3                              |
+
+#### Categorization Function
+```{python}
+#| label: categorization-function
+#| output: false
+
+def categorize_frequency(
+    df: pl.DataFrame,
+    prefix: str,
+    conditions: dict[str, pl.Expr],
+) -> pl.DataFrame:
+    """
+    Categorize frequency data using one-hot encoding with validation.
+
+    Args:
+        df: Input dataframe
+        prefix: Prefix for output columns (e.g., 'telework_freq' or 'commute_freq')
+        conditions: Dictionary of labeled conditions and expressions to categorize by
+
+    Returns:
+        DataFrame with unpivoted frequency categories
+    """
+    # Create one-hot encoded columns
+    one_hot_exprs = []
+    one_hot_cols = []
+
+    for category in conditions.keys():
+        col_name = category.name.lower()
+        one_hot_cols.append(col_name)
+
+        # Build condition based on category
+        condition = conditions.get(category, None)
+
+        if condition is None:
+            raise ValueError(f"Unknown category: {category}")
+
+        one_hot_exprs.append(
+            condition.cast(pl.Int8).alias(col_name)
+        )
+
+    # Add one-hot columns
+    df_one_hot = df.with_columns(one_hot_exprs)
+
+    # Verify mutual exclusivity
+    count_col = "category_count"
+    df_one_hot = df_one_hot.with_columns(
+        pl.sum_horizontal(one_hot_cols).alias(count_col)
+    )
+
+    # Check for violations
+    violations = df_one_hot.filter(pl.col(count_col) != 1)
+
+    if len(violations) > 0:
+        chk_cols = ["person_id", "telework_freq", "commute_freq", "job_type", count_col] + one_hot_cols
+
+        # If _freq_cat cols are in the table
+        for c in ["telework_freq_cat", "commute_freq_cat"]:
+            if c in df_one_hot.columns:
+                chk_cols.append(c)
+
+        logger.warning(
+            f"Found {len(violations)} persons with non-exclusive {prefix} categories!"
+        )
+        print(f"\n{prefix.upper()} Category Violations:")
+        print(violations.select(chk_cols).head(10))
+        raise ValueError(f"Found persons with non-exclusive {prefix} categories!")
+    else:
+        logger.info(f"✓ All persons have exactly 1 {prefix} category")
+
+    # Unpivot to single column
+    df_unpivot = (
+        df_one_hot
+        .unpivot(
+            index="person_id",
+            on=one_hot_cols,
+            variable_name="category",
+        )
+        # Keep only rows where this category is true (value = 1)
+        .filter(pl.col("value") > 0)
+        # Map short names to enum values
+        .with_columns(
+            pl.col("category")
+                .str.replace(f"{prefix}_", "")
+                .str.to_uppercase()
+                .replace({cat.name: cat.value for cat in conditions.keys()})
+                .cast(pl.Int8)
+                .alias(f"{prefix}_cat")
+        )
+        # Add descriptive labels
+        .with_columns(
+            pl.col(f"{prefix}_cat").cast(pl.Utf8)
+            .replace({cat.value: cat.label for cat in conditions.keys()})
+            .alias(f"{prefix}_str")
+        )
+        .drop("category", "value")
+    )
+
+    # Join back to employed persons
+    join_cols = [
+        f"{prefix}_str",
+        f"{prefix}_cat"
+     ]
+    for col in join_cols:
+        if col in df.columns:
+            df = df.drop(col)
+
+    df_joined = df.join(
+        df_unpivot.select(["person_id"] + join_cols),
+        on="person_id",
+        how="left",
+    )
+
+    return df_joined
+
+```
+
+### Categorize Telework Frequency
+```{python}
+#| label: categorize-telework
+telework_conditions = {
+    # Always WFH
+    FrequencyCategory.ALWAYS: (pl.col("job_type") == 3),
+    # Works 6-7 days
+    FrequencyCategory.SIX_SEVEN: (
+        (pl.col("telework_freq") == 1) & (pl.col("job_type") != 3)
+    ),
+    # Works 5 days
+    FrequencyCategory.FIVE: (
+        (pl.col("telework_freq") == 2) & (pl.col("job_type") != 3)
+    ),
+    # Works 4 days
+    FrequencyCategory.FOUR: (
+        (pl.col("telework_freq") == 3) & (pl.col("job_type") != 3)
+    ),
+    # Works 2-3 days
+    FrequencyCategory.TWO_THREE: (
+        (pl.col("telework_freq") == 4) & (pl.col("job_type") != 3)
+    ),
+    # Works 1 day
+    FrequencyCategory.ONE: (
+        (pl.col("telework_freq") == 5) & (pl.col("job_type") != 3)
+    ),
+    # 1-3 days a month
+    FrequencyCategory.ONE_TO_THREE_MONTHLY: (
+        (pl.col("telework_freq") == 6) & (pl.col("job_type") != 3)
+    ),
+    # Less than monthly
+    FrequencyCategory.LESS_THAN_MONTHLY: (
+        (pl.col("telework_freq") == 7) & (pl.col("job_type") != 3)
+    ),
+    # Never
+    FrequencyCategory.NEVER: (
+        (
+            (pl.col("telework_freq") == 8)
+            | (pl.col("telework_freq") == 995)
+        )
+        & (pl.col("job_type") != 3)
+    ),
+    # Missing
+    # FrequencyCategory.MISSING: (
+    #     (pl.col("telework_freq") == 995) & (pl.col("job_type") != 3)
+    # ),
+}
+
+# Categorize telework frequency
+employed_persons = categorize_frequency(
+    employed_persons,
+    prefix="telework_freq",
+    conditions=telework_conditions,
+)
+```
+
+### Categorize Commute Frequency
+
+```{python}
+#| label: categorize-commute
+commute_conditions = {
+    # Commute always
+    FrequencyCategory.ALWAYS: (
+        (pl.col("telework_freq") == 8) &
+        (pl.col("job_type") != 3) &
+        ~pl.col("commute_freq").is_in([8, 995])
+    ),
+    # Works 6-7 days
+    FrequencyCategory.SIX_SEVEN: (
+        (pl.col("commute_freq") == 1) & (pl.col("telework_freq") != 8) & (pl.col("job_type") != 3)
+    ),
+
+    # Works 5 days
+    FrequencyCategory.FIVE: (
+        (pl.col("commute_freq") == 2) & (pl.col("telework_freq") != 8) & (pl.col("job_type") != 3)
+    ),
+    # Works 4 days
+    FrequencyCategory.FOUR: (
+        (pl.col("commute_freq") == 3) & (pl.col("telework_freq") != 8) & (pl.col("job_type") != 3)
+    ),
+    # Works 2-3 days
+    FrequencyCategory.TWO_THREE: (
+        (pl.col("commute_freq") == 4) & (pl.col("telework_freq") != 8) & (pl.col("job_type") != 3)
+    ),
+    # Works 1 day
+    FrequencyCategory.ONE: (
+        (pl.col("commute_freq") == 5) & (pl.col("telework_freq") != 8) & (pl.col("job_type") != 3)
+    ),
+    # 1-3 days a month
+    FrequencyCategory.ONE_TO_THREE_MONTHLY: (
+        (pl.col("commute_freq") == 6) & (pl.col("telework_freq") != 8) & (pl.col("job_type") != 3)
+    ),
+    # Less than monthly
+    FrequencyCategory.LESS_THAN_MONTHLY: (
+        (pl.col("commute_freq") == 7) & (pl.col("telework_freq") != 8) & (pl.col("job_type") != 3)
+    ),
+    # Never
+    FrequencyCategory.NEVER: (
+        (pl.col("commute_freq") == 8) | (pl.col("job_type") == 3)
+    ),
+    # Missing
+    FrequencyCategory.MISSING: (
+        (pl.col("commute_freq") == 995) &
+        (pl.col("job_type") != 3)
+    )
+}
+
+# Categorize commute frequency
+employed_persons = categorize_frequency(
+    employed_persons,
+    prefix="commute_freq",
+    conditions=commute_conditions,
+)
+
+```
+
+### Calculate Telework Ratio
+```{python}
+#| label: telework-ratio
+
+ratio_conditions = {
+    # MISSING: Catch missing values first
+    TeleworkRatio.MISSING: (
+        (pl.col("telework_freq_cat") == FrequencyCategory.MISSING.value)
+        | (pl.col("commute_freq_cat") == FrequencyCategory.MISSING.value)
+    ),
+    # ALWAYS: job_type==3 OR high telework with no/rare commute
+    TeleworkRatio.ALWAYS: (
+        (pl.col("telework_freq_cat").is_in([
+            FrequencyCategory.ALWAYS.value,
+            FrequencyCategory.SIX_SEVEN.value,
+            FrequencyCategory.FIVE.value,
+            FrequencyCategory.FOUR.value
+        ])
+        & pl.col("commute_freq_cat").is_in([
+            FrequencyCategory.ONE_TO_THREE_MONTHLY.value,
+            FrequencyCategory.LESS_THAN_MONTHLY.value,
+            FrequencyCategory.NEVER.value,
+        ]))
+        | (pl.col("job_type") == 3)
+    ),
+    # NEVER: telework is never/rare (not based on commute frequency)
+    TeleworkRatio.NEVER: (
+        pl.col("telework_freq_cat").is_in([
+            FrequencyCategory.LESS_THAN_MONTHLY.value,
+            FrequencyCategory.ONE_TO_THREE_MONTHLY.value,
+            FrequencyCategory.NEVER.value
+        ])
+        & (pl.col("job_type") != 3)
+        & (pl.col("telework_freq_cat") != FrequencyCategory.MISSING.value)
+        & (pl.col("commute_freq_cat") != FrequencyCategory.MISSING.value)
+    ),
+    # LESS_THAN_40: commute significantly more than telework
+    TeleworkRatio.LESS_THAN_40: (
+        (pl.col("commute_freq_cat") > pl.col("telework_freq_cat") + 1) # +1 to get 40% threshold
+        & (pl.col("telework_freq_cat") != FrequencyCategory.MISSING.value)
+        & (pl.col("commute_freq_cat") != FrequencyCategory.MISSING.value)
+        & (pl.col("job_type") != 3)
+        # Exclude never/rare telework (handled by NEVER category)
+        & ~pl.col("telework_freq_cat").is_in([
+            FrequencyCategory.LESS_THAN_MONTHLY.value,
+            FrequencyCategory.ONE_TO_THREE_MONTHLY.value,
+            FrequencyCategory.NEVER.value,
+        ])
+        # Exclude high telework with no/rare commute (handled by ALWAYS)
+        & ~(
+            pl.col("telework_freq_cat").is_in([
+                FrequencyCategory.SIX_SEVEN.value,
+                FrequencyCategory.FIVE.value,
+                FrequencyCategory.FOUR.value
+            ])
+            & pl.col("commute_freq_cat").is_in([
+                FrequencyCategory.LESS_THAN_MONTHLY.value,
+                FrequencyCategory.ONE_TO_THREE_MONTHLY.value,
+                FrequencyCategory.NEVER.value,
+            ])
+        )
+    ),
+    # ABOUT_HALF: telework and commute roughly equal
+    TeleworkRatio.ABOUT_HALF: (
+        ((pl.col("telework_freq_cat") - pl.col("commute_freq_cat")).abs() <= 1) # 1 to get 40-60% threshold
+        & (pl.col("telework_freq_cat") != FrequencyCategory.MISSING.value)
+        & (pl.col("commute_freq_cat") != FrequencyCategory.MISSING.value)
+        & (pl.col("job_type") != 3)
+        # Exclude never/rare telework (handled by NEVER category)
+        & ~pl.col("telework_freq_cat").is_in([
+            FrequencyCategory.LESS_THAN_MONTHLY.value,
+            FrequencyCategory.ONE_TO_THREE_MONTHLY.value,
+            FrequencyCategory.NEVER.value,
+        ])
+        # Exclude high telework with no/rare commute (handled by ALWAYS)
+        & ~(
+            pl.col("telework_freq_cat").is_in([
+                FrequencyCategory.SIX_SEVEN.value,
+                FrequencyCategory.FIVE.value,
+                FrequencyCategory.FOUR.value
+            ])
+            & pl.col("commute_freq_cat").is_in([
+                FrequencyCategory.LESS_THAN_MONTHLY.value,
+                FrequencyCategory.ONE_TO_THREE_MONTHLY.value,
+                FrequencyCategory.NEVER.value,
+            ])
+        )
+    ),
+    # MORE_THAN_60: telework significantly more than commute
+    TeleworkRatio.MORE_THAN_60: (
+        (pl.col("telework_freq_cat") > pl.col("commute_freq_cat") + 1) # +1 to get 60% threshold
+        & (pl.col("telework_freq_cat") != FrequencyCategory.MISSING.value)
+        & (pl.col("commute_freq_cat") != FrequencyCategory.MISSING.value)
+        & (pl.col("job_type") != 3)
+        # Exclude never/rare telework (handled by NEVER category)
+        & ~pl.col("telework_freq_cat").is_in([
+            FrequencyCategory.LESS_THAN_MONTHLY.value,
+            FrequencyCategory.ONE_TO_THREE_MONTHLY.value,
+            FrequencyCategory.NEVER.value,
+        ])
+        # Exclude high telework with no/rare commute (handled by ALWAYS)
+        & ~(
+            pl.col("telework_freq_cat").is_in([
+                FrequencyCategory.SIX_SEVEN.value,
+                FrequencyCategory.FIVE.value,
+                FrequencyCategory.FOUR.value
+            ])
+            & pl.col("commute_freq_cat").is_in([
+                FrequencyCategory.LESS_THAN_MONTHLY.value,
+                FrequencyCategory.ONE_TO_THREE_MONTHLY.value,
+                FrequencyCategory.NEVER.value,
+            ])
+        )
+    ),
+}
+
+# Categorize telework ratio
+employed_persons = categorize_frequency(
+    employed_persons,
+    prefix="telework_ratio",
+    conditions=ratio_conditions,
+)
+```
+
+## Results
+
+### Telework Frequency Distribution
+
+```{python}
+#| label: telework-freq-summary
+
+telework_freq_summary = (
+    employed_persons.group_by("year", "telework_freq_str", "telework_freq_cat")
+    .agg(
+        pl.len().alias("count"),
+        pl.col("person_weight").sum().alias("weighted_count"),
+    )
+    .with_columns(
+        (
+            100 * pl.col("weighted_count") / pl.col("weighted_count").sum().over("year")
+        ).alias("% (wtd)"),
+        (100 * pl.col("count") / pl.col("count").sum().over("year")).alias("% (unwtd)"),
+    )
+    .with_columns(
+        pl.col("weighted_count").round(2),
+        pl.col("% (wtd)").round(2),
+        pl.col("% (unwtd)").round(2),
+    )
+    .sort("telework_freq_cat")
+)
+
+print("Telework Frequency Summary - 2019:")
+print(telework_freq_summary.filter(pl.col("year") == "2019").drop("telework_freq_cat"))
+print("Telework Frequency Summary - 2023:")
+print(telework_freq_summary.filter(pl.col("year") == "2023").drop("telework_freq_cat"))
+
+```
+
+### Commute Frequency Distribution
+
+```{python}
+#| label: commute-freq-summary
+
+commute_freq_summary = (
+    employed_persons.group_by("year", "commute_freq_str", "commute_freq_cat")
+    .agg(
+        pl.len().alias("count"),
+        pl.col("person_weight").sum().alias("weighted_count"),
+    )
+    .with_columns(
+        (
+            100 * pl.col("weighted_count") / pl.col("weighted_count").sum().over("year")
+        ).alias("% (wtd)"),
+        (100 * pl.col("count") / pl.col("count").sum().over("year")).alias("% (unwtd)"),
+    )
+    .with_columns(
+        pl.col("weighted_count").round(2),
+        pl.col("% (wtd)").round(2),
+        pl.col("% (unwtd)").round(2),
+    )
+    .sort("commute_freq_cat")
+)
+print("Commute Frequency Summary - 2019:")
+print(commute_freq_summary.filter(pl.col("year") == "2019").drop("commute_freq_cat"))
+print("Commute Frequency Summary - 2023:")
+print(commute_freq_summary.filter(pl.col("year") == "2023").drop("commute_freq_cat"))
+
+```
+
+### Compare Telework frequency with Flavia's analysis
+
+```{python}
+#| label: compare-flavia
+# Flavia's telework frequency distribution from 2023 analysis
+
+flavias = {
+    FrequencyCategory.ALWAYS.label: 13.8,
+    FrequencyCategory.SIX_SEVEN.label: 1.8,
+    FrequencyCategory.FIVE.label: 6.7,
+    FrequencyCategory.FOUR.label: 5.6,
+    FrequencyCategory.TWO_THREE.label: 11.3 + 8.5,
+    FrequencyCategory.ONE.label: 6.3,
+    FrequencyCategory.ONE_TO_THREE_MONTHLY.label: 6.3,
+    FrequencyCategory.LESS_THAN_MONTHLY.label: 4.9,
+    FrequencyCategory.NEVER.label: 34.8,
+}
+
+# Check the sum
+if sum(flavias.values()) > 100:
+    raise ValueError("Flavia's percentages sum to more than 100%!")
+
+# Convert to dataframe and join
+flavias_df = pl.DataFrame(
+    {
+        "telework_freq_str": list(flavias.keys()),
+        "flavia's % (wtd)": list(flavias.values()),
+    }
+)
+
+flavia_comparison_df = (
+    telework_freq_summary.with_columns(
+        pl.col("% (wtd)").alias("Nick's % (wtd)")
+    )
+    .filter(pl.col("year") == "2023")
+    .select(["telework_freq_cat", "telework_freq_str", "Nick's % (wtd)"])
+    .join(flavias_df, on="telework_freq_str", how="inner")
+    .with_columns(
+        (pl.col("Nick's % (wtd)") - pl.col("flavia's % (wtd)")).alias("difference")
+    )
+    .sort("telework_freq_cat")
+)
+
+# Add total row
+flavia_comparison_df = flavia_comparison_df.vstack(
+    pl.DataFrame(
+        {
+            "telework_freq_cat": [None],
+            "telework_freq_str": ["Total"],
+            "Nick's % (wtd)": [flavia_comparison_df["Nick's % (wtd)"].sum()],
+            "flavia's % (wtd)": [flavia_comparison_df["flavia's % (wtd)"].sum()],
+            "difference": [
+                round(
+                    flavia_comparison_df["Nick's % (wtd)"].sum()
+                    - flavia_comparison_df["flavia's % (wtd)"].sum()
+                , 2)
+            ],
+        }
+    )
+)
+
+flavia_comparison_df
+```
+
+### Combined Telework and Commute Frequency Distribution
+```{python}
+#| label: fig-telework-freq-bar-plot
+#| fig-cap: "Telework Frequency Distribution: 2019 vs 2023"
+
+# Define consistent colors for years
+year_colors = {
+    "2019": "#1f77b4",  # Blue
+    "2023": "#ff7f0e"   # Orange
+}
+
+# Filter out missing responses
+telework_plot_data = telework_freq_summary.filter(
+    pl.col("telework_freq_str") != "Missing Response"
+)
+
+# Create telework figure
+fig_telework = go.Figure()
+
+# Add telework bars
+for year in ["2019", "2023"]:
+    data = (
+        telework_plot_data
+        .filter(pl.col("year") == year)
+        .sort("telework_freq_cat", descending=True)
+    )
+    fig_telework.add_trace(
+        go.Bar(
+            x=data["telework_freq_str"].to_list(),
+            y=data["% (wtd)"].to_list(),
+            name=year,
+            marker_color=year_colors[year],
+            text=data["% (wtd)"].round(1).to_list(),
+            texttemplate='%{text}%',
+            textposition='outside',
+            textfont=dict(size=16),
+            cliponaxis=False,
+        )
+    )
+
+fig_telework.update_yaxes(
+    title_text="% (Weighted)",
+    title_font=dict(size=14),
+    tickfont=dict(size=12)
+)
+fig_telework.update_xaxes(tickangle=30, tickfont=dict(size=12))
+fig_telework.update_layout(
+    height=500,
+    barmode="group",
+    title_text="Telework Frequency: 2019 vs 2023",
+    title_font=dict(size=16),
+    font=dict(size=13),
+    legend=dict(font=dict(size=13))
+)
+fig_telework.show()
+```
+
+```{python}
+#| label: fig-commute-freq-bar-plot
+#| fig-cap: "Commute Frequency Distribution: 2019 vs 2023"
+
+# Filter out missing responses
+commute_plot_data = commute_freq_summary.filter(
+    pl.col("commute_freq_str") != "Missing Response"
+)
+
+# Create commute figure
+fig_commute = go.Figure()
+
+# Add commute bars
+for year in ["2019", "2023"]:
+    data = (
+        commute_plot_data
+        .filter(pl.col("year") == year)
+        .sort("commute_freq_cat", descending=True)
+    )
+    fig_commute.add_trace(
+        go.Bar(
+            x=data["commute_freq_str"].to_list(),
+            y=data["% (wtd)"].to_list(),
+            name=year,
+            marker_color=year_colors[year],
+            text=data["% (wtd)"].round(1).to_list(),
+            texttemplate='%{text}%',
+            textposition='outside',
+            textfont=dict(size=16),
+            cliponaxis=False,
+        )
+    )
+
+fig_commute.update_yaxes(
+    title_text="% (Weighted)",
+    title_font=dict(size=14),
+    tickfont=dict(size=12)
+)
+fig_commute.update_xaxes(tickangle=30, tickfont=dict(size=12))
+fig_commute.update_layout(
+    height=500,
+    barmode="group",
+    title_text="Commute Frequency: 2019 vs 2023",
+    title_font=dict(size=16),
+    font=dict(size=13),
+    legend=dict(font=dict(size=13))
+)
+fig_commute.show()
+```
+
+## Telework shift plots
+
+```{python}
+#| label: fig-freq-shift-point-plot
+#| fig-cap: "Shift in Telework and Commute Frequency: 2019 vs 2023"
+# Create simple shift plots
+# Create color mapping for consistent colors across both plots
+import plotly.express as px
+
+# Create graduated color scale
+colors = px.colors.sample_colorscale(
+    px.colors.sequential.Bluered,
+    [0, 0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1]
+)
+
+color_map = {
+    FrequencyCategory.ALWAYS.label: colors[0],
+    FrequencyCategory.SIX_SEVEN.label: colors[1],
+    FrequencyCategory.FIVE.label: colors[2],
+    FrequencyCategory.FOUR.label: colors[3],
+    FrequencyCategory.TWO_THREE.label: colors[4],
+    FrequencyCategory.ONE.label: colors[5],
+    FrequencyCategory.ONE_TO_THREE_MONTHLY.label: colors[6],
+    FrequencyCategory.LESS_THAN_MONTHLY.label: colors[7],
+    FrequencyCategory.NEVER.label: colors[8],
+}
+
+fig = make_subplots(rows=1, cols=2, subplot_titles=("Telework Frequency", "Commute Frequency"))
+
+# Telework data
+telework_pivot = (
+    telework_freq_summary
+    .filter(pl.col("telework_freq_str") != "Missing Response")
+    .pivot(index=["telework_freq_str", "telework_freq_cat"], on="year", values="% (wtd)")
+    .sort("telework_freq_cat", descending=True)
+)
+
+for row in telework_pivot.iter_rows(named=True):
+    fig.add_trace(
+        go.Scatter(
+            x=[2019, 2023],
+            y=[row["2019"], row["2023"]],
+            mode='lines+markers',
+            name=row["telework_freq_str"],
+            line=dict(color=color_map.get(row["telework_freq_str"])),
+            marker=dict(color=color_map.get(row["telework_freq_str"])),
+        ),
+        row=1, col=1
+    )
+
+# Commute data
+commute_pivot = (
+    commute_freq_summary
+    .filter(pl.col("commute_freq_str") != "Missing Response")
+    .pivot(index=["commute_freq_str", "commute_freq_cat"], on="year", values="% (wtd)")
+    .sort("commute_freq_cat", descending=True)
+)
+
+for row in commute_pivot.iter_rows(named=True):
+    fig.add_trace(
+        go.Scatter(
+            x=[2019, 2023],
+            y=[row["2019"], row["2023"]],
+            mode='lines+markers',
+            name=row["commute_freq_str"],
+            line=dict(color=color_map.get(row["commute_freq_str"])),
+            marker=dict(color=color_map.get(row["commute_freq_str"])),
+            showlegend=False,
+        ),
+        row=1, col=2
+    )
+
+# Find max value across both datasets to set matching y-axis range
+max_val = max_val = max(
+    telework_pivot['2019'].max(),
+    telework_pivot['2023'].max(),
+    commute_pivot['2019'].max(),
+    commute_pivot['2023'].max(),
+)
+
+fig.update_xaxes(tickvals=[2019, 2023])
+fig.update_yaxes(title_text="% (Weighted)", range=[0, max_val * 1.1])
+fig.update_layout(height=500, title_text="Work Pattern Changes: 2019 to 2023")
+fig.show()
+```
+
+```{python}
+#| label: fig-telework-commute-diverging
+#| fig-cap: "Change in Telework and Commute Frequency: 2019 vs 2023"
+
+# Pivot telework data
+telework_pivot = (
+    telework_plot_data
+    .pivot(index=["telework_freq_str", "telework_freq_cat"], on="year", values="% (wtd)")
+    .sort("telework_freq_cat", descending=True)
+)
+
+# Pivot commute data
+commute_pivot = (
+    commute_plot_data
+    .pivot(index=["commute_freq_str", "commute_freq_cat"], on="year", values="% (wtd)")
+    .sort("commute_freq_cat", descending=True)
+)
+
+# Colors
+telework_2019_color = 'rgba(31, 119, 180, 0.5)'  # Light blue
+telework_2023_color = '#1f77b4'  # Full blue
+commute_2019_color = 'rgba(255, 127, 14, 0.5)'  # Light orange
+commute_2023_color = '#ff7f0e'  # Full orange
+
+fig = go.Figure()
+
+# Commute 2019 (left side)
+fig.add_trace(go.Bar(
+    y=commute_pivot["commute_freq_str"],
+    x=-commute_pivot["2019"],
+    name="2019",
+    orientation='h',
+    marker_color=commute_2019_color,
+    text=commute_pivot["2019"].round(1),
+    texttemplate='%{text}%',
+    textposition='inside',
+    offsetgroup=0,
+    legendgroup='2019',
+))
+
+# Commute 2023 (left side, dodged)
+fig.add_trace(go.Bar(
+    y=commute_pivot["commute_freq_str"],
+    x=-commute_pivot["2023"],
+    name="2023",
+    orientation='h',
+    marker_color=commute_2023_color,
+    text=commute_pivot["2023"].round(1),
+    texttemplate='%{text}%',
+    textposition='inside',
+    offsetgroup=1,
+    legendgroup='2023',
+))
+
+# Telework 2019 (right side)
+fig.add_trace(go.Bar(
+    y=telework_pivot["telework_freq_str"],
+    x=telework_pivot["2019"],
+    name="2019",
+    orientation='h',
+    marker_color=telework_2019_color,
+    text=telework_pivot["2019"].round(1),
+    texttemplate='%{text}%',
+    textposition='inside',
+    offsetgroup=0,
+    legendgroup='2019',
+    showlegend=False,
+))
+
+# Telework 2023 (right side, dodged)
+fig.add_trace(go.Bar(
+    y=telework_pivot["telework_freq_str"],
+    x=telework_pivot["2023"],
+    name="2023",
+    orientation='h',
+    marker_color=telework_2023_color,
+    text=telework_pivot["2023"].round(1),
+    texttemplate='%{text}%',
+    textposition='inside',
+    offsetgroup=1,
+    legendgroup='2023',
+    showlegend=False,
+))
+
+fig.update_layout(
+    title="Commute vs Telework Frequency: 2019 vs 2023",
+    xaxis_title="← Commute Frequency | Telework Frequency →<br>% of Employed Persons (Weighted)",
+    yaxis_title="",
+    barmode='group',
+    height=600,
+    xaxis=dict(
+        tickvals=[-40, -30, -20, -10, 0, 10, 20, 30, 40],
+        ticktext=['40%', '30%', '20%', '10%', '0', '10%', '20%', '30%', '40%']
+    )
+)
+
+fig.show()
+```
+
+### Telework Ratio (Proportion of Work Days at Home)
+
+```{python}
+#| label: telework-ratio-summary
+
+telework_ratio_summary = (
+    employed_persons.group_by("year", "telework_ratio_str", "telework_ratio_cat")
+    .agg(
+        pl.len().alias("count"),
+        pl.col("person_weight").sum().alias("weighted_count"),
+    )
+    .with_columns(
+        (
+            100 * pl.col("weighted_count") / pl.col("weighted_count").sum().over("year")
+        ).alias("% (wtd)"),
+        (100 * pl.col("count") / pl.col("count").sum().over("year")).alias("% (unwtd)"),
+    )
+    .with_columns(
+        pl.col("weighted_count").round(2),
+        pl.col("% (wtd)").round(2),
+        pl.col("% (unwtd)").round(2),
+    )
+    .sort("telework_ratio_cat")
+    .drop("telework_ratio_cat")
+)
+
+print("Telework Ratio Summary - 2019:")
+print(telework_ratio_summary.filter(pl.col("year") == "2019"))
+print("Telework Ratio Summary - 2023:")
+print(telework_ratio_summary.filter(pl.col("year") == "2023"))
+```
+
+```{python}
+#| label: fig-telework-ratio
+#| fig-cap: "Telework Ratio Distribution (Weighted)"
+fig = px.bar(
+    telework_ratio_summary,
+    x="telework_ratio_str",
+    y="% (wtd)",
+    color="year",
+    barmode="group",
+    title="Proportion of Work Days Spent Working From Home by Survey Year",
+    labels={"telework_ratio_str": "Telework Ratio", "% (wtd)": "Percentage (Weighted)", "year": "Survey Year"},
+    text="% (wtd)",
+)
+fig.update_traces(texttemplate='%{text:.1f}%', textposition='outside')
+fig.show()
+```
+
+
+## Telework Summary
+
+```{python}
+
+# Define metric categories based on frequency
+is_5plus = pl.col("telework_freq_cat") > FrequencyCategory.FOUR.value
+is_2plus = pl.col("telework_freq_cat") >= FrequencyCategory.TWO_THREE.value
+is_1orless = (
+    (pl.col("telework_freq_cat") <= FrequencyCategory.ONE.value)
+    & (pl.col("telework_freq_cat") != FrequencyCategory.MISSING.value)
+)
+
+# Categorize and aggregate in one chain
+telework_metrics = (
+    telework_freq_summary
+    .with_columns(
+        pl.when(is_5plus).then(pl.lit("5+ days per week"))
+        .when(is_2plus).then(pl.lit("2+ days per week"))
+        .when(is_1orless).then(pl.lit("1 day or less per week"))
+        .alias("Telework Frequency")
+    )
+    .filter(pl.col("Telework Frequency").is_not_null())
+    .group_by("year", "Telework Frequency")
+    .agg(pl.col("% (wtd)").sum())
+    .pivot(index="Telework Frequency", on="year", values="% (wtd)")
+).sort("Telework Frequency").select(
+    "Telework Frequency",
+    "2019",
+    "2023",
+).with_columns(
+    pl.col("2019").round(2).alias("2019 (%)"),
+    pl.col("2023").round(2).alias("2023 (%)"),
+)
+
+# column sums
+
+telework_metrics
+# print("Summary of Key Telework Metrics:")
+# print(f"Proportion of employed persons teleworking 5+ days/week:")
+# for year, pct in telework_5plus.items():
+#     print(f"  {year}: {pct:.2f}%")
+
+# print(f"Proportion of employed persons teleworking 2+ days/week:")
+# for year, pct in telework_2plus.items():
+#     print(f"  {year}: {pct:.2f}%")
+
+```
+
+
+## Stated vs Observed Commute Frequency Validation
+
+This section compares the stated telework and commute frequencies (from survey responses) against the observed behavior (from travel diary data). We focus on full-time employed persons only and classify weekdays based on whether they made any work-related trips.
+
+### Classify Weekdays as Commute Days
+
+For each person-day, we identify weekdays (Monday-Friday) and flag them as "commute days" if the person made any work or work-related trips (`d_purpose_category` in [2, 3]). Non-commute weekdays are potential work-from-home days.
+
+```{python}
+#| label: classify-commute-days
+
+# Identify work trips in 2019 (d_purpose_category 2=Work, 3=Work-related)
+work_trips_19 = (
+    trips_19
+    .filter(pl.col("d_purpose_category").is_in([2, 3]))
+    .select("day_id")
+    .unique()
+    .with_columns(has_work_trip=pl.lit(True))
+)
+
+# Identify work trips in 2023
+work_trips_23 = (
+    trips_23
+    .filter(pl.col("d_purpose_category").is_in([2, 3]))
+    .select("day_id")
+    .unique()
+    .with_columns(has_work_trip=pl.lit(True))
+)
+
+# Process 2019 days (day weight needs to be added from person level)
+days_19_classified = (
+    days_19
+    # Add day weight from person-level weight (2019 doesn't have day-level weights)
+    .join(
+        persons_19.select("person_id", pl.col("wt_sphone_wkday").alias("day_weight")),
+        on="person_id",
+        how="left"
+    )
+    # Rename travel_date_dow to travel_dow for consistency
+    .rename({"travel_date_dow": "travel_dow"})
+    # Filter to weekdays only (Monday=1 through Friday=5)
+    .filter(pl.col("travel_dow").is_between(1, 5))
+    # Join with work trips to flag commute days
+    .join(work_trips_19, on="day_id", how="left")
+    .with_columns(
+        pl.col("has_work_trip").fill_null(False),
+        pl.lit("2019").alias("year"),
+    )
+)
+
+# Process 2023 days (now has revised day weights)
+days_23_classified = (
+    days_23
+    # Add day weight from person level weight to remove the avg day of week adjustment
+    # We can do this because we're normalizing the data to only persons with full weekdays
+    # Not perfect, but mostly close enough for our purposes
+    .join(
+        persons_23.select("person_id", pl.col("person_weight").alias("day_weight")),
+        on="person_id",
+        how="left"
+    )
+    # Rename is_complete to day_complete for consistency
+    .rename({"is_complete": "day_complete"})
+    # Filter to weekdays only
+    .filter(pl.col("travel_dow").is_between(1, 5))
+    # Join with work trips to flag commute days
+    .join(work_trips_23, on="day_id", how="left")
+    .with_columns(
+        has_work_trip=pl.col("has_work_trip").fill_null(False),
+        year=pl.lit("2023"),
+    )
+)
+
+day_compare_cols = [
+    "person_id",
+    "day_id",
+    "travel_dow",
+    "day_complete",
+    "day_weight",
+    "has_work_trip",
+    "year"
+]
+# Combine years
+days_classified = pl.concat(
+    [
+        days_19_classified.select(day_compare_cols),
+        days_23_classified.select(day_compare_cols)
+    ],
+)
+
+# Identify persons with 5 complete weekdays and non-zero day weights
+persons_complete = (
+    days_classified
+    .filter(pl.col("travel_dow").is_between(1, 5))
+    .group_by("person_id").agg(
+        pl.sum("day_complete").alias("num_complete_weekdays")
+    ).filter(pl.col("num_complete_weekdays") >= 5)
+)
+
+# Count number of days before filtering complete weekdays
+n_days = len(days_classified.filter((pl.col("day_weight") > 0)))
+logger.info(f"Total days before filtering: {n_days:,}")
+
+# Filter out to only households with at least 5 complete weekdays in diary
+days_classified = days_classified.filter(
+    pl.col("person_id").is_in(persons_complete["person_id"].implode()) &
+    (pl.col("day_weight") > 0)
+)
+
+logger.info(f"Total weekdays classified: {len(days_classified):,}")
+logger.info(f"Weekdays with work trips: {days_classified.filter(pl.col('has_work_trip')).shape[0]:,}")
+```
+
+### Calculate Observed Frequencies
+
+Aggregate to person level to calculate observed commute and telework frequencies based on actual travel diary behavior.
+
+```{python}
+#| label: calculate-observed-freq
+
+# Aggregate by person to calculate observed frequencies
+observed_freq = (
+    days_classified
+    .group_by("person_id", "year")
+    .agg(
+        # Total weekdays in diary
+        total_weekdays=pl.len(),
+        # Weighted total weekdays
+        total_weekdays_wtd=(pl.col("day_weight") * pl.lit(1)).sum(),
+        # Commute days (days with work trips)
+        commute_days=(pl.col("has_work_trip").cast(pl.Int32)).sum(),
+        # Weighted commute days
+        commute_days_wtd=(pl.col("has_work_trip").cast(pl.Int32) * pl.col("day_weight")).sum(),
+        # Non-commute weekdays (potential WFH days)
+        wfh_days=((~pl.col("has_work_trip")).cast(pl.Int32)).sum(),
+        # Weighted WFH days
+        wfh_days_wtd=((~pl.col("has_work_trip")).cast(pl.Int32) * pl.col("day_weight")).sum(),
+    )
+    .with_columns(
+        # Calculate observed weekly frequency rates (extrapolate from diary)
+        # Assuming 5 weekdays per week
+        observed_commute_rate=(pl.col("commute_days_wtd") / pl.col("total_weekdays_wtd") * 5),
+        observed_telework_rate=(pl.col("wfh_days_wtd") / pl.col("total_weekdays_wtd") * 5),
+    )
+)
+
+freq_comparison = (
+    employed_persons
+    .filter(pl.col("employment") == 1)
+    .select(
+        "person_id",
+        "year",
+        "person_weight",
+        pl.col("telework_freq_cat").alias("stated_telework_cat"),
+        pl.col("commute_freq_cat").alias("stated_commute_cat"),
+        "job_type",
+    )
+    .join(observed_freq, on=["person_id", "year"], how="inner")
+    .filter(pl.col("total_weekdays") > 0)
+)
+```
+
+### Merge with Stated Frequencies
+
+Join the observed frequencies with the stated frequencies from the person table. We filter to full-time employed persons only (employment status code 1). The stated frequencies use the cleaned categorical values and labels created earlier.
+
+```{python}
+#| label: merge-stated-observed
+#| output: false
+
+def bin_frequency_rate(rate_col: str) -> pl.Expr:
+    """
+    Bin a frequency rate (days per week) to FrequencyCategory integer codes.
+
+    Maps rates to categories:
+    - null → -1 (MISSING)
+    - 0 → 0 (NEVER)
+    - 0 < x < 1 → 1 (LESS_THAN_WEEKLY)
+    - 1 ≤ x < 2 → 2 (ONE)
+    - 2 ≤ x < 4 → 3 (TWO_THREE)
+    - 4 ≤ x < 5 → 4 (FOUR)
+    - x ≥ 5 → 5 (FIVE_PLUS)
+
+    Args:
+        rate_col: Name of the column containing the rate values
+
+    Returns:
+        Polars expression that maps rates to frequency category codes
+    """
+    return (
+        # Missing
+        pl.when(pl.col(rate_col).is_null())
+        .then(-1)
+        # Never (we can't capture less than once a week here)
+        .when(pl.col(rate_col) < 1)
+        .then(0)
+        # One day weekly
+        .when((pl.col(rate_col) >= 1) & (pl.col(rate_col) < 2))
+        .then(2)
+        # Two to three days weekly (this matches your binned stated data)
+        .when((pl.col(rate_col) >= 2) & (pl.col(rate_col) < 4))
+        .then(3)
+        # Four days weekly
+        .when((pl.col(rate_col) >= 4) & (pl.col(rate_col) < 5))
+        .then(4)
+        # 5+ days a week (includes 5, 6-7, and Always)
+        .when(pl.col(rate_col) >= 5)
+        .then(5)
+        .otherwise(None)
+    )
+
+# Apply to both columns
+freq_comparison_binned = freq_comparison.with_columns([
+    bin_frequency_rate("observed_commute_rate").alias("observed_commute_cat"),
+    bin_frequency_rate("observed_telework_rate").alias("observed_telework_cat"),
+])
+
+# Need to bin the stated frequencies as well for comparison
+# combine less than once weekly, 1-3 monthly, and never into single NEVER category (0)
+# combine 5 days/week, 6-7 days/week, and always into single 5+ days/week category (5)
+freq_comparison_binned = freq_comparison_binned.with_columns(
+    pl.when(pl.col("stated_telework_cat").is_in([0, 8, 9])).then(0)  # NEVER
+        .when(pl.col("stated_telework_cat").is_in([5, 6, 7])).then(5)  # 5+
+        .otherwise(pl.col("stated_telework_cat"))
+        .alias("stated_telework_cat"),
+    pl.when(pl.col("stated_commute_cat").is_in([0, 8, 9])).then(0)  # NEVER
+        .when(pl.col("stated_commute_cat").is_in([5, 6, 7])).then(5)  # 5+
+        .otherwise(pl.col("stated_commute_cat"))
+        .alias("stated_commute_cat"),
+)
+
+# Update the bin labels to match
+bin_labs = {
+    -1: "Missing Response",
+    0: "Never",
+    1: "Less than once weekly",
+    2: "1 day per week",
+    3: "2-3 days per week",
+    4: "4 days per week",
+    5: "5+ days per week",
+}
+# Map bins to labels
+freq_comparison_labeled = freq_comparison_binned.with_columns(
+    pl.col("observed_commute_cat").replace_strict(bin_labs).alias("observed_commute_str"),
+    pl.col("observed_telework_cat").replace_strict(bin_labs).alias("observed_telework_str"),
+    pl.col("stated_telework_cat").replace_strict(bin_labs).alias("stated_telework_str"),
+    pl.col("stated_commute_cat").replace_strict(bin_labs).alias("stated_commute_str"),
+)
+
+# # Show sample
+# freq_comparison_labeled.select(
+#     "person_id",
+#     "year",
+#     "stated_telework_str",
+#     "observed_telework_str",
+#     "stated_commute_str",
+#     "observed_commute_str",
+#     "total_weekdays",
+# ).head(10)
+
+```
+
+### Observed Frequency Distributions
+
+Now let's examine the observed telework and commute frequencies derived from actual travel diary behavior. We'll map the observed frequency codes to the same categorical structure used for stated frequencies.
+
+```{python}
+#| label: observed-telework-summary
+#| output: false
+
+# Summarize observed telework frequency
+# Create a complete set of categories to ensure all are represented
+all_categories = pl.DataFrame({
+    "observed_telework_cat": [-1, 0, 1, 2, 3, 4, 5],
+    "observed_telework_str": [
+        "Missing Response", "Never", "Less than once weekly",
+        "1 day per week", "2-3 days per week", "4 days per week", "5+ days per week"
+    ]
+})
+all_years = freq_comparison_labeled.select("year").unique()
+complete_grid = all_years.join(all_categories, how="cross")
+
+# Compute actual counts
+actual_counts = (
+    freq_comparison_labeled
+    .group_by("year", "observed_telework_str", "observed_telework_cat")
+    .agg(
+        pl.len().alias("count"),
+        pl.col("person_weight").sum().alias("weighted_count"),
+    )
+)
+
+# Join with complete grid and fill missing values with 0
+observed_telework_summary = (
+    complete_grid
+    .join(
+        actual_counts,
+        on=["year", "observed_telework_str", "observed_telework_cat"],
+        how="left"
+    )
+    .with_columns(
+        pl.col("count").fill_null(0),
+        pl.col("weighted_count").fill_null(0),
+    )
+    .with_columns(
+        (100 * pl.col("weighted_count") / pl.col("weighted_count").sum().over("year")).alias("% (wtd)"),
+        (100 * pl.col("count") / pl.col("count").sum().over("year")).alias("% (unwtd)"),
+    )
+    .with_columns(
+        pl.col("weighted_count").round(2),
+        pl.col("% (wtd)").round(2),
+        pl.col("% (unwtd)").round(2),
+    )
+    .sort("observed_telework_cat")
+)
+
+print("Observed Telework Frequency - 2019:")
+print(observed_telework_summary.filter(pl.col("year") == "2019").drop("observed_telework_cat"))
+print("\nObserved Telework Frequency - 2023:")
+print(observed_telework_summary.filter(pl.col("year") == "2023").drop("observed_telework_cat"))
+```
+
+```{python}
+#| label: observed-commute-summary
+#| output: false
+
+# Summarize observed commute frequency
+# Create a complete set of categories to ensure all are represented
+all_commute_categories = pl.DataFrame({
+    "observed_commute_cat": [-1, 0, 1, 2, 3, 4, 5],
+    "observed_commute_str": [
+        "Missing Response", "Never", "Less than once weekly",
+        "1 day per week", "2-3 days per week", "4 days per week", "5+ days per week"
+    ]
+})
+complete_commute_grid = all_years.join(all_commute_categories, how="cross")
+
+# Compute actual counts
+actual_commute_counts = (
+    freq_comparison_labeled
+    .group_by("year", "observed_commute_str", "observed_commute_cat")
+    .agg(
+        pl.len().alias("count"),
+        pl.col("person_weight").sum().alias("weighted_count"),
+    )
+)
+
+# Join with complete grid and fill missing values with 0
+observed_commute_summary = (
+    complete_commute_grid
+    .join(
+        actual_commute_counts,
+        on=["year", "observed_commute_str", "observed_commute_cat"],
+        how="left"
+    )
+    .with_columns(
+        pl.col("count").fill_null(0),
+        pl.col("weighted_count").fill_null(0),
+    )
+    .with_columns(
+        (100 * pl.col("weighted_count") / pl.col("weighted_count").sum().over("year")).alias("% (wtd)"),
+        (100 * pl.col("count") / pl.col("count").sum().over("year")).alias("% (unwtd)"),
+    )
+    .with_columns(
+        pl.col("weighted_count").round(2),
+        pl.col("% (wtd)").round(2),
+        pl.col("% (unwtd)").round(2),
+    )
+    .sort("observed_commute_cat")
+)
+
+print("Observed Commute Frequency - 2019:")
+print(observed_commute_summary.filter(pl.col("year") == "2019").drop("observed_commute_cat"))
+print("\nObserved Commute Frequency - 2023:")
+print(observed_commute_summary.filter(pl.col("year") == "2023").drop("observed_commute_cat"))
+```
+
+```{python}
+#| label: fig-observed-freq-bar
+#| fig-cap: "Observed Telework and Commute Frequency: 2019 vs 2023"
+def create_diverging_observed_by_year_chart(df):
+    """Create diverging bar chart comparing 2019 vs 2023 observed frequencies."""
+
+    # Filter for each year and aggregate commute data
+    commute_2019 = (
+        df.filter(pl.col("year") == "2019")
+        .group_by(["observed_commute_str", "observed_commute_cat"])
+        .agg(pl.col("person_weight").sum().alias("weight"))
+        .with_columns(
+            (pl.col("weight") / pl.col("weight").sum() * 100).alias("percentage")
+        )
+        .sort("observed_commute_cat", descending=True)
+    )
+
+    commute_2023 = (
+        df.filter(pl.col("year") == "2023")
+        .group_by(["observed_commute_str", "observed_commute_cat"])
+        .agg(pl.col("person_weight").sum().alias("weight"))
+        .with_columns(
+            (pl.col("weight") / pl.col("weight").sum() * 100).alias("percentage")
+        )
+        .sort("observed_commute_cat", descending=True)
+    )
+
+    # Aggregate telework data
+    telework_2019 = (
+        df.filter(pl.col("year") == "2019")
+        .group_by(["observed_telework_str", "observed_telework_cat"])
+        .agg(pl.col("person_weight").sum().alias("weight"))
+        .with_columns(
+            (pl.col("weight") / pl.col("weight").sum() * 100).alias("percentage")
+        )
+        .sort("observed_telework_cat", descending=True)
+    )
+
+    telework_2023 = (
+        df.filter(pl.col("year") == "2023")
+        .group_by(["observed_telework_str", "observed_telework_cat"])
+        .agg(pl.col("person_weight").sum().alias("weight"))
+        .with_columns(
+            (pl.col("weight") / pl.col("weight").sum() * 100).alias("percentage")
+        )
+        .sort("observed_telework_cat", descending=True)
+    )
+
+    # Colors
+    commute_2019_color = 'rgba(59, 130, 246, 0.5)'  # Light blue
+    commute_2023_color = '#3b82f6'  # Full blue
+    telework_2019_color = 'rgba(139, 92, 246, 0.5)'  # Light purple
+    telework_2023_color = '#8b5cf6'  # Full purple
+
+    fig = go.Figure()
+
+    # Commute 2019 (left side)
+    fig.add_trace(go.Bar(
+        y=commute_2019["observed_commute_str"],
+        x=-commute_2019["percentage"],
+        name="2019",
+        orientation='h',
+        marker_color=commute_2019_color,
+        text=commute_2019["percentage"].round(1),
+        texttemplate='%{text}%',
+        textposition='inside',
+        offsetgroup=0,
+        legendgroup='2019',
+    ))
+
+    # Commute 2023 (left side, dodged)
+    fig.add_trace(go.Bar(
+        y=commute_2023["observed_commute_str"],
+        x=-commute_2023["percentage"],
+        name="2023",
+        orientation='h',
+        marker_color=commute_2023_color,
+        text=commute_2023["percentage"].round(1),
+        texttemplate='%{text}%',
+        textposition='inside',
+        offsetgroup=1,
+        legendgroup='2023',
+    ))
+
+    # Telework 2019 (right side)
+    fig.add_trace(go.Bar(
+        y=telework_2019["observed_telework_str"],
+        x=telework_2019["percentage"],
+        name="2019",
+        orientation='h',
+        marker_color=telework_2019_color,
+        text=telework_2019["percentage"].round(1),
+        texttemplate='%{text}%',
+        textposition='inside',
+        offsetgroup=0,
+        legendgroup='2019',
+        showlegend=False,
+    ))
+
+    # Telework 2023 (right side, dodged)
+    fig.add_trace(go.Bar(
+        y=telework_2023["observed_telework_str"],
+        x=telework_2023["percentage"],
+        name="2023",
+        orientation='h',
+        marker_color=telework_2023_color,
+        text=telework_2023["percentage"].round(1),
+        texttemplate='%{text}%',
+        textposition='inside',
+        offsetgroup=1,
+        legendgroup='2023',
+        showlegend=False,
+    ))
+
+    fig.update_layout(
+        title="Observed Commute vs Telework Frequency: 2019 vs 2023",
+        xaxis_title="← Commute Frequency | Telework Frequency →<br>% of Responses (Weighted)",
+        yaxis_title="",
+        barmode='group',
+        height=600,
+        plot_bgcolor='white',
+        xaxis=dict(
+            tickvals=[-50, -40, -30, -20, -10, 0, 10, 20, 30, 40, 50],
+            ticktext=['50%', '40%', '30%', '20%', '10%', '0', '10%', '20%', '30%', '40%', '50%'],
+            gridcolor='#e5e7eb'
+        ),
+        yaxis=dict(
+            gridcolor='#e5e7eb'
+        )
+    )
+
+    return fig
+
+# Create the plot
+diverging_observed_fig = create_diverging_observed_by_year_chart(freq_comparison_labeled)
+diverging_observed_fig.show()
+```
+
+```{python}
+def create_telework_distribution_by_year(df):
+    """Create simple dodged bar chart of telework frequency by year."""
+
+    # Aggregate telework data by year
+    telework_data = (
+        df.group_by(["year", "observed_telework_str", "observed_telework_cat"])
+        .agg(pl.col("person_weight").sum().alias("weight"))
+    )
+
+    # Calculate percentages within each year
+    year_totals = telework_data.group_by("year").agg(pl.col("weight").sum().alias("total"))
+
+    telework_data = (
+        telework_data
+        .join(year_totals, on="year")
+        .with_columns(
+            (pl.col("weight") / pl.col("total") * 100).alias("percentage")
+        )
+        .sort("observed_telework_cat")
+    )
+
+    # Convert to pandas for plotting
+    plot_df = telework_data.to_pandas()
+
+    # Create figure
+    fig = go.Figure()
+
+    # Colors for years
+    year_colors = {
+        "2019": "#3b82f6",  # Blue
+        "2023": "#8b5cf6"   # Purple
+    }
+
+    for year in ["2019", "2023"]:
+        year_data = plot_df[plot_df['year'] == year].sort_values('observed_telework_cat')
+
+        fig.add_trace(go.Bar(
+            name=year,
+            x=year_data['observed_telework_str'],
+            y=year_data['percentage'],
+            marker_color=year_colors[year],
+            text=year_data['percentage'].round(1),
+            texttemplate='%{text}%',
+            textposition='outside',
+        ))
+
+    fig.update_layout(
+        title="Observed Telework Frequency: 2019 vs 2023",
+        xaxis_title="Telework Frequency",
+        yaxis_title="% of Responses (Weighted)",
+        barmode='group',
+        height=500,
+        width=900,
+        plot_bgcolor='white',
+        font=dict(size=12),
+        yaxis_range=[0, 50],
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="center",
+            x=0.5
+        ),
+        xaxis=dict(
+            tickangle=-45,
+            gridcolor='#e5e7eb'
+        ),
+        yaxis=dict(
+            gridcolor='#e5e7eb',
+            ticksuffix='%'
+        )
+    )
+
+    return fig
+
+# Create the plot
+telework_by_year_fig = create_telework_distribution_by_year(freq_comparison_labeled)
+telework_by_year_fig.show()
+```
+
+
+### Stated vs Observed Comparison
+
+Now let's compare the stated frequencies against the observed frequencies to identify discrepancies.
+
+```{python}
+
+def create_magnitude_bar_chart(df, year):
+    """Create bar chart showing magnitude of reporting differences."""
+
+    df = df.filter(pl.col("year") == str(year))
+
+    # # Calculate differences
+    # df_with_diff = df.with_columns([
+    #     (pl.col("observed_commute_cat") - pl.col("stated_commute_cat")).alias("commute_diff"),
+    #     (pl.col("observed_telework_cat") - pl.col("stated_telework_cat")).alias("telework_diff"),
+    # ])
+
+    def map_cat_to_days(cat_col: str) -> pl.Expr:
+        """Map binned categories to their midpoint days/week value."""
+        return (
+            pl.when(pl.col(cat_col) == 0).then(0)      # Never
+            .when(pl.col(cat_col) == 1).then(0.5)      # Less than weekly (~0.5 days)
+            .when(pl.col(cat_col) == 2).then(1)        # 1 day
+            .when(pl.col(cat_col) == 3).then(2.5)      # 2-3 days (use midpoint)
+            .when(pl.col(cat_col) == 4).then(4)        # 4 days
+            .when(pl.col(cat_col) == 5).then(5)        # 5+ days
+            .otherwise(None)
+        )
+
+    df_with_diff = df.with_columns([
+        # Use the midpoint of the stated frequency bin to compare
+        # This requires mapping the stated_cat back to a typical days/week value
+        (
+            pl.col("observed_commute_rate") - map_cat_to_days("stated_commute_cat")
+        ).round(0).alias("commute_diff"),
+        (
+            pl.col("observed_telework_rate") - map_cat_to_days("stated_telework_cat")
+        ).round(0).alias("telework_diff"),
+    ])
+
+    # Aggregate by difference value with weights
+    commute_summary = (
+        df_with_diff
+        .group_by("commute_diff")
+        .agg(pl.col("person_weight").sum().alias("weight"))
+        .with_columns(pl.lit("Commute").alias("type"))
+    )
+
+    telework_summary = (
+        df_with_diff
+        .group_by("telework_diff")
+        .agg(pl.col("person_weight").sum().alias("weight"))
+        .with_columns(pl.lit("Telework").alias("type"))
+    )
+
+    # Combine
+    plot_data = pl.concat([
+        commute_summary.select(["type", pl.col("commute_diff").alias("difference"), "weight"]),
+        telework_summary.select(["type", pl.col("telework_diff").alias("difference"), "weight"])
+    ])
+
+    # Calculate percentages within each type
+    type_totals = plot_data.group_by("type").agg(pl.col("weight").sum().alias("total"))
+    plot_data = (
+        plot_data
+        .join(type_totals, on="type")
+        .with_columns(
+            (pl.col("weight") / pl.col("total") * 100).alias("percentage")
+        )
+        .sort("difference")
+    )
+
+    plot_df = plot_data.to_pandas()
+
+    # Create grouped bar chart
+    fig = go.Figure()
+
+    for freq_type, color in [("Commute", "#3b82f6"), ("Telework", "#8b5cf6")]:
+        type_data = plot_df[plot_df['type'] == freq_type].sort_values('difference')
+
+        fig.add_trace(go.Bar(
+            name=freq_type,
+            x=type_data['difference'],
+            y=type_data['percentage'],
+            marker_color=color,
+            text=type_data['percentage'].apply(lambda x: f"{x:.1f}%" if x > 2 else ""),
+            textposition='outside',
+            textfont=dict(size=12),
+            hovertemplate=f'{freq_type}<br>Difference: %{{x}}<br>Percentage: %{{y:.1f}}%<extra></extra>',
+            width=0.4
+        ))
+
+    # # Add vertical line at 0
+    # fig.add_vline(
+    #     x=0,
+    #     line_dash="dash",
+    #     line_color="#22c55e",
+    #     line_width=3,
+    #     annotation_text="Accurate",
+    #     annotation_position="top"
+    # )
+
+    fig.update_layout(
+        title=dict(
+            text=f"Magnitude of Reporting Discrepancies for {str(year)}<br><sub>Difference = Observed - Stated (category levels)</sub>",
+            x=0.5,
+            xanchor='center'
+        ),
+        xaxis_title="Difference (Observed - Stated)",
+        yaxis_title="Percentage of Responses",
+        yaxis_range=[0, 55],
+        height=500,
+        width=900,
+        plot_bgcolor='white',
+        font=dict(size=12),
+        barmode='group',
+        bargap=0.15,
+        bargroupgap=0.1,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            xanchor="center",
+            x=0.5
+        ),
+        yaxis=dict(
+            gridcolor='#e5e7eb',
+            ticksuffix='%'
+        ),
+        # xaxis=dict(
+        #     gridcolor='#e5e7eb',
+        #     dtick=1,
+        #     zeroline=True,
+        #     zerolinewidth=3,
+        #     zerolinecolor='#22c55e'
+        # )
+    )
+
+    # Add interpretation annotations
+    fig.add_annotation(
+        x=0.20, y=0.98,
+        xref="paper", yref="paper",
+        text="← Under-reported",
+        showarrow=False,
+        font=dict(size=11, color='#64748b', weight='bold'),
+        xanchor='left',
+        yanchor='top'
+    )
+
+    fig.add_annotation(
+        x=0.7, y=0.98,
+        xref="paper", yref="paper",
+        text="Over-reported →",
+        showarrow=False,
+        font=dict(size=11, color='#64748b', weight='bold'),
+        xanchor='right',
+        yanchor='top'
+    )
+
+    return fig
+
+# Create the plots using your function
+magnitude_bar_fig_19 = create_magnitude_bar_chart(freq_comparison_labeled, 2019)
+magnitude_bar_fig_23 = create_magnitude_bar_chart(freq_comparison_labeled, 2023)
+
+
+# --- Combine Figures into a Single View ---
+
+# 1. Create a combined figure with 1 row and 2 columns
+combined_fig = make_subplots(
+    rows=2,
+    cols=1,
+    shared_yaxes=True, # Shares the y-axis (and hides labels on the right plot)
+    subplot_titles=("2019 Results", "2023 Results"),
+    horizontal_spacing=0.03 # Reduce space between plots
+)
+
+# 2. Add traces from the 2019 figure to the left subplot (row 1, col 1)
+# These traces have the legends we want to keep
+for trace in magnitude_bar_fig_19.data:
+    # Use legendgroup to link items and set showlegend=True
+    trace.update(showlegend=True, legendgroup=trace.name)
+    combined_fig.add_trace(trace, row=1, col=1)
+
+# Add vertical line for 'Accurate'
+combined_fig.add_vline(x=0, line_dash="dash", line_color="#808080", row=1, col=1)
+
+# 3. Add traces from the 2023 figure to the right subplot (row 1, col 2)
+# Set showlegend=False for these traces to avoid duplication
+for trace in magnitude_bar_fig_23.data:
+    trace.update(showlegend=False, legendgroup=trace.name)
+    combined_fig.add_trace(trace, row=2, col=1)
+
+# Add vertical line for 'Accurate'
+combined_fig.add_vline(x=0, line_dash="dash", line_color="#808080 ", row=2, col=1)
+
+
+# 4. Update the layout for a clean look
+
+# Use settings from the original figures as a base
+combined_fig.update_layout(
+    title=dict(
+        text="Comparison of Reporting Discrepancies<br><sub>Difference = Observed - Stated (category levels)</sub>",
+        x=0.5,
+        xanchor='center'
+    ),
+    height=500,
+    width=1000,
+    barmode='group',
+    plot_bgcolor='white',
+    font=dict(size=12),
+    # Use the legend definition from the original function
+    legend=dict(
+        orientation="h",
+        yanchor="bottom",
+        xanchor="center",
+        x=0.5,
+        y=-0.2 # Position legend below both plots
+    ),
+)
+
+# 5. Fix Y-Axis Visibility & Gridlines (Addresses your previous question)
+# The right plot needs its Y-axis properties explicitly set to match the left one,
+# specifically forcing the gridlines to show even without labels.
+combined_fig.update_yaxes(
+    title_text="Percentage of Responses",
+    range=[0, 55], # Match the range you set in the original function
+    gridcolor='#e5e7eb',
+    ticksuffix='%',
+    showgrid=True, # Explicitly force gridlines on the shared axis side
+    col=1
+)
+
+combined_fig.update_yaxes(
+    range=[0, 55],
+    gridcolor='#e5e7eb',
+    ticksuffix='%',
+    showgrid=True, # Explicitly force gridlines on the shared axis side
+    col=2,
+    # Keep the labels hidden since we set shared_yaxes=True
+)
+
+combined_fig.add_annotation(
+    x=0.05, y=0.98,
+    xref="paper", yref="paper",
+    text="← Under-reported",
+    showarrow=False,
+    font=dict(size=11, color='#64748b', weight='bold'),
+    xanchor='left',
+    yanchor='top'
+)
+
+combined_fig.add_annotation(
+    x=0.4, y=0.98,
+    xref="paper", yref="paper",
+    text="Over-reported →",
+    showarrow=False,
+    font=dict(size=11, color='#64748b', weight='bold'),
+    xanchor='right',
+    yanchor='top'
+)
+
+# 7. Display the final stacked figure
+combined_fig.show()
+
+# combined_fig.write_image(
+#     "reporting_discrepancy.png",
+#     scale=4,          # Renders the image at 4x the resolution (400 DPI equivalent for typical screens)
+#     width=1280,       # Use the width defined in your update_layout
+#     height=800        # Use the height defined in your update_layout
+# )
+
+```

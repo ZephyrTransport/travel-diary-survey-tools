@@ -1,0 +1,114 @@
+# DaySim Processing Pipeline Configuration for BATS 2023
+# This config file demonstrates the full pipeline with DaySim formatting
+
+# config.yaml
+
+# Define directory shorthands
+survey_dir: "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Full Weighted 2023 Dataset/WeightedDataset_02212025"
+output_dir: "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Processed/pipeline_20251230"
+TM1_shapefile_dir: "E:/GitHub/travel-model-one/utilities/geographies"
+TM2_shapefile_dir: "E:/GitHub/TM2/tm2py-utils/tm2py_utils/inputs/maz_taz/shapefiles"
+log_file: "{{ output_dir }}/pipeline.log" # If not set, logs just to console, if not absolute saves to .cache directory
+
+# Pipeline configuration
+steps:
+  - name: load_data
+    validate_input: false # This will override @step(validate=True/False) in the function definition
+    cache: true
+    params:
+      input_paths:
+        households: "{{ survey_dir }}/hh.csv"
+        persons: "{{ survey_dir }}/person.csv"
+        days: "{{ survey_dir }}/day.csv"
+        unlinked_trips: "{{ survey_dir }}/trip.csv"
+
+  - name: clean_2023_bats
+    validate_input: false
+    cache: true
+
+  # - name: imputation
+  #   validate_input: true
+
+  - name: link_trips
+    validate_input: false
+    cache: true
+    params:
+      change_mode_code: 11  # Purpose code for 'change_mode'
+      transit_mode_codes: [12, 13, 14] # NOTE: this is not elegant
+      max_dwell_time: 180  # in minutes
+      dwell_buffer_distance: 100  # in meters
+
+  - name: detect_joint_trips
+    validate_input: false
+    cache: true
+    params:
+      config:
+        method: "mahalanobis"
+        # Covariance for Mahalanobis distance calculation
+        # Think of this as the standard deviation of measurement noise in each dimension
+        # Diagonal: [origin_var_m^2, dest_var_m^2, depart_var_min^2, arrive_var_min^2]
+        # Default [10000, 10000, 100, 100] = 100m, 100m, 10min, 10min std devs
+        covariance: [10000, 10000, 100, 100]
+        # Confidence level: Higher = stricter matching (fewer detections)
+        # 0.90 = 90% confidence (strict), 0.75 = moderate, 0.50 = permissive
+        confidence_level: 0.90
+
+        # Alternative: simpler buffer method with time/space thresholds
+        # method: "buffer"
+        # time_threshold_minutes: 15.0
+        # space_threshold_meters: 100.0
+
+  - name: extract_tours
+    validate_input: false
+    cache: true
+
+  # - name: weighting
+  #   validate_input: true
+  #   cache: true
+
+  - name: add_zone_ids
+    validate_input: false
+    cache: true
+    params:
+      zone_geographies:
+        - zone_name: "taz"  # Primary TAZ for DaySim (TM1)
+          shapefile: "{{ TM2_shapefile_dir }}/tazs_TM2_2_5.shp"
+          zone_id_field: "TAZ_NODE"
+        - zone_name: "maz"  # Primary MAZ for DaySim (TM2)
+          shapefile: "{{ TM2_shapefile_dir }}/mazs_TM2_2_5.shp"
+          zone_id_field: "MAZ_NODE"
+        # Add additional zone geographies as needed:
+        - zone_name: "TAZ1454"
+          shapefile: "{{ TM1_shapefile_dir }}/bayarea_rtaz1454_rev1_WGS84.shp"
+          zone_id_field: "TAZ1454"
+  # - name: final_check
+  #   validate_input: true
+
+  # This prepares a new set of files formatted for DaySim
+  - name: format_daysim
+    validate_input: false
+    cache: false
+    params:
+      drop_partial_tours: true
+      drop_missing_taz: true
+      drop_invalid_tours: true
+
+  - name: write_data
+    validate_input: true
+    params:
+      output_paths:
+        # Standard Survey Formats
+        households: "{{ output_dir }}/survey/households.csv"
+        persons: "{{ output_dir }}/survey/persons.csv"
+        days: "{{ output_dir }}/survey/days.csv"
+        unlinked_trips: "{{ output_dir }}/survey/unlinked_trips.csv"
+        linked_trips: "{{ output_dir }}/survey/linked_trips.csv"
+        tours: "{{ output_dir }}/survey/tours.csv"
+        joint_trips: "{{ output_dir }}/survey/joint_trips.csv"
+
+        # DaySim Formats
+        households_daysim: "{{ output_dir }}/daysim/households.csv"
+        persons_daysim: "{{ output_dir }}/daysim/persons.csv"
+        days_daysim: "{{ output_dir }}/daysim/days.csv"
+        linked_trips_daysim: "{{ output_dir }}/daysim/linked_trips.csv"
+        tours_daysim: "{{ output_dir }}/daysim/tours.csv"

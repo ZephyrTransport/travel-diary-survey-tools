@@ -1,0 +1,51 @@
+weighted = true
+rmove_only = true
+
+day_filename = "day.csv"
+hh_filename = "hh.csv"
+location_filename = "location.csv"
+person_filename = "person.csv"
+trip_filename = "trip.csv"
+vehicle_filename = "vehicle.csv"
+
+[model]
+agency_model = "SFCTA_CHAMP"
+
+[raw]
+dir = "Q:/Data/Surveys/HouseholdSurveys/MTC-SFCTA2022/Deliverable_20241127"
+
+[00-preprocess]
+dir = "Q:/Data/Surveys/HouseholdSurveys/MTC-SFCTA2022/Processed_20241127/v00b/00-preprocess"
+primary_respondent_only = true
+
+[01-taz_spatial_join]
+dir = "Q:/Data/Surveys/HouseholdSurveys/MTC-SFCTA2022/Processed_20241127/v00b/01-taz_spatial_join"
+maz_filepath = "Q:/GIS/Model/MAZ/MAZ40051.shp"
+
+[02a-reformat]
+dir = "Q:/Data/Surveys/HouseholdSurveys/MTC-SFCTA2022/Processed_20241127/v00b/02a-reformat"
+
+[02b-link_trips_week]
+dir = "Q:/Data/Surveys/HouseholdSurveys/MTC-SFCTA2022/Processed_20241127/v00b/02b-link_trips_week"
+accegr_filename = "accegr_week.csv"  # access/egress
+trip_linked_detail_week_filename = "trip-detail.csv"
+
+[03a-tour_extract_week]
+dir = "Q:/Data/Surveys/HouseholdSurveys/MTC-SFCTA2022/Processed_20241127/v00b/03a-tour_extract_week"
+personday_filename = "personday.csv"
+tour_filename = "tour.csv"
+
+[03b-assign_day]
+dir = "Q:/Data/Surveys/HouseholdSurveys/MTC-SFCTA2022/Processed_20241127/v00b/03b-assign_day"
+weight_dir = "wt-wkday_3day"  # not currently used in step 3b, only for step 4a/4c
+
+[04a-merge_skims]  # only implemented for step 04c for now
+dir = "Q:/Data/Surveys/HouseholdSurveys/MTC-SFCTA2022/Processed_20241127/v00b/04a-merge_skims"
+
+[04b-summary_notebooks]
+dir = "Q:/Data/Surveys/HouseholdSurveys/MTC-SFCTA2022/Processed_20241127/v00b/04b-summary_notebooks"
+county_filepath = "Q:/GIS/Model/TAZ/SFCTA_TAZ/TAZ2454_clean.csv"
+sup_dist_filepath = "Q:/GIS/Model/TAZ/SFCTA_TAZ/TAZ_SUPDIST/sftaz_wSupDist_Manual.csv"
+
+[04c-csv_to_dat]
+dir = "Q:/Data/Surveys/HouseholdSurveys/MTC-SFCTA2022/Processed_20241127/v00b/04c-csv_to_dat"

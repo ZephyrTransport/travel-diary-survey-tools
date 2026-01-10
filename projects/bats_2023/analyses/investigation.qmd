@@ -1,0 +1,856 @@
+---
+title: "BATS 2023 Travel Diary Analysis"
+format:
+  html:
+    code-fold: true
+jupyter: python3
+---
+
+```{python}
+#| label: imports
+
+import numpy as np
+from pathlib import Path
+import polars as pl
+import plotly.express as px
+import plotly.graph_objects as go
+
+from data_canon.codebook.trips import ModeType, PurposeCategory
+from data_canon.codebook.persons import Employment
+from pipeline.pipeline import Pipeline
+from utils import helpers
+
+from scipy.stats import gaussian_kde
+
+```
+
+```{python}
+#| label: setup
+
+# Data paths
+CONFIG_PATH = Path("config.yaml")
+
+# Initialize pipeline and load cached data
+pipeline = Pipeline(
+    config_path=str(CONFIG_PATH),
+    steps=[],  # No steps needed, just loading cache
+    caching=True,
+)
+
+# Load data from cache
+households_df = pipeline.get_data("households")
+persons_df = pipeline.get_data("persons")
+days_df = pipeline.get_data("days")
+unlinked_trips = pipeline.get_data("unlinked_trips")
+linked_trips = pipeline.get_data("linked_trips")
+
+hh_weights = pipeline.get_data("hh_weights")
+person_weights = pipeline.get_data("person_weights")
+day_weights = pipeline.get_data("day_weights")
+trip_weights = pipeline.get_data("trip_weights")
+
+# Hardcoded codes
+TRANSIT_MODES: list[int] = [
+    ModeType.TRANSIT.value,
+    ModeType.FERRY.value,
+    ModeType.LONG_DISTANCE.value,
+]
+
+# Create mapping dictionaries from enums
+MODE_TYPE_MAP = ModeType.to_dict()
+PURPOSE_MAP = PurposeCategory.to_dict()
+EMPLOY_MAP = Employment.to_dict()
+
+# County names (not in enums yet, keep as dict)
+COUNTY_NAMES = {
+    6001: "Alameda County",
+    6007: "Butte County",
+    6013: "Contra Costa County",
+    6015: "Del Norte County",
+    6017: "El Dorado County",
+    6019: "Fresno County",
+    6023: "Humboldt County",
+    6029: "Kern County",
+    6037: "Los Angeles County",
+    6039: "Madera County",
+    6041: "Marin County",
+    6043: "Mariposa County",
+    6045: "Mendocino County",
+    6047: "Merced County",
+    6053: "Monterey County",
+    6055: "Napa County",
+    6057: "Nevada County",
+    6059: "Orange County",
+    6061: "Placer County",
+    6065: "Riverside County",
+    6067: "Sacramento County",
+    6069: "San Benito County",
+    6071: "San Bernardino County",
+    6073: "San Diego County",
+    6075: "San Francisco County",
+    6077: "San Joaquin County",
+    6079: "San Luis Obispo County",
+    6081: "San Mateo County",
+    6085: "Santa Clara County",
+    6087: "Santa Cruz County",
+    6089: "Shasta County",
+    6091: "Sierra County",
+    6095: "Solano County",
+    6097: "Sonoma County",
+    6099: "Stanislaus County",
+    6107: "Tulare County",
+    6109: "Tuolumne County",
+    6111: "Ventura County",
+    6113: "Yolo County",
+    9998: "Another County in California",
+}
+
+```
+
+```{python}
+# Before join, check that the two dataframes have matching trip_ids
+# If there are weights withought matching trips, stop
+# If there are trips without weights, check which days are missing
+# (e.g., Fri/Sat/Sun)
+
+# Drop any existing old weight columns to avoid confusion
+for col_name, (weights_df, target_df) in {
+    'hh_weight': (hh_weights, households_df),
+    'person_weight': (person_weights, persons_df),
+    'day_weight': (day_weights, days_df),
+    'trip_weight': (trip_weights, unlinked_trips),
+}.items():
+    if col_name in target_df.columns:
+        target_df.drop_in_place(col_name)
+
+# Check trip_ids match between unlinked_trips and trip_weights
+unlinked_trip_ids = set(
+    unlinked_trips.select("trip_id").to_series().to_list()
+)
+trip_weight_ids = set(trip_weights.select("trip_id").to_series().to_list())
+missing_ids = trip_weight_ids - unlinked_trip_ids
+if missing_ids:
+    msg = (
+        f"trip_weights contain trip_ids not found in unlinked_trips: "
+        f"{list(missing_ids)[:10]} "
+        f"(showing up to 10 IDs of {len(missing_ids)} total)"
+    )
+    raise ValueError(msg)
+
+# Join trip weights to unlinked trips for analysis
+unlinked_trips = unlinked_trips.join(
+    trip_weights,
+    on="trip_id",
+    how="left",
+)
+
+# Aggregate weights over linked trips
+linked_trips_weights = unlinked_trips.group_by("linked_trip_id").agg(
+    pl.col("trip_weight").mean().alias("linked_trip_weight"),
+    pl.col("o_county").first().alias("o_county"),
+    pl.col("d_county").first().alias("d_county"),
+)
+linked_trips = linked_trips.join(
+    linked_trips_weights,
+    on="linked_trip_id",
+    how="left",
+)
+
+# Join day weights to days
+days_df = days_df.join(
+    day_weights,
+    on="day_id",
+    how="left",
+)
+
+# Join person weights to persons
+persons_df = persons_df.join(
+    person_weights,
+    on="person_id",
+    how="left",
+)
+```
+
+# Trip Linking
+```{python}
+#| label: link-trips
+
+# Data is already linked from pipeline cache!
+# Report the number of linked trips with > 1 trip segment
+num_multi_segment = linked_trips.filter(
+    pl.col("num_segments") > 1
+).shape[0]
+
+# Report
+print(f"Number of unlinked trips: {unlinked_trips.shape[0]}")
+print(f"Number of linked trips: {linked_trips.shape[0]}")
+print(f"Number of linked trips with > 1 trip segment: {num_multi_segment} out of {linked_trips.shape[0]} total linked trips.")
+
+```
+
+
+# Imputed trip investigation
+There is no reliable way to determine which trips are imputed in the data because its in shared column `d_purpose` with no flag indicating imputation. Moreover, the imputation logic uses trip linking, buffer distances, habitual locations, and other factors that are not directly observable in the data. It will then finally attempt to extract insight from the open-ended "other" purpose responses. 😢
+
+
+# Distance Distribution
+```{python}
+#| label: distance-distribution
+#| fig-cap: "Weighted Distance Distribution of Linked Trips"
+
+linked_trips = linked_trips.with_columns([
+    (pl.col("distance_meters") / 1609.34).alias("distance_miles"),  # Convert to miles
+])
+
+max_dist = 25
+# Plot weighted distribution of trip distances for all weighted linked trips
+fig = px.histogram(
+    linked_trips.filter(
+        pl.col("distance_miles") <= max_dist
+    ),
+    x="distance_miles",
+    # nbins=100,
+    range_x=[0, max_dist + 5],
+    histfunc="sum",
+    y="linked_trip_weight",
+    title="Weighted Distance Distribution of Linked Trips",
+    labels={
+        "distance_miles": "Trip Distance (miles)",
+        "linked_trip_weight": "Weighted Count",
+    },
+)
+fig.update_layout(
+    xaxis=dict(
+        range=[0, max_dist + 5],
+        tickmode="array",
+        tickvals=list(range(0, max_dist + 5, 5)),
+        ticktext=[str(h) for h in range(0, max_dist + 5, 5)]
+    )
+)
+fig.show()
+
+```
+
+
+# Weekday Work Trip Rates by Employment Status
+```{python}
+#| label: employ-trips
+#| fig-cap: "Weekday Work Trip Rates by Employment"
+# Join employment status to linked trips
+employment_linked_trips = linked_trips.join(
+    persons_df.select(["person_id", "employment"]),
+    on="person_id",
+    how="left",
+)
+
+# Calculate total weighted and unweighted days by employment status
+employment_day_totals = (
+    days_df
+    .join(
+        persons_df.select(["person_id", "employment", "hh_id"]),
+        on=["person_id", "hh_id"],
+        how="left",
+    )
+    .group_by("employment").agg([
+        pl.len().alias("unweighted_days"),
+        pl.col("day_weight").sum().alias("weighted_days"),
+    ])
+    .sort("unweighted_days", descending=True)
+)
+
+# Calculate total work and work-related trips by employment status
+employment_work_trips = (
+    employment_linked_trips
+    .filter(
+        pl.col("d_purpose_category").is_in([2,3]) &
+        (pl.col("linked_trip_weight") > 0), # Drop incomplete trips
+    )
+    .group_by(["employment", "d_purpose_category"]).agg([
+        pl.len().alias("unweighted_work_trips"),
+        pl.col("linked_trip_weight").sum().alias("weighted_work_trips"),
+    ])
+    .with_columns(
+        pl.col("employment").cast(pl.Utf8).replace(EMPLOY_MAP).alias("employment_status"),
+        pl.col("d_purpose_category").cast(pl.Utf8).replace(PURPOSE_MAP).alias("purpose"),
+    )
+    .sort("unweighted_work_trips", descending=True)
+)
+
+# Merge and calculate trip rates
+employment_summary = (
+    employment_day_totals
+    # Join work trips
+    .join(
+        employment_work_trips,
+        on="employment",
+        how="left",
+    )
+)
+
+# Calculate trip rates
+employment_summary = (
+    employment_summary
+    .with_columns([
+        (pl.col("unweighted_work_trips") / pl.col("unweighted_days"))
+        .alias("unweighted_trip_rate"),
+        (pl.col("weighted_work_trips") / pl.col("weighted_days"))
+        .alias("weighted_trip_rate"),
+    ])
+)
+
+# Just display Employed and Self-employed
+emp_plot_dat = employment_summary.filter(
+    pl.col("employment").is_in([1,2,3,7])
+).drop(["d_purpose_category", "employment"])
+
+
+fig = go.Figure()
+
+# Get unique purposes and employment statuses
+purposes = emp_plot_dat["purpose"].unique().to_list()
+employment_statuses = emp_plot_dat["employment_status"].unique().to_list()
+colors = px.colors.qualitative.Plotly
+
+# For each purpose, create grouped bars
+for i, purpose in enumerate(purposes):
+    purpose_data = emp_plot_dat.filter(pl.col("purpose") == purpose)
+
+    # Add weighted bars (solid)
+    fig.add_trace(go.Bar(
+        name=f"{purpose} (Weighted)",
+        x=purpose_data["employment_status"],
+        y=purpose_data["weighted_trip_rate"],
+        marker_color=colors[i % len(colors)],
+        text=purpose_data["weighted_trip_rate"].round(2),
+        texttemplate="%{text:.2f}",
+        textposition="inside",
+        legendgroup=purpose,
+        offsetgroup=i,
+    ))
+
+    # Add unweighted bars (hatched overlay) on top of the same bars
+    fig.add_trace(go.Bar(
+        name=f"{purpose} (Unweighted)",
+        x=purpose_data["employment_status"],
+        y=purpose_data["unweighted_trip_rate"],
+        marker_color=colors[i % len(colors)],
+        marker_pattern_shape="/",
+        marker_pattern_solidity=0.3,
+        opacity=0.7,
+        legendgroup=purpose,
+        offsetgroup=i,
+        text=purpose_data["unweighted_trip_rate"].round(2),
+        texttemplate="%{text:.2f}",
+        textposition="inside",
+    ))
+
+fig.update_layout(
+    barmode="group",
+    title="Weekday Work Trip Rates by Employment",
+    xaxis_title="Employment Status",
+    yaxis_title="Trip Rate (Trips per Day)",
+    yaxis_range=[0, 0.6],
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+)
+
+fig.show()
+```
+
+# Trip Counts by Day and Purpose
+```{python}
+
+# Trip counts per day by purpose
+day_trip_counts = (
+    linked_trips
+    .filter(
+        pl.col("linked_trip_weight").gt(0) & # Drop incomplete trips
+        pl.col("d_purpose_category").is_in([2,3]) # Work and work-related trips only
+        )
+    .group_by(["day_id", "d_purpose_category"]).agg([
+        pl.len().alias("unweighted"),
+        pl.col("linked_trip_weight").sum().alias("weighted"),
+    ])
+    .with_columns(
+        pl.col("d_purpose_category").cast(pl.Utf8).replace(PURPOSE_MAP).alias("purpose"),
+    )
+    .sort(["day_id", "d_purpose_category"])
+    # Format strings to lowercase and replace spaces with hyphens
+    .with_columns([
+        pl.col("purpose")
+        .str.to_lowercase()
+        .str.replace_all(" ", "-")
+        .alias("purpose"),
+    ])
+)
+
+# Pivot on day_id to get matrix of trip counts
+trip_count_matrix = day_trip_counts.pivot(
+    index="day_id",
+    on="purpose",
+    values=["unweighted", "weighted"],
+).fill_null(0)
+
+# Join day weight
+trip_count_matrix = trip_count_matrix.join(
+    days_df.select(["day_id", "day_weight"]),
+    on="day_id",
+    how="left",
+)
+
+
+```
+
+# School Trips by Mode
+
+```{python}
+#| label: school-trips
+#| fig-cap: "School trips by mode"
+
+# Get school trips by mode -------
+school_mode = (
+    linked_trips
+    .filter(
+        pl.col("d_purpose_category").is_in([4,5]) &
+        (pl.col("linked_trip_weight") > 0), # Drop incomplete trips
+        )
+    .group_by("mode_type").agg([
+        pl.len().alias("count"),
+        pl.col("linked_trip_weight").sum().alias("weighted_count"),
+    ])
+    .with_columns(
+        pl.col("mode_type").cast(pl.Utf8).replace(MODE_TYPE_MAP).alias("mode"),
+    )
+    .sort("count", descending=True)
+    .drop("mode_type")
+    .with_columns([
+        (pl.col("count") / pl.col("count").sum() * 100).alias("share"),
+        (pl.col("weighted_count") / pl.col("weighted_count").sum() * 100)
+        .alias("weighted_share"),
+    ])
+)
+
+# Reshape for plotting
+school_mode_long = school_mode.unpivot(
+    index=["mode", "count", "weighted_count"],
+    on=["share", "weighted_share"],
+    variable_name="type",
+    value_name="percentage",
+).with_columns([
+    pl.when(pl.col("type") == "share")
+        .then(pl.col("count"))
+        .otherwise(pl.col("weighted_count").round(0).cast(pl.Int32))
+        .alias("text_value"),
+    pl.col("type")
+    .replace({"share": "Unweighted", "weighted_share": "Weighted"}),
+])
+
+# Interative plotly plot
+fig = px.bar(
+    school_mode_long,
+    x="mode",
+    y="percentage",
+    color="type",
+    barmode="group",
+    labels={"mode": "Mode Type", "percentage": "Share (%)", "type": ""},
+    text="text_value",
+    title="School Trips by Mode",
+)
+fig.update_traces(texttemplate="%{text:.3~s}", textposition="outside")
+fig.show()
+```
+
+# Overnight Trips Investigation
+```{python}
+#| label: overnights
+#| fig-cap: "Overnight Trips"
+
+# Filter overnight trips
+overnights = linked_trips.filter(pl.col("d_purpose_category") == 12)
+overnights_complete = overnights.filter(
+    pl.col('linked_trip_weight') > 0
+)
+
+# Summary statistics
+share_with_weight = 100 * overnights_complete.shape[0] / overnights.shape[0]
+
+print(f"Total overnight trips recorded: {overnights.shape[0]:,}")
+```
+
+# Trip Timelines for Overnight Days
+```{python}
+
+# Select daily diaries for 10 random overnight-flagged days
+overnight_days = (
+    overnights_complete
+    .select("day_id")
+    .unique()
+    .sample(n=10, with_replacement=False, seed=42)
+    .to_series()
+    .to_list()
+)
+
+overnight_diaries = (
+    # Filter overnight days
+    linked_trips
+    .filter(
+        pl.col("day_id").is_in(overnight_days)
+    )
+    # Select relevant columns and map for readability
+    .select(
+        [
+            "linked_trip_id",
+            "day_id",
+            "depart_time",
+            "arrive_time",
+            "d_purpose_category",
+            "mode_type",
+            "linked_trip_weight",
+        ]
+    )
+    # Map codes to strings
+    .with_columns([
+        pl.col("mode_type").cast(pl.Utf8).replace(MODE_TYPE_MAP).alias("mode"),
+        pl.col("d_purpose_category").cast(pl.Utf8).replace(PURPOSE_MAP).alias("purpose"),
+        pl.col("day_id").cast(pl.Utf8).alias("day_id"),
+    ])
+    .sort("depart_time")
+    # Normalize date time to a common date for plotting
+    .with_columns([
+        pl.col("depart_time").dt.replace(year=2024, month=1, day=1).alias("depart_time"),
+        pl.col("arrive_time").dt.replace(year=2024, month=1, day=1).alias("arrive_time"),
+    ])
+)
+
+
+# Create color map with overnight highlighted
+# Use a muted color palette for non-overnight purposes
+muted_colors = px.colors.qualitative.Pastel + px.colors.qualitative.Set3
+color_map = {
+    purpose: muted_colors[i % len(muted_colors)]
+    for i, purpose in enumerate(PURPOSE_MAP.values())
+}
+color_map["Overnight"] = "red"  # Make overnight stand out
+
+fig = px.timeline(
+    overnight_diaries,
+    x_start="depart_time",
+    x_end="arrive_time",
+    y="day_id",
+    color="purpose",
+    color_discrete_map=color_map,
+    hover_data=["mode"],
+    title="Trips for 10 Day IDs with Overnight Trips",
+)
+fig.update_yaxes(title="Day ID")
+fig.update_xaxes(title="Time of Day")
+fig.show()
+
+```
+
+# Departure Times for Overnight Trips
+```{python}
+#| label: depart-overnights
+#| fig-cap: "Departure Times for Overnight Trips"
+# Plot departure times for overnight trips
+
+
+# --- Convert to hour of day (float) ---
+linked_trips = linked_trips.with_columns([
+    (pl.col("depart_time").dt.hour() + pl.col("depart_time").dt.minute() / 60)
+        .alias("depart_hour_float"),
+    (pl.col("arrive_time").dt.hour() + pl.col("arrive_time").dt.minute() / 60)
+        .alias("arrive_hour_float"),
+])
+
+
+# Add arrival hour column
+overnight_departures = linked_trips.filter(
+    (pl.col("d_purpose_category") == 12) & (pl.col("linked_trip_weight") > 0)
+)
+
+# Create figure with overlaid histograms
+fig = go.Figure()
+
+fig.add_trace(go.Histogram(
+    x=overnight_departures["depart_hour_float"],
+    y=overnight_departures["linked_trip_weight"],
+    histfunc="sum",
+    nbinsx=24,
+    name="Departure",
+    opacity=0.7,
+))
+
+fig.add_trace(go.Histogram(
+    x=overnight_departures["arrive_hour_float"],
+    y=overnight_departures["linked_trip_weight"],
+    histfunc="sum",
+    nbinsx=24,
+    name="Arrival",
+    opacity=0.7,
+))
+
+fig.update_layout(
+    title="Departure and Arrival Times for Overnight Trips",
+    xaxis_title="Hour of Day",
+    yaxis_title="Weighted Count",
+    barmode="overlay",
+    xaxis=dict(
+        tickmode="array",
+        tickvals=list(range(0, 25, 3)),
+        ticktext=[f"{h:02d}:00" for h in range(0, 25, 3)]
+    )
+)
+
+fig.show()
+```
+
+
+## Check overnight location against home location
+```{python}
+#| label: overnight-home
+#| fig-cap: "Overnight Trip Locations vs. Home Locations"
+
+nothomes = (
+    overnights
+    .select([
+        "linked_trip_id",
+        "hh_id",
+        "d_lat",
+        "d_lon",
+    ])
+    # Join with household home locations
+    .join(
+        households_df.select([
+            "hh_id",
+            "home_lat",
+            "home_lon",
+        ]),
+        on="hh_id",
+        how="left",
+    )
+    # Calculate distance from home
+    .with_columns([
+        helpers.expr_haversine(
+            pl.col("d_lat"),
+            pl.col("d_lon"),
+            pl.col("home_lat"),
+            pl.col("home_lon"),
+        ).alias("distance_from_home"),
+    ])
+    # Confirm suspicion that "overnight" means they stayed somewhere
+    .filter(
+        pl.col("distance_from_home") < 100  # Meters
+    )
+)
+
+print(f"Number of overnight trips within 100 meters of home: {nothomes.shape[0]} out of {overnights.shape[0]} total overnight trips.")
+
+```
+
+
+## Check if overnight trip is the last trip of the day
+```{python}
+#| label: overnight-last
+#| fig-cap: "Overnight Trip as Last Trip of the Day"
+
+overnight_last = (
+    overnights_complete
+    .join(
+        linked_trips.select([
+            "day_id",
+            "arrive_time",
+        ]).group_by("day_id").agg([
+            pl.col("arrive_time").max().alias("max_arrive_time"),
+        ]),
+        on="day_id",
+        how="left",
+    )
+    .with_columns([
+        (pl.col("arrive_time") == pl.col("max_arrive_time"))
+        .alias("is_last_trip"),
+    ])
+)
+num_last_trips = overnight_last.filter(
+    pl.col("is_last_trip") == True
+).shape[0]
+
+print(f"Number of overnight trips that are the last trip of the day: {num_last_trips} out of {overnights_complete.shape[0]} total complete overnight trips.")
+
+```
+This seems to refute that, it seems that overnight purposes are just misused for other trip purposes?
+
+# Overall Departure Time Distribution
+```{python}
+#| label: depart-time
+#| fig-cap: "Weighted Departure Time Density (Ignoring Date)"
+
+# Plot weighted distribution of departure times for all weighted trips as gut check
+fig = px.histogram(
+    linked_trips,
+    x="depart_hour_float",
+    nbins=48,
+    histfunc="sum",
+    y="linked_trip_weight",
+    title="Weighted Departure Time Distribution",
+    labels={
+        "depart_hour_float": "Hour of Day",
+        "linked_trip_weight": "Weighted Count",
+    },
+)
+
+fig.update_layout(
+    xaxis=dict(
+        tickmode="array",
+        tickvals=list(range(0, 25, 3)),
+        ticktext=[f"{h:02d}:00" for h in range(0, 25, 3)]
+    )
+)
+fig.show()
+```
+
+# Transit Trip Analysis
+
+## Transit Trip Summary by County
+```{python}
+#| label: transit-summary
+#| fig-cap: "Transit Trips by Origin-Destination County"
+
+# Filter to transit trips only (weights already joined in pipeline)
+linked_transit_trips = linked_trips.filter(
+    pl.col("mode_type").is_in(TRANSIT_MODES)
+)
+
+# Join o/d_county from unlinked trips
+linked_transit_trips = linked_transit_trips.join(
+    unlinked_trips.group_by("linked_trip_id").agg([
+        pl.col("o_county").first().alias("o_county"),
+        pl.col("d_county").first().alias("d_county"),
+    ]),
+    on="linked_trip_id",
+    how="left",
+)
+
+# Calculate transit boardings per linked trip and join back to linked trips
+total_boardings = (
+    unlinked_trips.filter(pl.col("mode_type").is_in(TRANSIT_MODES))
+    .group_by("linked_trip_id")
+    .agg(pl.count("trip_id").alias("boardings"))
+)
+
+# Join back to linked trips
+linked_transit_trips = linked_transit_trips.join(
+    total_boardings,
+    on="linked_trip_id",
+    how="left",
+)
+
+# Summarize total transit trips by origin and destination county
+transit_summary = (
+    linked_transit_trips
+    .group_by(["o_county", "d_county"])
+    .agg(
+        pl.col("linked_trip_weight").sum().alias("total_weighted_transit_trips")
+    )
+    .with_columns(
+        pl.col("o_county").cast(pl.Utf8).replace(COUNTY_NAMES).alias("o_county_name"),
+        pl.col("d_county").cast(pl.Utf8).replace(COUNTY_NAMES).alias("d_county_name"),
+    )
+    .pivot(
+        values="total_weighted_transit_trips",
+        index="o_county_name",
+        on="d_county_name",
+    )
+    .fill_null(0)
+)
+
+# Add row totals
+transit_summary = transit_summary.with_columns(
+    pl.sum_horizontal(
+        [col for col in transit_summary.columns if col != "o_county_name"]
+    ).alias("Total")
+)
+
+# Add column totals
+total_row = transit_summary.select(
+    [
+        pl.lit("Total").alias("o_county_name"),
+        *[
+            pl.col(col).sum().alias(col)
+            for col in transit_summary.columns
+            if col != "o_county_name"
+        ],
+    ]
+)
+transit_summary = pl.concat([transit_summary, total_row], how="vertical")
+
+# Display summary
+print(transit_summary)
+```
+
+## Transit Trip Statistics
+```{python}
+#| label: transit-stats
+# Calculate overall total
+total_weighted_transit_trips = linked_transit_trips.select(
+    pl.col("linked_trip_weight").sum().alias("total_weighted_transit_trips")
+).item()
+
+# Calculate average boardings
+total_boardings_weighted = linked_transit_trips.select(
+    (pl.col("boardings") * pl.col("linked_trip_weight")).sum()
+).item()
+
+avg_weighted_boardings_per_trip = (
+    total_boardings_weighted / total_weighted_transit_trips
+)
+
+# Compare to expected ~ 971,588
+expected = 971588
+pct_chg = (total_weighted_transit_trips - expected) / expected * 100
+
+print("=" * 60)
+print("Transit Trip Summary")
+print("=" * 60)
+print(f"Total weighted transit trips: {total_weighted_transit_trips:,.0f}")
+print(f"Expected: ~{expected:,}")
+print(f"Difference: {pct_chg:.2f}%")
+print(f"Average boardings per trip: {avg_weighted_boardings_per_trip:.2f}")
+print("=" * 60)
+```
+
+## Transit Mode Distribution
+```{python}
+#| label: transit-modes
+#| fig-cap: "Transit Trips by Mode Type"
+
+# Collapse the mode_# columns into a new mode column, drop 995s
+# todo
+
+# Get transit trips by specific mode
+transit_by_mode = (
+    linked_transit_trips
+    .group_by("mode_type")
+    .agg([
+        pl.len().alias("count"),
+        pl.col("linked_trip_weight").sum().alias("weighted_count"),
+    ])
+    .with_columns(
+        pl.col("mode_type").cast(pl.Utf8).replace(MODE_TYPE_MAP).alias("mode"),
+    )
+    .sort("weighted_count", descending=True)
+)
+
+# Plot
+fig = px.bar(
+    transit_by_mode,
+    x="mode",
+    y="weighted_count",
+    title="Transit Trips by Mode Type",
+    labels={"mode": "Mode", "weighted_count": "Weighted Trip Count"},
+    text="weighted_count",
+)
+fig.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
+fig.show()
+
+print(transit_by_mode)
+```
