@@ -43,7 +43,7 @@ packages = ["src/pipeline", "src/data_canon", "src/processing", "src/utils", "ex
 [tool.ruff]
 line-length = 100
 lint.select = ["ALL"]
-lint.pylint.max-args = 8  # Increase from default of 5 to accomodate 6 canon tables
+lint.pylint.max-args = 12  # Increase to 12=5+7 to accomodate 7 canon tables + 5 default args limit
 lint.ignore = [
     "COM812",  # Trailing comma - conflicts with formatter
     "D203",    # Use D211 (no blank line before class)

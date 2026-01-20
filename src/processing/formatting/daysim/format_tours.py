@@ -196,7 +196,7 @@ def format_tours(
         fhtindx1=pl.lit(0),
         fhtindx2=pl.lit(0),
         # Expansion factor
-        toexpfac=pl.col("toexpfac").fill_null(-1),
+        toexpfac=pl.col("toexpfac").fill_null(0),
     )
 
     # Select DaySim tour fields

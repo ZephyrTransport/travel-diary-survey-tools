@@ -47,6 +47,7 @@ class HouseholdModel(BaseModel):
     home_maz: int | None = step_field(ge=1, required_in_steps=["format_daysim"])
     residence_rent_own: ResidenceRentOwn = step_field(required_in_steps=["format_daysim"])
     residence_type: ResidenceType = step_field(required_in_steps=["format_daysim"])
+    hh_weight: float | None = step_field(ge=0, required_in_steps=[])
 
 
 class PersonModel(BaseModel):
@@ -91,6 +92,7 @@ class PersonModel(BaseModel):
     )
     is_proxy: bool = step_field(required_in_steps=["format_daysim"])
     num_days_complete: int = step_field(ge=0, default=0)
+    person_weight: float | None = step_field(ge=0, required_in_steps=[])
 
 
 class PersonDayModel(BaseModel):
@@ -104,6 +106,7 @@ class PersonDayModel(BaseModel):
     day_id: int = step_field(ge=1, unique=True)
     hh_id: int = step_field(ge=1, fk_to="households.hh_id")
     travel_dow: TravelDow
+    day_weight: float | None = step_field(ge=0, required_in_steps=[])
 
 
 class UnlinkedTripModel(BaseModel):
@@ -150,6 +153,7 @@ class UnlinkedTripModel(BaseModel):
     depart_time: datetime | None = step_field(required_in_steps=["link_trips", "extract_tours"])
     arrive_time: datetime | None = step_field(required_in_steps=["link_trips", "extract_tours"])
     num_travelers: int = step_field(ge=1)
+    unlinked_trip_weight: float | None = step_field(ge=0, required_in_steps=[])
 
     # You can add custom row-level validators here
     # Don't confuse with the constom DataFrame-level validators elsewhere
@@ -232,6 +236,7 @@ class LinkedTripModel(BaseModel):
     depart_time: datetime = step_field(required_in_steps=["detect_joint_trips"])
     arrive_time: datetime = step_field(required_in_steps=["detect_joint_trips"])
     tour_direction: TourDirection = step_field(required_in_steps=["format_daysim"])
+    linked_trip_weight: float | None = step_field(ge=0, required_in_steps=[])
 
 
 class TourModel(BaseModel):
@@ -293,6 +298,7 @@ class TourModel(BaseModel):
     outbound_mode: ModeType | None = step_field()
     inbound_mode: ModeType | None = step_field()
     num_travelers: int = step_field(ge=1, required_in_steps=[], default=1)
+    tour_weight: float | None = step_field(ge=0)
 
     @model_validator(mode="after")
     def validate_complete_tours(self) -> "TourModel":

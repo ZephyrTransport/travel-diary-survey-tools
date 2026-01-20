@@ -5,6 +5,7 @@
 
 # Define directory shorthands
 survey_dir: "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Full Weighted 2023 Dataset/WeightedDataset_02212025"
+weights_dir: "X:/survey_repos/ProjRoot_Mon-Thu20251201/WgtRoot_Mon-Thu20251201_nocommutemode/output/"
 output_dir: "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Processed/pipeline_20251230"
 TM1_shapefile_dir: "E:/GitHub/travel-model-one/utilities/geographies"
 TM2_shapefile_dir: "E:/GitHub/TM2/tm2py-utils/tm2py_utils/inputs/maz_taz/shapefiles"
@@ -81,6 +82,24 @@ steps:
         - zone_name: "TAZ1454"
           shapefile: "{{ TM1_shapefile_dir }}/bayarea_rtaz1454_rev1_WGS84.shp"
           zone_id_field: "TAZ1454"
+
+  - name: add_existing_weights
+    validate_input: false
+    cache: false
+    params:
+      derive_missing_weights: true
+      weights:
+        household_weights:
+          weight_path: "{{ weights_dir }}/hh_weights.csv"
+        person_weights:
+          weight_path: "{{ weights_dir }}/person_weights.csv"
+        day_weights:
+          weight_path: "{{ weights_dir }}/day_weights.csv"
+        unlinked_trip_weights:
+          weight_id_col: "trip_id"  # Weight file uses 'trip_id' instead of canonical 'unlinked_trip_id'
+          weight_col: "trip_weight"  # Weight file uses 'trip_weight' instead of canonical 'unlinked_trip_weight'
+          weight_path: "{{ weights_dir }}/trip_weights.csv"
+
   # - name: final_check
   #   validate_input: true
 

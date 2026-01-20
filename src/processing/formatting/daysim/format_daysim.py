@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 @step()
-def format_daysim(  # noqa: PLR0913
+def format_daysim(
     persons: pl.DataFrame,
     households: pl.DataFrame,
     unlinked_trips: pl.DataFrame,

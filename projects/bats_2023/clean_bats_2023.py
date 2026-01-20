@@ -5,7 +5,6 @@ import logging
 import polars as pl
 
 from data_canon.codebook.households import ResidenceRentOwn, ResidenceType
-from data_canon.models.survey import PersonDayModel
 from pipeline.decoration import step
 from utils.helpers import add_time_columns, expr_haversine
 
@@ -102,22 +101,26 @@ def clean_2023_bats(
 
     # Get travel_dow from other household members' days
     days_for_dow = (
-        days.select(["hh_id", "travel_dow"])
+        days.select(["hh_id", "travel_dow", "day_num"])
         .filter(pl.col("hh_id").is_in(persons_without_days["hh_id"].unique().implode()))
         .unique()
     )
+
+    # Which day columns to include
+    day_cols = ["hh_id", "person_id", "day_id", "travel_dow", "day_num"]
 
     # Create a default day for each person without days
     dummy_days = (
         persons_without_days.join(days_for_dow, on="hh_id", how="left")
         .with_columns(
-            # Construct default day_id (person_id * 100 + travel_dow)
-            (pl.col("person_id") * 100 + pl.col("travel_dow")).alias("day_id")
+            # Construct default day_id (person_id * 100 + day_num)
+            (pl.col("person_id") * 100 + pl.col("day_num")).alias("day_id")
         )
-        .select(PersonDayModel.model_json_schema().get("properties", {}).keys())
+        .select(day_cols)
     )
     # Add dummy days to days dataframe
-    days = pl.concat([days, dummy_days], how="diagonal")
+    _days = days.clone()
+    days = pl.concat([_days, dummy_days], how="diagonal")
 
     # Move residence type and residence rent/own from persons to households
     # Extract household-level attributes from persons table

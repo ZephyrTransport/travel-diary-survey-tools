@@ -14,142 +14,148 @@ This matrix shows which columns are required in which pipeline steps.
 - **REQ_CHILD**: Parent record must have at least one child record
 - **≥ / ≤ / > / <**: Numeric range constraints
 
-| Table | Field | Type | Constraints | load_data | clean_2023_bats | link_trips | detect_joint_trips | extract_tours | add_zone_ids | format_daysim | write_data |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| **households** | `hh_id` | int | ≥ 1, UNIQUE |  |  |  |  | ✓ |  |  |  |
-|  | `home_lat` | float | ≥ -90, ≤ 90 |  |  |  |  | ✓ |  |  |  |
-|  | `home_lon` | float | ≥ -180, ≤ 180 |  |  |  |  | ✓ |  |  |  |
-|  | `home_taz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
-|  | `home_maz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
-|  | `residence_rent_own` | ResidenceRentOwn |  |  |  |  |  |  |  | ✓ |  |
-|  | `residence_type` | ResidenceType |  |  |  |  |  |  |  | ✓ |  |
-| **persons** | `person_id` | int | ≥ 1, UNIQUE |  |  |  |  | ✓ |  |  |  |
-|  | `hh_id` | int | ≥ 1, FK → `households.hh_id`, REQ_CHILD |  |  |  |  |  |  |  |  |
-|  | `person_num` | int | ≥ 1 |  |  |  |  |  |  | ✓ |  |
-|  | `age` | AgeCategory |  |  |  |  |  | ✓ |  |  |  |
-|  | `gender` | Gender |  |  |  |  |  |  |  |  |  |
-|  | `work_lat` | float or None | ≥ -90, ≤ 90 |  |  |  |  | ✓ |  |  |  |
-|  | `work_lon` | float or None | ≥ -180, ≤ 180 |  |  |  |  | ✓ |  |  |  |
-|  | `school_lat` | float or None | ≥ -90, ≤ 90 |  |  |  |  | ✓ |  |  |  |
-|  | `school_lon` | float or None | ≥ -180, ≤ 180 |  |  |  |  | ✓ |  |  |  |
-|  | `work_taz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
-|  | `school_taz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
-|  | `work_maz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
-|  | `school_maz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
-|  | `person_type` | PersonType |  |  |  |  |  |  |  |  |  |
-|  | `job_type` | data_canon.codebook.persons.JobType or None |  |  |  |  |  |  |  |  |  |
-|  | `employment` | Employment |  |  |  |  |  | ✓ |  |  |  |
-|  | `student` | Student |  |  |  |  |  | ✓ |  |  |  |
-|  | `school_type` | data_canon.codebook.persons.SchoolType or None |  |  |  |  |  | ✓ |  |  |  |
-|  | `work_park` | data_canon.codebook.persons.WorkParking or None |  |  |  |  |  |  |  | ✓ |  |
-|  | `work_mode` | data_canon.codebook.trips.Mode or None |  |  |  |  |  |  |  | ✓ |  |
-|  | `commute_subsidy_use_3` | data_canon.codebook.generic.BooleanYesNo or None |  |  |  |  |  |  |  |  |  |
-|  | `commute_subsidy_use_4` | data_canon.codebook.generic.BooleanYesNo or None |  |  |  |  |  |  |  |  |  |
-|  | `is_proxy` | bool |  |  |  |  |  |  |  | ✓ |  |
-|  | `num_days_complete` | int | ≥ 0 |  |  |  |  |  |  |  |  |
-| **days** | `person_id` | int | ≥ 1, FK → `persons.person_id`, REQ_CHILD |  |  |  |  |  |  |  |  |
-|  | `day_id` | int | ≥ 1, UNIQUE |  |  |  |  |  |  |  |  |
-|  | `hh_id` | int | ≥ 1, FK → `households.hh_id` |  |  |  |  |  |  |  |  |
-|  | `travel_dow` | TravelDow |  |  |  |  |  |  |  |  |  |
-| **unlinked_trips** | `unlinked_trip_id` | int | ≥ 1, UNIQUE |  |  |  |  |  |  |  |  |
-|  | `day_id` | int | ≥ 1, FK → `days.day_id` |  |  |  |  |  |  |  |  |
-|  | `person_id` | int | ≥ 1, FK → `persons.person_id` |  |  |  |  |  |  |  |  |
-|  | `hh_id` | int | ≥ 1, FK → `households.hh_id` |  |  |  |  |  |  |  |  |
-|  | `linked_trip_id` | int | ≥ 1, FK → `linked_trips.linked_trip_id` |  |  |  |  | ✓ |  |  |  |
-|  | `tour_id` | int | ≥ 1, FK → `tours.tour_id` |  |  |  |  |  |  | ✓ |  |
-|  | `depart_date` | datetime |  |  |  |  |  |  |  |  |  |
-|  | `depart_hour` | int | ≥ 0, ≤ 23 |  |  |  |  |  |  |  |  |
-|  | `depart_minute` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |
-|  | `depart_seconds` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |
-|  | `arrive_date` | datetime |  |  |  |  |  |  |  |  |  |
-|  | `arrive_hour` | int | ≥ 0, ≤ 23 |  |  |  |  |  |  |  |  |
-|  | `arrive_minute` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |
-|  | `arrive_seconds` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |
-|  | `o_lon` | float | ≥ -180, ≤ 180 |  |  | ✓ |  |  |  |  |  |
-|  | `o_lat` | float | ≥ -90, ≤ 90 |  |  | ✓ |  |  |  |  |  |
-|  | `d_lon` | float | ≥ -180, ≤ 180 |  |  | ✓ |  |  |  |  |  |
-|  | `d_lat` | float | ≥ -90, ≤ 90 |  |  | ✓ |  |  |  |  |  |
-|  | `o_purpose` | Purpose |  |  |  |  |  |  |  |  |  |
-|  | `d_purpose` | Purpose |  |  |  |  |  |  |  |  |  |
-|  | `o_purpose_category` | PurposeCategory |  |  |  | ✓ |  |  |  |  |  |
-|  | `d_purpose_category` | PurposeCategory |  |  |  | ✓ |  |  |  |  |  |
-|  | `mode_type` | ModeType |  |  |  | ✓ |  |  |  |  |  |
-|  | `mode_1` | data_canon.codebook.trips.Mode or None |  |  |  |  |  |  |  |  |  |
-|  | `mode_2` | data_canon.codebook.trips.Mode or None |  |  |  |  |  |  |  |  |  |
-|  | `mode_3` | data_canon.codebook.trips.Mode or None |  |  |  |  |  |  |  |  |  |
-|  | `mode_4` | data_canon.codebook.trips.Mode or None |  |  |  |  |  |  |  |  |  |
-|  | `duration_minutes` | float | ≥ 0 |  |  |  |  |  |  |  |  |
-|  | `distance_meters` | float | ≥ 0 |  |  |  |  |  |  |  |  |
-|  | `depart_time` | datetime.datetime or None |  |  |  | ✓ |  | ✓ |  |  |  |
-|  | `arrive_time` | datetime.datetime or None |  |  |  | ✓ |  | ✓ |  |  |  |
-|  | `num_travelers` | int | ≥ 1 |  |  |  |  |  |  |  |  |
-| **linked_trips** | `day_id` | int | ≥ 1, FK → `days.day_id` |  |  |  |  | ✓ |  |  |  |
-|  | `person_id` | int | ≥ 1, FK → `persons.person_id` |  |  |  |  |  |  |  |  |
-|  | `hh_id` | int | ≥ 1, FK → `households.hh_id` |  |  |  |  |  |  |  |  |
-|  | `linked_trip_id` | int | ≥ 1, UNIQUE |  |  |  |  |  |  |  |  |
-|  | `joint_trip_id` | int or None | ≥ 1, FK → `joint_trips.joint_trip_id` |  |  |  |  | ✓ |  |  |  |
-|  | `tour_id` | int | ≥ 1, FK → `tours.tour_id` |  |  |  |  |  |  | ✓ |  |
-|  | `travel_dow` | TravelDow |  |  |  |  |  | ✓ |  |  |  |
-|  | `depart_date` | datetime |  |  |  |  |  |  |  |  |  |
-|  | `depart_hour` | int | ≥ 0, ≤ 23 |  |  |  |  |  |  |  |  |
-|  | `depart_minute` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |
-|  | `depart_seconds` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |
-|  | `arrive_date` | datetime |  |  |  |  |  |  |  |  |  |
-|  | `arrive_hour` | int | ≥ 0, ≤ 23 |  |  |  |  |  |  |  |  |
-|  | `arrive_minute` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |
-|  | `arrive_seconds` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |
-|  | `o_purpose` | Purpose |  |  |  |  |  |  |  |  |  |
-|  | `o_purpose_category` | int |  |  |  |  |  |  |  |  |  |
-|  | `o_lat` | float | ≥ -90, ≤ 90 |  |  |  | ✓ |  |  |  |  |
-|  | `o_lon` | float | ≥ -180, ≤ 180 |  |  |  | ✓ |  |  |  |  |
-|  | `d_purpose` | Purpose |  |  |  |  |  |  |  |  |  |
-|  | `d_purpose_category` | int |  |  |  |  |  | ✓ |  |  |  |
-|  | `d_lat` | float | ≥ -90, ≤ 90 |  |  |  | ✓ |  |  |  |  |
-|  | `d_lon` | float | ≥ -180, ≤ 180 |  |  |  | ✓ |  |  |  |  |
-|  | `o_taz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
-|  | `d_taz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
-|  | `o_maz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
-|  | `d_maz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
-|  | `mode_type` | ModeType |  |  |  |  |  | ✓ |  |  |  |
-|  | `driver` | Driver |  |  |  | ✓ |  |  |  | ✓ |  |
-|  | `num_travelers` | int | ≥ 1 |  |  |  |  |  |  |  |  |
-|  | `access_mode` | data_canon.codebook.trips.AccessEgressMode or None |  |  |  |  |  |  |  | ✓ |  |
-|  | `egress_mode` | data_canon.codebook.trips.AccessEgressMode or None |  |  |  |  |  |  |  | ✓ |  |
-|  | `duration_minutes` | float | ≥ 0 |  |  |  |  |  |  |  |  |
-|  | `distance_meters` | float | ≥ 0 |  |  |  |  |  |  |  |  |
-|  | `depart_time` | datetime |  |  |  |  | ✓ |  |  |  |  |
-|  | `arrive_time` | datetime |  |  |  |  | ✓ |  |  |  |  |
-|  | `tour_direction` | TourDirection |  |  |  |  |  |  |  | ✓ |  |
-| **tours** | `tour_id` | int | ≥ 1, UNIQUE |  |  |  |  |  |  |  |  |
-|  | `person_id` | int | ≥ 1, FK → `persons.person_id` |  |  |  |  |  |  |  |  |
-|  | `day_id` | int | ≥ 1, FK → `days.day_id` |  |  |  |  |  |  |  |  |
-|  | `tour_num` | int | ≥ 1 |  |  |  |  |  |  |  |  |
-|  | `subtour_num` | int | ≥ 0 |  |  |  |  |  |  |  |  |
-|  | `parent_tour_id` | int | ≥ 1, FK → `tours.tour_id` |  |  |  |  |  |  |  |  |
-|  | `joint_tour_id` | int or None | ≥ 1 |  |  |  |  |  |  |  |  |
-|  | `tour_purpose` | data_canon.codebook.trips.PurposeCategory or None |  |  |  |  |  |  |  |  |  |
-|  | `tour_category` | TourCategory |  |  |  |  |  |  |  |  |  |
-|  | `single_trip_tour` | bool |  |  |  |  |  |  |  |  |  |
-|  | `origin_depart_time` | datetime |  |  |  |  |  |  |  |  |  |
-|  | `origin_arrive_time` | datetime |  |  |  |  |  |  |  |  |  |
-|  | `dest_arrive_time` | datetime.datetime or None |  |  |  |  |  |  |  |  |  |
-|  | `dest_depart_time` | datetime.datetime or None |  |  |  |  |  |  |  |  |  |
-|  | `origin_linked_trip_id` | int | ≥ 1, FK → `linked_trips.linked_trip_id` |  |  |  |  |  |  | ✓ |  |
-|  | `dest_linked_trip_id` | int or None | ≥ 1, FK → `linked_trips.linked_trip_id` |  |  |  |  |  |  | ✓ |  |
-|  | `o_lat` | float | ≥ -90, ≤ 90 |  |  |  |  |  |  |  |  |
-|  | `o_lon` | float | ≥ -180, ≤ 180 |  |  |  |  |  |  |  |  |
-|  | `d_lat` | float | ≥ -90, ≤ 90 |  |  |  |  |  |  |  |  |
-|  | `d_lon` | float | ≥ -180, ≤ 180 |  |  |  |  |  |  |  |  |
-|  | `o_taz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
-|  | `d_taz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
-|  | `o_maz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
-|  | `d_maz` | int or None | ≥ 1 |  |  |  |  |  |  | ✓ |  |
-|  | `o_location_type` | LocationType |  |  |  |  |  |  |  |  |  |
-|  | `d_location_type` | LocationType |  |  |  |  |  |  |  |  |  |
-|  | `tour_mode` | ModeType |  |  |  |  |  |  |  |  |  |
-|  | `outbound_mode` | data_canon.codebook.trips.ModeType or None |  |  |  |  |  |  |  |  |  |
-|  | `inbound_mode` | data_canon.codebook.trips.ModeType or None |  |  |  |  |  |  |  |  |  |
-|  | `num_travelers` | int | ≥ 1 |  |  |  |  |  |  |  |  |
+| Table | Field | Type | Constraints | load_data | clean_2023_bats | link_trips | detect_joint_trips | extract_tours | add_zone_ids | add_existing_weights | format_daysim | write_data |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| **households** | `hh_id` | int | ≥ 1, UNIQUE |  |  |  |  | ✓ |  |  |  |  |
+|  | `home_lat` | float | ≥ -90, ≤ 90 |  |  |  |  | ✓ |  |  |  |  |
+|  | `home_lon` | float | ≥ -180, ≤ 180 |  |  |  |  | ✓ |  |  |  |  |
+|  | `home_taz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
+|  | `home_maz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
+|  | `residence_rent_own` | ResidenceRentOwn |  |  |  |  |  |  |  |  | ✓ |  |
+|  | `residence_type` | ResidenceType |  |  |  |  |  |  |  |  | ✓ |  |
+|  | `hh_weight` | float or None | ≥ 0 |  |  |  |  |  |  |  |  |  |
+| **persons** | `person_id` | int | ≥ 1, UNIQUE |  |  |  |  | ✓ |  |  |  |  |
+|  | `hh_id` | int | ≥ 1, FK → `households.hh_id`, REQ_CHILD |  |  |  |  |  |  |  |  |  |
+|  | `person_num` | int | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
+|  | `age` | AgeCategory |  |  |  |  |  | ✓ |  |  |  |  |
+|  | `gender` | Gender |  |  |  |  |  |  |  |  |  |  |
+|  | `work_lat` | float or None | ≥ -90, ≤ 90 |  |  |  |  | ✓ |  |  |  |  |
+|  | `work_lon` | float or None | ≥ -180, ≤ 180 |  |  |  |  | ✓ |  |  |  |  |
+|  | `school_lat` | float or None | ≥ -90, ≤ 90 |  |  |  |  | ✓ |  |  |  |  |
+|  | `school_lon` | float or None | ≥ -180, ≤ 180 |  |  |  |  | ✓ |  |  |  |  |
+|  | `work_taz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
+|  | `school_taz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
+|  | `work_maz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
+|  | `school_maz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
+|  | `person_type` | PersonType |  |  |  |  |  |  |  |  |  |  |
+|  | `job_type` | data_canon.codebook.persons.JobType or None |  |  |  |  |  |  |  |  |  |  |
+|  | `employment` | Employment |  |  |  |  |  | ✓ |  |  |  |  |
+|  | `student` | Student |  |  |  |  |  | ✓ |  |  |  |  |
+|  | `school_type` | data_canon.codebook.persons.SchoolType or None |  |  |  |  |  | ✓ |  |  |  |  |
+|  | `work_park` | data_canon.codebook.persons.WorkParking or None |  |  |  |  |  |  |  |  | ✓ |  |
+|  | `work_mode` | data_canon.codebook.trips.Mode or None |  |  |  |  |  |  |  |  | ✓ |  |
+|  | `commute_subsidy_use_3` | data_canon.codebook.generic.BooleanYesNo or None |  |  |  |  |  |  |  |  |  |  |
+|  | `commute_subsidy_use_4` | data_canon.codebook.generic.BooleanYesNo or None |  |  |  |  |  |  |  |  |  |  |
+|  | `is_proxy` | bool |  |  |  |  |  |  |  |  | ✓ |  |
+|  | `num_days_complete` | int | ≥ 0 |  |  |  |  |  |  |  |  |  |
+|  | `person_weight` | float or None | ≥ 0 |  |  |  |  |  |  |  |  |  |
+| **days** | `person_id` | int | ≥ 1, FK → `persons.person_id`, REQ_CHILD |  |  |  |  |  |  |  |  |  |
+|  | `day_id` | int | ≥ 1, UNIQUE |  |  |  |  |  |  |  |  |  |
+|  | `hh_id` | int | ≥ 1, FK → `households.hh_id` |  |  |  |  |  |  |  |  |  |
+|  | `travel_dow` | TravelDow |  |  |  |  |  |  |  |  |  |  |
+|  | `day_weight` | float or None | ≥ 0 |  |  |  |  |  |  |  |  |  |
+| **unlinked_trips** | `unlinked_trip_id` | int | ≥ 1, UNIQUE |  |  |  |  |  |  |  |  |  |
+|  | `day_id` | int | ≥ 1, FK → `days.day_id` |  |  |  |  |  |  |  |  |  |
+|  | `person_id` | int | ≥ 1, FK → `persons.person_id` |  |  |  |  |  |  |  |  |  |
+|  | `hh_id` | int | ≥ 1, FK → `households.hh_id` |  |  |  |  |  |  |  |  |  |
+|  | `linked_trip_id` | int | ≥ 1, FK → `linked_trips.linked_trip_id` |  |  |  |  | ✓ |  |  |  |  |
+|  | `tour_id` | int | ≥ 1, FK → `tours.tour_id` |  |  |  |  |  |  |  | ✓ |  |
+|  | `depart_date` | datetime |  |  |  |  |  |  |  |  |  |  |
+|  | `depart_hour` | int | ≥ 0, ≤ 23 |  |  |  |  |  |  |  |  |  |
+|  | `depart_minute` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |  |
+|  | `depart_seconds` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |  |
+|  | `arrive_date` | datetime |  |  |  |  |  |  |  |  |  |  |
+|  | `arrive_hour` | int | ≥ 0, ≤ 23 |  |  |  |  |  |  |  |  |  |
+|  | `arrive_minute` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |  |
+|  | `arrive_seconds` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |  |
+|  | `o_lon` | float | ≥ -180, ≤ 180 |  |  | ✓ |  |  |  |  |  |  |
+|  | `o_lat` | float | ≥ -90, ≤ 90 |  |  | ✓ |  |  |  |  |  |  |
+|  | `d_lon` | float | ≥ -180, ≤ 180 |  |  | ✓ |  |  |  |  |  |  |
+|  | `d_lat` | float | ≥ -90, ≤ 90 |  |  | ✓ |  |  |  |  |  |  |
+|  | `o_purpose` | Purpose |  |  |  |  |  |  |  |  |  |  |
+|  | `d_purpose` | Purpose |  |  |  |  |  |  |  |  |  |  |
+|  | `o_purpose_category` | PurposeCategory |  |  |  | ✓ |  |  |  |  |  |  |
+|  | `d_purpose_category` | PurposeCategory |  |  |  | ✓ |  |  |  |  |  |  |
+|  | `mode_type` | ModeType |  |  |  | ✓ |  |  |  |  |  |  |
+|  | `mode_1` | data_canon.codebook.trips.Mode or None |  |  |  |  |  |  |  |  |  |  |
+|  | `mode_2` | data_canon.codebook.trips.Mode or None |  |  |  |  |  |  |  |  |  |  |
+|  | `mode_3` | data_canon.codebook.trips.Mode or None |  |  |  |  |  |  |  |  |  |  |
+|  | `mode_4` | data_canon.codebook.trips.Mode or None |  |  |  |  |  |  |  |  |  |  |
+|  | `duration_minutes` | float | ≥ 0 |  |  |  |  |  |  |  |  |  |
+|  | `distance_meters` | float | ≥ 0 |  |  |  |  |  |  |  |  |  |
+|  | `depart_time` | datetime.datetime or None |  |  |  | ✓ |  | ✓ |  |  |  |  |
+|  | `arrive_time` | datetime.datetime or None |  |  |  | ✓ |  | ✓ |  |  |  |  |
+|  | `num_travelers` | int | ≥ 1 |  |  |  |  |  |  |  |  |  |
+|  | `unlinked_trip_weight` | float or None | ≥ 0 |  |  |  |  |  |  |  |  |  |
+| **linked_trips** | `day_id` | int | ≥ 1, FK → `days.day_id` |  |  |  |  | ✓ |  |  |  |  |
+|  | `person_id` | int | ≥ 1, FK → `persons.person_id` |  |  |  |  |  |  |  |  |  |
+|  | `hh_id` | int | ≥ 1, FK → `households.hh_id` |  |  |  |  |  |  |  |  |  |
+|  | `linked_trip_id` | int | ≥ 1, UNIQUE |  |  |  |  |  |  |  |  |  |
+|  | `joint_trip_id` | int or None | ≥ 1, FK → `joint_trips.joint_trip_id` |  |  |  |  | ✓ |  |  |  |  |
+|  | `tour_id` | int | ≥ 1, FK → `tours.tour_id` |  |  |  |  |  |  |  | ✓ |  |
+|  | `travel_dow` | TravelDow |  |  |  |  |  | ✓ |  |  |  |  |
+|  | `depart_date` | datetime |  |  |  |  |  |  |  |  |  |  |
+|  | `depart_hour` | int | ≥ 0, ≤ 23 |  |  |  |  |  |  |  |  |  |
+|  | `depart_minute` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |  |
+|  | `depart_seconds` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |  |
+|  | `arrive_date` | datetime |  |  |  |  |  |  |  |  |  |  |
+|  | `arrive_hour` | int | ≥ 0, ≤ 23 |  |  |  |  |  |  |  |  |  |
+|  | `arrive_minute` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |  |
+|  | `arrive_seconds` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |  |
+|  | `o_purpose` | Purpose |  |  |  |  |  |  |  |  |  |  |
+|  | `o_purpose_category` | int |  |  |  |  |  |  |  |  |  |  |
+|  | `o_lat` | float | ≥ -90, ≤ 90 |  |  |  | ✓ |  |  |  |  |  |
+|  | `o_lon` | float | ≥ -180, ≤ 180 |  |  |  | ✓ |  |  |  |  |  |
+|  | `d_purpose` | Purpose |  |  |  |  |  |  |  |  |  |  |
+|  | `d_purpose_category` | int |  |  |  |  |  | ✓ |  |  |  |  |
+|  | `d_lat` | float | ≥ -90, ≤ 90 |  |  |  | ✓ |  |  |  |  |  |
+|  | `d_lon` | float | ≥ -180, ≤ 180 |  |  |  | ✓ |  |  |  |  |  |
+|  | `o_taz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
+|  | `d_taz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
+|  | `o_maz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
+|  | `d_maz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
+|  | `mode_type` | ModeType |  |  |  |  |  | ✓ |  |  |  |  |
+|  | `driver` | Driver |  |  |  | ✓ |  |  |  |  | ✓ |  |
+|  | `num_travelers` | int | ≥ 1 |  |  |  |  |  |  |  |  |  |
+|  | `access_mode` | data_canon.codebook.trips.AccessEgressMode or None |  |  |  |  |  |  |  |  | ✓ |  |
+|  | `egress_mode` | data_canon.codebook.trips.AccessEgressMode or None |  |  |  |  |  |  |  |  | ✓ |  |
+|  | `duration_minutes` | float | ≥ 0 |  |  |  |  |  |  |  |  |  |
+|  | `distance_meters` | float | ≥ 0 |  |  |  |  |  |  |  |  |  |
+|  | `depart_time` | datetime |  |  |  |  | ✓ |  |  |  |  |  |
+|  | `arrive_time` | datetime |  |  |  |  | ✓ |  |  |  |  |  |
+|  | `tour_direction` | TourDirection |  |  |  |  |  |  |  |  | ✓ |  |
+|  | `linked_trip_weight` | float or None | ≥ 0 |  |  |  |  |  |  |  |  |  |
+| **tours** | `tour_id` | int | ≥ 1, UNIQUE |  |  |  |  |  |  |  |  |  |
+|  | `person_id` | int | ≥ 1, FK → `persons.person_id` |  |  |  |  |  |  |  |  |  |
+|  | `day_id` | int | ≥ 1, FK → `days.day_id` |  |  |  |  |  |  |  |  |  |
+|  | `tour_num` | int | ≥ 1 |  |  |  |  |  |  |  |  |  |
+|  | `subtour_num` | int | ≥ 0 |  |  |  |  |  |  |  |  |  |
+|  | `parent_tour_id` | int | ≥ 1, FK → `tours.tour_id` |  |  |  |  |  |  |  |  |  |
+|  | `joint_tour_id` | int or None | ≥ 1 |  |  |  |  |  |  |  |  |  |
+|  | `tour_purpose` | data_canon.codebook.trips.PurposeCategory or None |  |  |  |  |  |  |  |  |  |  |
+|  | `tour_category` | TourCategory |  |  |  |  |  |  |  |  |  |  |
+|  | `single_trip_tour` | bool |  |  |  |  |  |  |  |  |  |  |
+|  | `origin_depart_time` | datetime |  |  |  |  |  |  |  |  |  |  |
+|  | `origin_arrive_time` | datetime |  |  |  |  |  |  |  |  |  |  |
+|  | `dest_arrive_time` | datetime.datetime or None |  |  |  |  |  |  |  |  |  |  |
+|  | `dest_depart_time` | datetime.datetime or None |  |  |  |  |  |  |  |  |  |  |
+|  | `origin_linked_trip_id` | int | ≥ 1, FK → `linked_trips.linked_trip_id` |  |  |  |  |  |  |  | ✓ |  |
+|  | `dest_linked_trip_id` | int or None | ≥ 1, FK → `linked_trips.linked_trip_id` |  |  |  |  |  |  |  | ✓ |  |
+|  | `o_lat` | float | ≥ -90, ≤ 90 |  |  |  |  |  |  |  |  |  |
+|  | `o_lon` | float | ≥ -180, ≤ 180 |  |  |  |  |  |  |  |  |  |
+|  | `d_lat` | float | ≥ -90, ≤ 90 |  |  |  |  |  |  |  |  |  |
+|  | `d_lon` | float | ≥ -180, ≤ 180 |  |  |  |  |  |  |  |  |  |
+|  | `o_taz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
+|  | `d_taz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
+|  | `o_maz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
+|  | `d_maz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
+|  | `o_location_type` | LocationType |  |  |  |  |  |  |  |  |  |  |
+|  | `d_location_type` | LocationType |  |  |  |  |  |  |  |  |  |  |
+|  | `tour_mode` | ModeType |  |  |  |  |  |  |  |  |  |  |
+|  | `outbound_mode` | data_canon.codebook.trips.ModeType or None |  |  |  |  |  |  |  |  |  |  |
+|  | `inbound_mode` | data_canon.codebook.trips.ModeType or None |  |  |  |  |  |  |  |  |  |  |
+|  | `num_travelers` | int | ≥ 1 |  |  |  |  |  |  |  |  |  |
+|  | `tour_weight` | float or None | ≥ 0 |  |  |  |  |  |  |  |  |  |
 
 
 # Codebook Enum Values
