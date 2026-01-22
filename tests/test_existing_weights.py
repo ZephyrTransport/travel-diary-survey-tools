@@ -104,6 +104,7 @@ class TestAddExistingWeights:
             "unlinked_trip_weights": {
                 "weight_path": str(weight_file),
                 "weight_col": "wt",
+                "keep_name": True,
             }
         }
 

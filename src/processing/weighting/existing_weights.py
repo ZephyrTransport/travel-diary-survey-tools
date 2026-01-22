@@ -64,6 +64,10 @@ class WeightConfig(BaseModel):
     weight_col: str | None = Field(
         default=None, description="Defaults to canonical weight column if not provided"
     )
+    keep_name: bool = Field(
+        default=False,
+        description="If True, keeps original weight_col name instead of renaming to canonical",
+    )
 
     @field_validator("config_key")
     @classmethod
@@ -107,6 +111,11 @@ class WeightConfig(BaseModel):
     def table_id_col(self) -> str:
         """Get the canonical table ID column."""
         return DEFAULT_WEIGHT_CONFIG_MAPPING[self.config_key][1]
+
+    @property
+    def canonical_weight_col(self) -> str:
+        """Get the canonical weight column name for this table."""
+        return DEFAULT_WEIGHT_CONFIG_MAPPING[self.config_key][2]
 
     def validate_columns(self, weight_df: pl.DataFrame, table_df: pl.DataFrame) -> None:
         """Validate that required columns exist in weight file and table.
@@ -231,7 +240,7 @@ def _derive_missing_weights(
 
 
 @step()
-def add_existing_weights(
+def add_existing_weights(  # noqa: C901, PLR0912
     weights: dict[str, WeightConfig | dict],
     derive_missing_weights: bool = False,
     households: pl.DataFrame | None = None,
@@ -259,8 +268,8 @@ def add_existing_weights(
     an error will be raised as this likely indicates a misconfiguration.
 
     Weight hierarchy logic:
-     - household_weight
-        - person_weight <- household_weight for each person in household
+     - hh_weight
+        - person_weight <- hh_weight for each person in household
             - day_weight <- person_weight for day for each person
                 - unlinked_trip_weight <- day_weight for each trip for each person-day
                     - linked_trip_weight <- Average weight of unlinked_trips
@@ -271,7 +280,7 @@ def add_existing_weights(
     all weights should actually be exactly same from household through tour.
 
     If sub-table weights do vary, a checksum can validate integrity:
-    - sum(person_weight) == sum(household_weight * num_persons)
+    - sum(person_weight) == sum(hh_weight * num_persons)
     - sum(day_weight) == sum(person_weight * num_complete_days)
     - sum(unlinked_trip_weight) == sum(day_weight * num_trips)
     - sum(linked_trip_weight) == sum(unlinked_trip_weight)
@@ -333,20 +342,39 @@ def add_existing_weights(
         logger.info("Loading weights from %s for %s", cfg.weight_path, table_name)
         weight_df = pl.read_csv(cfg.weight_path)
 
-        # Validate columns exist
+        # Validate columns exist before selecting
         cfg.validate_columns(weight_df, df)
 
-        # Join, handling potential ID column name mismatch
+        # Select only needed columns
+        weight_df = weight_df.select([cfg.weight_id_col, cfg.weight_col])
+
+        # Handle potential column name mismatches
+        rename_map = {}
+
+        # Rename weight file ID column to match table if needed
         if cfg.weight_id_col != cfg.table_id_col:
-            # Rename weight file ID column to match table
             if cfg.weight_id_col is None:
                 msg = f"weight_id_col should never be None due to model_validator for {table_name}"
                 raise ValueError(msg)
-            weight_df = weight_df.rename({cfg.weight_id_col: cfg.table_id_col})
+            rename_map[cfg.weight_id_col] = cfg.table_id_col
 
-        logger.info("Joined %s to %s on %s", cfg.weight_col, table_name, cfg.table_id_col)
+        # Rename weight column to canonical name if needed
+        if not cfg.keep_name and cfg.weight_col != cfg.canonical_weight_col:
+            if cfg.weight_col is None:
+                msg = f"weight_col should never be None due to model_validator for {table_name}"
+                raise ValueError(msg)
+            rename_map[cfg.weight_col] = cfg.canonical_weight_col
+
+        if rename_map:
+            weight_df = weight_df.rename(rename_map)
+
+        # Drop existing weight column if already present to avoid duplication
+        if cfg.canonical_weight_col in df.columns:
+            df = df.drop(cfg.canonical_weight_col)
+
+        logger.info("Joined %s to %s on %s", cfg.canonical_weight_col, table_name, cfg.table_id_col)
         tables[table_name] = df.join(weight_df, on=cfg.table_id_col, how="left")
-        has_weight[table_name] = cfg.weight_col
+        has_weight[table_name] = cfg.canonical_weight_col
 
     # Derive missing weights if requested
     if derive_missing_weights:
