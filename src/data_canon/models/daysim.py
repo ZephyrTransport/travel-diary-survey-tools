@@ -385,7 +385,7 @@ class LinkedTripDaysimModel(BaseModel):
     tour: int = Field(ge=1, le=99, description="The tour sequence within the person-day")
     half: int = Field(ge=1, le=2, description="The half tour")
     tseg: int = Field(ge=1, le=99, description="The trip sequence number within the half tour")
-    tsvid: int = Field(ge=1, le=99, description="Links to a travel survey trip ID")
+    tsvid: int = Field(ge=1, description="Links to a travel survey trip number")
     opurp: DaysimPurpose = Field(description="The purpose at the trip origin")
     dpurp: DaysimPurpose = Field(description="The purpose at the trip destination")
     oadtyp: int = Field(ge=1, le=6, description="Trip origin address type")

@@ -148,12 +148,7 @@ def add_test_taz_maz_ids(
     unlinked_trips: pl.DataFrame | None = None,
     linked_trips: pl.DataFrame | None = None,
     tours: pl.DataFrame | None = None,
-) -> tuple[
-    pl.DataFrame | None,
-    pl.DataFrame | None,
-    pl.DataFrame | None,
-    pl.DataFrame | None,
-]:
+) -> dict[str, pl.DataFrame]:
     """Add TAZ/MAZ IDs to dataframes using mock spatial join.
 
     Simulates project-specific spatial join step that assigns TAZ/MAZ IDs
@@ -208,31 +203,53 @@ def add_test_taz_maz_ids(
             ]
         )
 
-    # Assign TAZ/MAZ to households (home location) if provided
-    if households is not None:
-        households = assign_zone_ids(households, "home_lat", "home_lon", "home_taz", "home_maz")
+    result = {}
 
-    # Assign TAZ/MAZ to persons (work and school locations) if provided
-    if persons is not None:
-        persons = assign_zone_ids(persons, "work_lat", "work_lon", "work_taz", "work_maz")
-        persons = assign_zone_ids(persons, "school_lat", "school_lon", "school_taz", "school_maz")
+    # Define zone assignment mappings for each dataframe
+    zone_mappings = [
+        (households, "households", [("home_lat", "home_lon", "home_taz", "home_maz")]),
+        (
+            persons,
+            "persons",
+            [
+                ("work_lat", "work_lon", "work_taz", "work_maz"),
+                ("school_lat", "school_lon", "school_taz", "school_maz"),
+            ],
+        ),
+        (
+            unlinked_trips,
+            "unlinked_trips",
+            [
+                ("o_lat", "o_lon", "o_taz", "o_maz"),
+                ("d_lat", "d_lon", "d_taz", "d_maz"),
+            ],
+        ),
+        (
+            linked_trips,
+            "linked_trips",
+            [
+                ("o_lat", "o_lon", "o_taz", "o_maz"),
+                ("d_lat", "d_lon", "d_taz", "d_maz"),
+            ],
+        ),
+        (
+            tours,
+            "tours",
+            [
+                ("o_lat", "o_lon", "o_taz", "o_maz"),
+                ("d_lat", "d_lon", "d_taz", "d_maz"),
+            ],
+        ),
+    ]
 
-    # Assign TAZ/MAZ to unlinked trips (origin and destination) if provided
-    if unlinked_trips is not None:
-        unlinked_trips = assign_zone_ids(unlinked_trips, "o_lat", "o_lon", "o_taz", "o_maz")
-        unlinked_trips = assign_zone_ids(unlinked_trips, "d_lat", "d_lon", "d_taz", "d_maz")
+    # Process each dataframe with its zone assignments
+    for df, key, assignments in zone_mappings:
+        if df is not None:
+            result[key] = df
+            for lat_col, lon_col, taz_col, maz_col in assignments:
+                result[key] = assign_zone_ids(result[key], lat_col, lon_col, taz_col, maz_col)
 
-    # Assign TAZ/MAZ to linked trips (origin and destination) if provided
-    if linked_trips is not None:
-        linked_trips = assign_zone_ids(linked_trips, "o_lat", "o_lon", "o_taz", "o_maz")
-        linked_trips = assign_zone_ids(linked_trips, "d_lat", "d_lon", "d_taz", "d_maz")
-
-    # Assign TAZ/MAZ to tours (origin and destination) if provided
-    if tours is not None:
-        tours = assign_zone_ids(tours, "o_lat", "o_lon", "o_taz", "o_maz")
-        tours = assign_zone_ids(tours, "d_lat", "d_lon", "d_taz", "d_maz")
-
-    return unlinked_trips, linked_trips, tours, households
+    return result
 
 
 def process_scenario_through_pipeline(
@@ -264,7 +281,9 @@ def process_scenario_through_pipeline(
         max_dwell_time=180,  # in minutes
         dwell_buffer_distance=100,  # in meters
     )
-    linked_trips = link_result["linked_trips"]
+    linked_trips = link_result["linked_trips"].with_columns(
+        pl.lit(None).cast(pl.Int64).alias("joint_trip_id")
+    )
     unlinked_trips = link_result["unlinked_trips"]  # Use updated unlinked trips with linked_trip_id
 
     # Extract tours (using config.yaml defaults)
@@ -276,27 +295,16 @@ def process_scenario_through_pipeline(
     )
 
     # Add TAZ/MAZ IDs via mock spatial join (simulates project-specific step)
-    (
-        unlinked_with_zones,
-        linked_with_zones,
-        tours_with_zones,
-        households_with_zones,
-    ) = add_test_taz_maz_ids(
+    data_with_zones = add_test_taz_maz_ids(
         households=households,
         persons=persons,
         unlinked_trips=tour_result["unlinked_trips"],
         linked_trips=tour_result["linked_trips"],
         tours=tour_result["tours"],
     )
+    data_with_zones["days"] = days  # Days do not need zone IDs
 
-    return {
-        "households": households_with_zones,
-        "persons": persons,
-        "days": days,
-        "unlinked_trips": unlinked_with_zones,
-        "linked_trips": linked_with_zones,
-        "tours": tours_with_zones,
-    }
+    return data_with_zones
 
 
 # ==============================================================================

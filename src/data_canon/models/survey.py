@@ -43,8 +43,6 @@ class HouseholdModel(BaseModel):
     hh_id: int = step_field(ge=1, unique=True, required_in_steps=["extract_tours"])
     home_lat: float = step_field(ge=-90, le=90, required_in_steps=["extract_tours"])
     home_lon: float = step_field(ge=-180, le=180, required_in_steps=["extract_tours"])
-    home_taz: int | None = step_field(ge=1, required_in_steps=["format_daysim"])
-    home_maz: int | None = step_field(ge=1, required_in_steps=["format_daysim"])
     residence_rent_own: ResidenceRentOwn = step_field(required_in_steps=["format_daysim"])
     residence_type: ResidenceType = step_field(required_in_steps=["format_daysim"])
     hh_weight: float | None = step_field(ge=0, required_in_steps=[])
@@ -67,10 +65,6 @@ class PersonModel(BaseModel):
     work_lon: float | None = step_field(ge=-180, le=180, required_in_steps=["extract_tours"])
     school_lat: float | None = step_field(ge=-90, le=90, required_in_steps=["extract_tours"])
     school_lon: float | None = step_field(ge=-180, le=180, required_in_steps=["extract_tours"])
-    work_taz: int | None = step_field(ge=1, required_in_steps=["format_daysim"])
-    school_taz: int | None = step_field(ge=1, required_in_steps=["format_daysim"])
-    work_maz: int | None = step_field(ge=1, required_in_steps=["format_daysim"])
-    school_maz: int | None = step_field(ge=1, required_in_steps=["format_daysim"])
     person_type: PersonType = step_field(required_in_steps=[])
     job_type: JobType | None = step_field(required_in_steps=[], default=None)
     employment: Employment = step_field(required_in_steps=["extract_tours"])
@@ -126,14 +120,6 @@ class UnlinkedTripModel(BaseModel):
         fk_to="tours.tour_id",
         required_in_steps=["format_daysim"],
     )
-    depart_date: datetime
-    depart_hour: int = step_field(ge=0, le=23)
-    depart_minute: int = step_field(ge=0, le=59)
-    depart_seconds: int = step_field(ge=0, le=59)
-    arrive_date: datetime
-    arrive_hour: int = step_field(ge=0, le=23)
-    arrive_minute: int = step_field(ge=0, le=59)
-    arrive_seconds: int = step_field(ge=0, le=59)
     o_lon: float = step_field(ge=-180, le=180, required_in_steps=["link_trips"])
     o_lat: float = step_field(ge=-90, le=90, required_in_steps=["link_trips"])
     d_lon: float = step_field(ge=-180, le=180, required_in_steps=["link_trips"])
@@ -193,14 +179,6 @@ class LinkedTripModel(BaseModel):
     )
     tour_id: int = step_field(ge=1, fk_to="tours.tour_id", required_in_steps=["format_daysim"])
     travel_dow: TravelDow = step_field(required_in_steps=["extract_tours"])
-    depart_date: datetime = step_field()
-    depart_hour: int = step_field(ge=0, le=23)
-    depart_minute: int = step_field(ge=0, le=59)
-    depart_seconds: int = step_field(ge=0, le=59)
-    arrive_date: datetime = step_field()
-    arrive_hour: int = step_field(ge=0, le=23)
-    arrive_minute: int = step_field(ge=0, le=59)
-    arrive_seconds: int = step_field(ge=0, le=59)
     o_purpose: Purpose = step_field(required_in_steps=[])
     o_purpose_category: int = step_field()
     o_lat: float = step_field(ge=-90, le=90, required_in_steps=["detect_joint_trips"])
@@ -209,18 +187,6 @@ class LinkedTripModel(BaseModel):
     d_purpose_category: int = step_field(required_in_steps=["extract_tours"])
     d_lat: float = step_field(ge=-90, le=90, required_in_steps=["detect_joint_trips"])
     d_lon: float = step_field(ge=-180, le=180, required_in_steps=["detect_joint_trips"])
-    o_taz: int | None = step_field(
-        ge=1,
-        required_in_steps=["format_daysim"],
-        default=None,
-    )
-    d_taz: int | None = step_field(
-        ge=1,
-        required_in_steps=["format_daysim"],
-        default=None,
-    )
-    o_maz: int | None = step_field(ge=1, required_in_steps=["format_daysim"], default=None)
-    d_maz: int | None = step_field(ge=1, required_in_steps=["format_daysim"], default=None)
     mode_type: ModeType = step_field(required_in_steps=["extract_tours"])
     driver: Driver = step_field(required_in_steps=["link_trips", "format_daysim"])
     num_travelers: int = step_field(ge=1)
@@ -278,18 +244,6 @@ class TourModel(BaseModel):
     o_lon: float = step_field(ge=-180, le=180)
     d_lat: float = step_field(ge=-90, le=90)
     d_lon: float = step_field(ge=-180, le=180)
-    o_taz: int | None = step_field(
-        ge=1,
-        required_in_steps=["format_daysim"],
-        default=None,
-    )
-    d_taz: int | None = step_field(
-        ge=1,
-        required_in_steps=["format_daysim"],
-        default=None,
-    )
-    o_maz: int | None = step_field(ge=1, required_in_steps=["format_daysim"], default=None)
-    d_maz: int | None = step_field(ge=1, required_in_steps=["format_daysim"], default=None)
     o_location_type: LocationType = step_field()
     d_location_type: LocationType = step_field()
 

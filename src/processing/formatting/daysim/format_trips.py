@@ -573,16 +573,12 @@ def format_linked_trips(
     )
 
     # Step 5: Add trip weight from linked trips, assign 1.0 if missing
-    if "linked_trip_weight" in linked_trips.columns:
-        trips_daysim = trips_daysim.join(
-            linked_trips.select(["linked_trip_id", "linked_trip_weight"]).rename(
-                {"linked_trip_weight": "trexpfac"}
-            ),
-            on="linked_trip_id",
-            how="left",
-        )
-    else:
+    if "linked_trip_weight" not in linked_trips.columns:
         trips_daysim = trips_daysim.with_columns(pl.lit(1.0).alias("trexpfac"))
+
+    trips_daysim = trips_daysim.with_columns(
+        pl.col("linked_trip_weight").fill_null(value=0).alias("trexpfac"),
+    )
 
     # Step 6: Select final DaySim fields and sort
     trip_cols = [

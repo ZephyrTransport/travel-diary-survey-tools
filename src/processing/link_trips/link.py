@@ -360,8 +360,10 @@ def aggregate_linked_trips(
     )
 
     # Join day_id back for reference
-    return linked_trips.join(
+    linked_trips = linked_trips.join(
         unlinked_trips.select(["linked_trip_id", "day_id"]).unique(),
         on="linked_trip_id",
         how="left",
     )
+
+    return linked_trips

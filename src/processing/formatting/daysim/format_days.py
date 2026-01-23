@@ -102,22 +102,24 @@ def format_days(
         .agg(pl.len().alias("uwtours"))
     )
 
+    join_cols = [
+        "person_num",
+        "work_lon",
+        "work_lat",
+        "school_lon",
+        "school_lat",
+    ]
+    _days = days.drop([x for x in join_cols if x in days.columns])
+
     # Start with days data and join person identifiers
-    days_daysim = days.join(
-        persons.select(
-            [
-                "person_id",
-                "hh_id",
-                "person_num",
-                "work_lon",
-                "work_lat",
-                "school_lon",
-                "school_lat",
-            ]
-        ),
+    days_daysim = _days.join(
+        persons.select([*join_cols, "person_id"]),
         on="person_id",
         how="left",
     )
+
+    days.filter(pl.col("person_num").is_null()).select("person_num")
+    persons.filter(pl.col("person_num").is_null())
 
     # Join tour count aggregations
     days_daysim = (
@@ -153,6 +155,10 @@ def format_days(
 
     days_daysim = days_daysim.join(first_last_tours, on="day_id", how="left")
 
+    # If day_weight not in days, set to 1
+    if "day_weight" not in days_daysim.columns:
+        days_daysim = days_daysim.with_columns(pl.lit(1).alias("day_weight"))
+
     # Map to DaySim schema
     days_daysim = days_daysim.select(
         [
@@ -186,12 +192,12 @@ def format_days(
             # Work at home (placeholder)
             pl.lit(0).cast(pl.Int16).alias("wkathome"),
             # Location coordinates
-            pl.col("work_lon").alias("pwxcord"),
-            pl.col("work_lat").alias("pwycord"),
-            pl.col("school_lon").alias("psxcord"),
-            pl.col("school_lat").alias("psycord"),
+            pl.col("work_lon").alias("pwxco"),
+            pl.col("work_lat").alias("pwyco"),
+            pl.col("school_lon").alias("psxco"),
+            pl.col("school_lat").alias("psyco"),
             # Expansion factor
-            pl.col("day_weight").alias("pdexpfac"),
+            pl.col("day_weight").fill_null(0).alias("pdexpfac"),
         ]
     )
 

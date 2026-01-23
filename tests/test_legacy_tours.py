@@ -252,7 +252,11 @@ def simple_work_tour_data():
     )
     unlinked_trips_with_ids = result["unlinked_trips"]
     # Sort because legacy code expects trips in depart_time order
-    linked_trips = result["linked_trips"].sort("depart_time")
+    linked_trips = (
+        result["linked_trips"]
+        .sort("depart_time")
+        .with_columns(pl.lit(None).cast(pl.Int64).alias("joint_trip_id"))
+    )
 
     return {
         "households": households,
@@ -285,7 +289,11 @@ def work_tour_with_subtour_data():
     )
     unlinked_trips_with_ids = result["unlinked_trips"]
     # Sort because legacy code expects trips in depart_time order
-    linked_trips = result["linked_trips"].sort("depart_time")
+    linked_trips = (
+        result["linked_trips"]
+        .sort("depart_time")
+        .with_columns(pl.lit(None).cast(pl.Int64).alias("joint_trip_id"))
+    )
 
     return {
         "households": households,
@@ -320,7 +328,11 @@ def multiple_tours_data():
     )
     unlinked_trips_with_ids = result["unlinked_trips"]
     # Sort because legacy code expects trips in depart_time order
-    linked_trips = result["linked_trips"].sort("depart_time")
+    linked_trips = (
+        result["linked_trips"]
+        .sort("depart_time")
+        .with_columns(pl.lit(None).cast(pl.Int64).alias("joint_trip_id"))
+    )
 
     return {
         "households": households,
@@ -407,6 +419,7 @@ def mode_hierarchy_data():
             "num_travelers": [1, 1],
             "driver": [Driver.MISSING.value, Driver.DRIVER.value],
             "unlinked_trip_weight": [1.0, 1.0],
+            "joint_trip_id": [None, None],
         }
     )
 
@@ -782,6 +795,7 @@ def test_tour_timing():
                 Driver.DRIVER.value,
             ],
             "unlinked_trip_weight": [1.0, 1.0, 1.0, 1.0],
+            "joint_trip_id": [None, None, None, None],
         }
     )
 
@@ -801,7 +815,9 @@ def test_tour_timing():
         transit_mode_codes=TRANSIT_MODE_CODES,
     )
     unlinked_trips_with_ids = link_result["unlinked_trips"]
-    linked_trips = link_result["linked_trips"]
+    linked_trips = link_result["linked_trips"].with_columns(
+        pl.lit(None).cast(pl.Int64).alias("joint_trip_id")
+    )
 
     # Extract tours using both unlinked and linked trips
     result = extract_tours(persons, households, unlinked_trips_with_ids, linked_trips)
@@ -937,6 +953,7 @@ def test_tour_trip_counts():
             "num_travelers": [1, 1, 1, 1],
             "driver": [Driver.DRIVER.value] * 4,
             "unlinked_trip_weight": [1.0, 1.0, 1.0, 1.0],
+            "joint_trip_id": [None, None, None, None],
         }
     )
 
@@ -956,7 +973,9 @@ def test_tour_trip_counts():
         transit_mode_codes=TRANSIT_MODE_CODES,
     )
     unlinked_trips_with_ids = link_result["unlinked_trips"]
-    linked_trips = link_result["linked_trips"]
+    linked_trips = link_result["linked_trips"].with_columns(
+        pl.lit(None).cast(pl.Int64).alias("joint_trip_id")
+    )
 
     # Extract tours using both unlinked and linked trips
     result = extract_tours(persons, households, unlinked_trips_with_ids, linked_trips)
@@ -1058,6 +1077,7 @@ def test_incomplete_tour_at_end_of_day():
                 Driver.DRIVER.value,
             ],
             "unlinked_trip_weight": [1.0, 1.0, 1.0],
+            "joint_trip_id": [None, None, None],
         }
     )
 
@@ -1077,7 +1097,9 @@ def test_incomplete_tour_at_end_of_day():
         transit_mode_codes=TRANSIT_MODE_CODES,
     )
     unlinked_trips_with_ids = link_result["unlinked_trips"]
-    linked_trips = link_result["linked_trips"]
+    linked_trips = link_result["linked_trips"].with_columns(
+        pl.lit(None).cast(pl.Int64).alias("joint_trip_id")
+    )
 
     # Extract tours using both unlinked and linked trips
     result = extract_tours(persons, households, unlinked_trips_with_ids, linked_trips)
@@ -1163,6 +1185,7 @@ def test_no_work_location():
             "num_travelers": [1, 1],
             "driver": [Driver.DRIVER.value, Driver.DRIVER.value],
             "unlinked_trip_weight": [1.0, 1.0],
+            "joint_trip_id": [None, None],
         }
     )
 
@@ -1182,7 +1205,9 @@ def test_no_work_location():
         transit_mode_codes=TRANSIT_MODE_CODES,
     )
     unlinked_trips_with_ids = link_result["unlinked_trips"]
-    linked_trips = link_result["linked_trips"]
+    linked_trips = link_result["linked_trips"].with_columns(
+        pl.lit(None).cast(pl.Int64).alias("joint_trip_id")
+    )
 
     # Extract tours using both unlinked and linked trips
     result = extract_tours(persons, households, unlinked_trips_with_ids, linked_trips)

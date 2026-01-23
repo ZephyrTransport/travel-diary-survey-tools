@@ -93,6 +93,20 @@ def clean_2023_bats(
         .alias("duration_minutes")
     )
 
+    # Drop the split time fields (hours, minutes, seconds)
+    unlinked_trips = unlinked_trips.drop(
+        [
+            "depart_date",
+            "depart_hour",
+            "depart_minute",
+            "depart_seconds",
+            "arrive_date",
+            "arrive_hour",
+            "arrive_minute",
+            "arrive_seconds",
+        ]
+    )
+
     # ADD DAYS FOR PERSONS WITHOUT DAYS =================================
     # Find persons without days
     persons_without_days = persons.filter(

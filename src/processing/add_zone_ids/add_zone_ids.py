@@ -98,14 +98,22 @@ def add_zone_ids(
         "tours": tours,
         "joint_trips": joint_trips,
     }
+
+    # Pre-load the shapefiles to avoid re-loading for each table
+    shapefiles_cache = {}
+
     # Process each zone geography
     for zone_config in zone_geographies:
         shapefile_path = zone_config["shapefile"]
         zone_id_field = zone_config["zone_id_field"]
         zone_name = zone_config["zone_name"]
 
+        # Cache the shapefile if not already loaded, avoid re-loading
+        if shapefile_path not in shapefiles_cache:
+            shapefiles_cache[shapefile_path] = gpd.read_file(shapefile_path)
+
         # Load the shapefile
-        shapefile = gpd.read_file(shapefile_path)
+        shapefile = shapefiles_cache[shapefile_path]
 
         # Standard location mappings: (table, table_index, lon_col, lat_col, location_prefix)
         standard_locations = [

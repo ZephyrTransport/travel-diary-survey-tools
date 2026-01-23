@@ -4,6 +4,7 @@ import polars as pl
 import pytest
 from pydantic import ValidationError
 
+from data_canon.codebook.persons import AgeCategory
 from processing.weighting.existing_weights import add_existing_weights
 
 
@@ -52,7 +53,11 @@ class TestAddExistingWeights:
         persons = pl.DataFrame(
             {
                 "person_id": [1, 2, 3],
-                "age": [25, 35, 45],
+                "age": [
+                    AgeCategory.AGE_25_TO_34.value,
+                    AgeCategory.AGE_35_TO_44.value,
+                    AgeCategory.AGE_45_TO_54.value,
+                ],
             }
         )
 
@@ -130,7 +135,11 @@ class TestAddExistingWeights:
             {
                 "person_id": [1, 2, 3],
                 "hh_id": [1, 1, 2],
-                "age": [25, 30, 45],
+                "age": [
+                    AgeCategory.AGE_25_TO_34.value,
+                    AgeCategory.AGE_25_TO_34.value,
+                    AgeCategory.AGE_45_TO_54.value,
+                ],
             }
         )
 

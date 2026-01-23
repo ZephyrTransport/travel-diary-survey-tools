@@ -88,7 +88,9 @@ def single_trip_tour_data():
         transit_mode_codes=[ModeType.TRANSIT.value],
     )
     unlinked_trips_with_ids = link_result["unlinked_trips"]
-    linked_trips = link_result["linked_trips"]
+    linked_trips = link_result["linked_trips"].with_columns(
+        pl.lit(None).cast(pl.Int64).alias("joint_trip_id")
+    )
 
     return persons, households, unlinked_trips_with_ids, linked_trips
 
@@ -190,7 +192,9 @@ def partial_tour_data():
         transit_mode_codes=[ModeType.TRANSIT.value],
     )
     unlinked_trips_with_ids = link_result["unlinked_trips"]
-    linked_trips = link_result["linked_trips"]
+    linked_trips = link_result["linked_trips"].with_columns(
+        pl.lit(None).cast(pl.Int64).alias("joint_trip_id")
+    )
 
     return persons, households, unlinked_trips_with_ids, linked_trips
 
@@ -292,7 +296,9 @@ def distant_destinations_data():
         transit_mode_codes=[ModeType.TRANSIT.value],
     )
     unlinked_trips_with_ids = link_result["unlinked_trips"]
-    linked_trips = link_result["linked_trips"]
+    linked_trips = link_result["linked_trips"].with_columns(
+        pl.lit(None).cast(pl.Int64).alias("joint_trip_id")
+    )
 
     return persons, households, unlinked_trips_with_ids, linked_trips
 
@@ -447,7 +453,9 @@ def test_tour_num_sequential():
         transit_mode_codes=[ModeType.TRANSIT.value],
     )
     unlinked_trips_with_ids = link_result["unlinked_trips"]
-    linked_trips = link_result["linked_trips"]
+    linked_trips = link_result["linked_trips"].with_columns(
+        pl.lit(None).cast(pl.Int64).alias("joint_trip_id")
+    )
 
     result = extract_tours(persons, households, unlinked_trips_with_ids, linked_trips)
     tours_df = result["tours"]
@@ -562,7 +570,9 @@ def test_all_tours_have_required_fields():
         transit_mode_codes=[ModeType.TRANSIT.value],
     )
     unlinked_trips_with_ids = link_result["unlinked_trips"]
-    linked_trips = link_result["linked_trips"]
+    linked_trips = link_result["linked_trips"].with_columns(
+        pl.lit(None).cast(pl.Int64).alias("joint_trip_id")
+    )
 
     result = extract_tours(persons, households, unlinked_trips_with_ids, linked_trips)
     tours_df = result["tours"]

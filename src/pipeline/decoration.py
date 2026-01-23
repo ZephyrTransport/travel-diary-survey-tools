@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 def step(
     *,
-    validate_input: bool = False,
+    validate_input: bool = True,
     validate_output: bool = False,
     cache: bool = False,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:

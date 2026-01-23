@@ -159,8 +159,8 @@ def validate_dataframe_rows(
         if len(error_groups) >= max_unique_errors:
             break
 
-        # Raise with error details
-        _report_errors(error_groups, table_name)
+    # Raise with error details (after all batches are processed)
+    _report_errors(error_groups, table_name)
 
 
 def _report_errors(error_groups: dict[str, list[int]], table_name: str) -> None:

@@ -19,8 +19,6 @@ This matrix shows which columns are required in which pipeline steps.
 | **households** | `hh_id` | int | ≥ 1, UNIQUE |  |  |  |  | ✓ |  |  |  |  |
 |  | `home_lat` | float | ≥ -90, ≤ 90 |  |  |  |  | ✓ |  |  |  |  |
 |  | `home_lon` | float | ≥ -180, ≤ 180 |  |  |  |  | ✓ |  |  |  |  |
-|  | `home_taz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
-|  | `home_maz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
 |  | `residence_rent_own` | ResidenceRentOwn |  |  |  |  |  |  |  |  | ✓ |  |
 |  | `residence_type` | ResidenceType |  |  |  |  |  |  |  |  | ✓ |  |
 |  | `hh_weight` | float or None | ≥ 0 |  |  |  |  |  |  |  |  |  |
@@ -33,10 +31,6 @@ This matrix shows which columns are required in which pipeline steps.
 |  | `work_lon` | float or None | ≥ -180, ≤ 180 |  |  |  |  | ✓ |  |  |  |  |
 |  | `school_lat` | float or None | ≥ -90, ≤ 90 |  |  |  |  | ✓ |  |  |  |  |
 |  | `school_lon` | float or None | ≥ -180, ≤ 180 |  |  |  |  | ✓ |  |  |  |  |
-|  | `work_taz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
-|  | `school_taz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
-|  | `work_maz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
-|  | `school_maz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
 |  | `person_type` | PersonType |  |  |  |  |  |  |  |  |  |  |
 |  | `job_type` | data_canon.codebook.persons.JobType or None |  |  |  |  |  |  |  |  |  |  |
 |  | `employment` | Employment |  |  |  |  |  | ✓ |  |  |  |  |
@@ -60,14 +54,6 @@ This matrix shows which columns are required in which pipeline steps.
 |  | `hh_id` | int | ≥ 1, FK → `households.hh_id` |  |  |  |  |  |  |  |  |  |
 |  | `linked_trip_id` | int | ≥ 1, FK → `linked_trips.linked_trip_id` |  |  |  |  | ✓ |  |  |  |  |
 |  | `tour_id` | int | ≥ 1, FK → `tours.tour_id` |  |  |  |  |  |  |  | ✓ |  |
-|  | `depart_date` | datetime |  |  |  |  |  |  |  |  |  |  |
-|  | `depart_hour` | int | ≥ 0, ≤ 23 |  |  |  |  |  |  |  |  |  |
-|  | `depart_minute` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |  |
-|  | `depart_seconds` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |  |
-|  | `arrive_date` | datetime |  |  |  |  |  |  |  |  |  |  |
-|  | `arrive_hour` | int | ≥ 0, ≤ 23 |  |  |  |  |  |  |  |  |  |
-|  | `arrive_minute` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |  |
-|  | `arrive_seconds` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |  |
 |  | `o_lon` | float | ≥ -180, ≤ 180 |  |  | ✓ |  |  |  |  |  |  |
 |  | `o_lat` | float | ≥ -90, ≤ 90 |  |  | ✓ |  |  |  |  |  |  |
 |  | `d_lon` | float | ≥ -180, ≤ 180 |  |  | ✓ |  |  |  |  |  |  |
@@ -94,14 +80,6 @@ This matrix shows which columns are required in which pipeline steps.
 |  | `joint_trip_id` | int or None | ≥ 1, FK → `joint_trips.joint_trip_id` |  |  |  |  | ✓ |  |  |  |  |
 |  | `tour_id` | int | ≥ 1, FK → `tours.tour_id` |  |  |  |  |  |  |  | ✓ |  |
 |  | `travel_dow` | TravelDow |  |  |  |  |  | ✓ |  |  |  |  |
-|  | `depart_date` | datetime |  |  |  |  |  |  |  |  |  |  |
-|  | `depart_hour` | int | ≥ 0, ≤ 23 |  |  |  |  |  |  |  |  |  |
-|  | `depart_minute` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |  |
-|  | `depart_seconds` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |  |
-|  | `arrive_date` | datetime |  |  |  |  |  |  |  |  |  |  |
-|  | `arrive_hour` | int | ≥ 0, ≤ 23 |  |  |  |  |  |  |  |  |  |
-|  | `arrive_minute` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |  |
-|  | `arrive_seconds` | int | ≥ 0, ≤ 59 |  |  |  |  |  |  |  |  |  |
 |  | `o_purpose` | Purpose |  |  |  |  |  |  |  |  |  |  |
 |  | `o_purpose_category` | int |  |  |  |  |  |  |  |  |  |  |
 |  | `o_lat` | float | ≥ -90, ≤ 90 |  |  |  | ✓ |  |  |  |  |  |
@@ -110,10 +88,6 @@ This matrix shows which columns are required in which pipeline steps.
 |  | `d_purpose_category` | int |  |  |  |  |  | ✓ |  |  |  |  |
 |  | `d_lat` | float | ≥ -90, ≤ 90 |  |  |  | ✓ |  |  |  |  |  |
 |  | `d_lon` | float | ≥ -180, ≤ 180 |  |  |  | ✓ |  |  |  |  |  |
-|  | `o_taz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
-|  | `d_taz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
-|  | `o_maz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
-|  | `d_maz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
 |  | `mode_type` | ModeType |  |  |  |  |  | ✓ |  |  |  |  |
 |  | `driver` | Driver |  |  |  | ✓ |  |  |  |  | ✓ |  |
 |  | `num_travelers` | int | ≥ 1 |  |  |  |  |  |  |  |  |  |
@@ -145,10 +119,6 @@ This matrix shows which columns are required in which pipeline steps.
 |  | `o_lon` | float | ≥ -180, ≤ 180 |  |  |  |  |  |  |  |  |  |
 |  | `d_lat` | float | ≥ -90, ≤ 90 |  |  |  |  |  |  |  |  |  |
 |  | `d_lon` | float | ≥ -180, ≤ 180 |  |  |  |  |  |  |  |  |  |
-|  | `o_taz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
-|  | `d_taz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
-|  | `o_maz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
-|  | `d_maz` | int or None | ≥ 1 |  |  |  |  |  |  |  | ✓ |  |
 |  | `o_location_type` | LocationType |  |  |  |  |  |  |  |  |  |  |
 |  | `d_location_type` | LocationType |  |  |  |  |  |  |  |  |  |  |
 |  | `tour_mode` | ModeType |  |  |  |  |  |  |  |  |  |  |

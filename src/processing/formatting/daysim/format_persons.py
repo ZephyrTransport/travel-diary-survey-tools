@@ -282,7 +282,7 @@ def format_persons(persons: pl.DataFrame, days: pl.DataFrame) -> pl.DataFrame:
         .otherwise(pl.lit(0))  # non-worker
     )
 
-    # Set work/school locations to -1 if person is not worker/student
+    # Set work/school locations to None (coords) or -1 (taz) if person is not worker/student
     persons_daysim = persons_daysim.with_columns(
         pwtaz=pl.when(pl.col("pwtyp") != DaysimWorkerType.NON_WORKER.value)
         .then(pl.col("pwtaz"))
@@ -292,10 +292,10 @@ def format_persons(persons: pl.DataFrame, days: pl.DataFrame) -> pl.DataFrame:
         .otherwise(pl.lit(-1)),
         pwxco=pl.when(pl.col("pwtyp") != DaysimWorkerType.NON_WORKER.value)
         .then(pl.col("pwxco"))
-        .otherwise(pl.lit(-1)),
+        .otherwise(pl.lit(None)),
         pwyco=pl.when(pl.col("pwtyp") != DaysimWorkerType.NON_WORKER.value)
         .then(pl.col("pwyco"))
-        .otherwise(pl.lit(-1)),
+        .otherwise(pl.lit(None)),
         pstaz=pl.when(pl.col("pstyp") != DaysimStudentType.NOT_STUDENT.value)
         .then(pl.col("pstaz"))
         .otherwise(pl.lit(-1)),
@@ -304,15 +304,18 @@ def format_persons(persons: pl.DataFrame, days: pl.DataFrame) -> pl.DataFrame:
         .otherwise(pl.lit(-1)),
         psxco=pl.when(pl.col("pstyp") != DaysimStudentType.NOT_STUDENT.value)
         .then(pl.col("psxco"))
-        .otherwise(pl.lit(-1)),
+        .otherwise(pl.lit(None)),
         psyco=pl.when(pl.col("pstyp") != DaysimStudentType.NOT_STUDENT.value)
         .then(pl.col("psyco"))
-        .otherwise(pl.lit(-1)),
+        .otherwise(pl.lit(None)),
     )
 
-    # Add default expansion factor
+    # If person weight is in data, use that, else default to 1.0
+    if "person_weight" not in persons_daysim.columns:
+        persons_daysim = persons_daysim.with_columns(pl.lit(1.0).alias("person_weight"))
+
     persons_daysim = persons_daysim.with_columns(
-        psexpfac=pl.lit(1.0),
+        pl.col("person_weight").fill_null(0).alias("psexpfac"),
         pwautime=pl.lit(-1),  # auto time to work (not available)
         pwaudist=pl.lit(-1),  # auto distance to work (not available)
         psautime=pl.lit(-1),  # auto time to school (not available)

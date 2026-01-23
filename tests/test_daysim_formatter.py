@@ -56,6 +56,7 @@ from tests.fixtures import (
     create_transit_commute_processed,
     create_unlinked_trip,
 )
+from tests.fixtures.locations import HOME_LOCATION, WORK_LOCATION
 
 
 class TestDayCompleteness:
@@ -846,6 +847,10 @@ class TestTripFormatting:
                     hh_id=1,
                     person_num=1,
                     day_num=1,
+                    o_lat=HOME_LOCATION.lat,
+                    o_lon=HOME_LOCATION.lon,
+                    d_lat=WORK_LOCATION.lat,
+                    d_lon=WORK_LOCATION.lon,
                     o_purpose_category=PurposeCategory.HOME,
                     d_purpose_category=PurposeCategory.WORK,
                     mode_1=Mode.HOUSEHOLD_VEHICLE_1,
@@ -868,7 +873,7 @@ class TestTripFormatting:
         linked_trips = result_dict["linked_trips"]
 
         # Add TAZ/MAZ via mock spatial join
-        unlinked_trips_with_ids, linked_trips, _, _ = add_test_taz_maz_ids(
+        result_with_taz_maz = add_test_taz_maz_ids(
             unlinked_trips=unlinked_trips_with_ids,
             linked_trips=linked_trips,
             tours=None,
@@ -876,10 +881,11 @@ class TestTripFormatting:
             households=None,
         )
 
-        assert unlinked_trips_with_ids is not None
-        assert linked_trips is not None
-
-        result = format_linked_trips(persons, unlinked_trips_with_ids, linked_trips)
+        result = format_linked_trips(
+            result_with_taz_maz["persons"],
+            result_with_taz_maz["unlinked_trips"],
+            result_with_taz_maz["linked_trips"],
+        )
 
         assert len(result) == 1
         assert result["mode"][0] == DaysimMode.SOV.value
@@ -897,6 +903,10 @@ class TestTripFormatting:
                     hh_id=1,
                     person_num=1,
                     day_num=1,
+                    o_lat=HOME_LOCATION.lat,
+                    o_lon=HOME_LOCATION.lon,
+                    d_lat=WORK_LOCATION.lat,
+                    d_lon=WORK_LOCATION.lon,
                     o_purpose_category=PurposeCategory.HOME,
                     d_purpose_category=PurposeCategory.WORK,
                     mode_1=Mode.HOUSEHOLD_VEHICLE_1,
@@ -917,7 +927,7 @@ class TestTripFormatting:
         linked_trips = result_dict["linked_trips"]
 
         # Add TAZ/MAZ via mock spatial join
-        unlinked_trips_with_ids, linked_trips, _, _ = add_test_taz_maz_ids(
+        result_with_taz_maz = add_test_taz_maz_ids(
             unlinked_trips=unlinked_trips_with_ids,
             linked_trips=linked_trips,
             tours=None,
@@ -925,10 +935,14 @@ class TestTripFormatting:
             households=None,
         )
 
-        assert unlinked_trips_with_ids is not None
-        assert linked_trips is not None
+        assert result_with_taz_maz["unlinked_trips"] is not None
+        assert result_with_taz_maz["linked_trips"] is not None
 
-        result = format_linked_trips(persons, unlinked_trips_with_ids, linked_trips)
+        result = format_linked_trips(
+            result_with_taz_maz["persons"],
+            result_with_taz_maz["unlinked_trips"],
+            result_with_taz_maz["linked_trips"],
+        )
 
         assert result["mode"][0] == DaysimMode.HOV2.value
 
@@ -944,6 +958,10 @@ class TestTripFormatting:
                     hh_id=1,
                     person_num=1,
                     day_num=1,
+                    o_lat=HOME_LOCATION.lat,
+                    o_lon=HOME_LOCATION.lon,
+                    d_lat=WORK_LOCATION.lat,
+                    d_lon=WORK_LOCATION.lon,
                     o_purpose_category=PurposeCategory.HOME,
                     d_purpose_category=PurposeCategory.WORK,
                     mode_1=Mode.HOUSEHOLD_VEHICLE_1,
@@ -964,7 +982,7 @@ class TestTripFormatting:
         linked_trips = result_dict["linked_trips"]
 
         # Add TAZ/MAZ via mock spatial join
-        unlinked_trips_with_ids, linked_trips, _, _ = add_test_taz_maz_ids(
+        result_with_taz_maz = add_test_taz_maz_ids(
             unlinked_trips=unlinked_trips_with_ids,
             linked_trips=linked_trips,
             tours=None,
@@ -972,10 +990,14 @@ class TestTripFormatting:
             households=None,
         )
 
-        assert unlinked_trips_with_ids is not None
-        assert linked_trips is not None
+        assert result_with_taz_maz["unlinked_trips"] is not None
+        assert result_with_taz_maz["linked_trips"] is not None
 
-        result = format_linked_trips(persons, unlinked_trips_with_ids, linked_trips)
+        result = format_linked_trips(
+            result_with_taz_maz["persons"],
+            result_with_taz_maz["unlinked_trips"],
+            result_with_taz_maz["linked_trips"],
+        )
 
         assert result["mode"][0] == DaysimMode.HOV3.value
 
@@ -991,6 +1013,10 @@ class TestTripFormatting:
                     hh_id=1,
                     person_num=1,
                     day_num=1,
+                    o_lat=HOME_LOCATION.lat,
+                    o_lon=HOME_LOCATION.lon,
+                    d_lat=WORK_LOCATION.lat,
+                    d_lon=WORK_LOCATION.lon,
                     o_purpose_category=PurposeCategory.HOME,
                     d_purpose_category=PurposeCategory.WORK,
                     mode_1=Mode.WALK,
@@ -1011,7 +1037,7 @@ class TestTripFormatting:
         linked_trips = result_dict["linked_trips"]
 
         # Add TAZ/MAZ via mock spatial join
-        unlinked_trips_with_ids, linked_trips, _, _ = add_test_taz_maz_ids(
+        result_with_taz_maz = add_test_taz_maz_ids(
             unlinked_trips=unlinked_trips_with_ids,
             linked_trips=linked_trips,
             tours=None,
@@ -1019,10 +1045,14 @@ class TestTripFormatting:
             households=None,
         )
 
-        assert unlinked_trips_with_ids is not None
-        assert linked_trips is not None
+        assert result_with_taz_maz["unlinked_trips"] is not None
+        assert result_with_taz_maz["linked_trips"] is not None
 
-        result = format_linked_trips(persons, unlinked_trips_with_ids, linked_trips)
+        result = format_linked_trips(
+            result_with_taz_maz["persons"],
+            result_with_taz_maz["unlinked_trips"],
+            result_with_taz_maz["linked_trips"],
+        )
 
         assert result["mode"][0] == DaysimMode.WALK.value
         assert result["dorp"][0] == DaysimDriverPassenger.NA.value
@@ -1039,6 +1069,10 @@ class TestTripFormatting:
                     hh_id=1,
                     person_num=1,
                     day_num=1,
+                    o_lat=HOME_LOCATION.lat,
+                    o_lon=HOME_LOCATION.lon,
+                    d_lat=WORK_LOCATION.lat,
+                    d_lon=WORK_LOCATION.lon,
                     o_purpose_category=PurposeCategory.HOME,
                     d_purpose_category=PurposeCategory.WORK,
                     mode_1=Mode.BIKE,
@@ -1059,7 +1093,7 @@ class TestTripFormatting:
         linked_trips = result_dict["linked_trips"]
 
         # Add TAZ/MAZ via mock spatial join
-        unlinked_trips_with_ids, linked_trips, _, _ = add_test_taz_maz_ids(
+        result_with_taz_maz = add_test_taz_maz_ids(
             unlinked_trips=unlinked_trips_with_ids,
             linked_trips=linked_trips,
             tours=None,
@@ -1067,10 +1101,14 @@ class TestTripFormatting:
             households=None,
         )
 
-        assert unlinked_trips_with_ids is not None
-        assert linked_trips is not None
+        assert result_with_taz_maz["unlinked_trips"] is not None
+        assert result_with_taz_maz["linked_trips"] is not None
 
-        result = format_linked_trips(persons, unlinked_trips_with_ids, linked_trips)
+        result = format_linked_trips(
+            result_with_taz_maz["persons"],
+            result_with_taz_maz["unlinked_trips"],
+            result_with_taz_maz["linked_trips"],
+        )
 
         assert result["mode"][0] == DaysimMode.BIKE.value
 
@@ -1086,6 +1124,10 @@ class TestTripFormatting:
                     hh_id=1,
                     person_num=1,
                     day_num=1,
+                    o_lat=HOME_LOCATION.lat,
+                    o_lon=HOME_LOCATION.lon,
+                    d_lat=WORK_LOCATION.lat,
+                    d_lon=WORK_LOCATION.lon,
                     o_purpose_category=PurposeCategory.HOME,
                     d_purpose_category=PurposeCategory.WORK,
                 )
@@ -1102,7 +1144,7 @@ class TestTripFormatting:
         linked_trips = result_dict["linked_trips"]
 
         # Add TAZ/MAZ via mock spatial join
-        unlinked_trips_with_ids, linked_trips, _, _ = add_test_taz_maz_ids(
+        result_with_taz_maz = add_test_taz_maz_ids(
             unlinked_trips=unlinked_trips_with_ids,
             linked_trips=linked_trips,
             tours=None,
@@ -1110,10 +1152,14 @@ class TestTripFormatting:
             households=None,
         )
 
-        assert unlinked_trips_with_ids is not None
-        assert linked_trips is not None
+        assert result_with_taz_maz["unlinked_trips"] is not None
+        assert result_with_taz_maz["linked_trips"] is not None
 
-        result = format_linked_trips(persons, unlinked_trips_with_ids, linked_trips)
+        result = format_linked_trips(
+            result_with_taz_maz["persons"],
+            result_with_taz_maz["unlinked_trips"],
+            result_with_taz_maz["linked_trips"],
+        )
 
         assert result["opurp"][0] == DaysimPurpose.HOME.value
         assert result["dpurp"][0] == DaysimPurpose.WORK.value
@@ -1130,6 +1176,10 @@ class TestTripFormatting:
                     hh_id=1,
                     person_num=1,
                     day_num=1,
+                    o_lat=HOME_LOCATION.lat,
+                    o_lon=HOME_LOCATION.lon,
+                    d_lat=WORK_LOCATION.lat,
+                    d_lon=WORK_LOCATION.lon,
                     o_purpose_category=PurposeCategory.HOME,
                     d_purpose_category=PurposeCategory.WORK,
                     depart_time=datetime(2023, 10, 15, 8, 30),  # 8:30 AM
@@ -1148,7 +1198,7 @@ class TestTripFormatting:
         linked_trips = result_dict["linked_trips"]
 
         # Add TAZ/MAZ via mock spatial join
-        unlinked_trips_with_ids, linked_trips, _, _ = add_test_taz_maz_ids(
+        result_with_maz_taz = add_test_taz_maz_ids(
             unlinked_trips=unlinked_trips_with_ids,
             linked_trips=linked_trips,
             tours=None,
@@ -1156,10 +1206,14 @@ class TestTripFormatting:
             households=None,
         )
 
-        assert unlinked_trips_with_ids is not None
-        assert linked_trips is not None
+        assert result_with_maz_taz["unlinked_trips"] is not None
+        assert result_with_maz_taz["linked_trips"] is not None
 
-        result = format_linked_trips(persons, unlinked_trips_with_ids, linked_trips)
+        result = format_linked_trips(
+            result_with_maz_taz["persons"],
+            result_with_maz_taz["unlinked_trips"],
+            result_with_maz_taz["linked_trips"],
+        )
 
         assert result["deptm"][0] == 8 * 60 + 30  # 510 minutes
         assert result["arrtm"][0] == 9 * 60 + 15  # 555 minutes
@@ -1308,13 +1362,18 @@ class TestEndToEndDaysimFormatting:
             ]
         )
 
-        unlinked_trips = pl.DataFrame(
+        unlinked_trips_fixture = pl.DataFrame(
             [
                 create_unlinked_trip(
                     unlinked_trip_id=1,
                     person_id=101,
                     hh_id=1,
                     person_num=1,
+                    day_id=1,
+                    o_lat=37.8,
+                    o_lon=-122.4,
+                    d_lat=37.85,
+                    d_lon=-122.45,
                     o_purpose_category=PurposeCategory.HOME,
                     d_purpose_category=PurposeCategory.WORK,
                 ),
@@ -1323,52 +1382,52 @@ class TestEndToEndDaysimFormatting:
                     person_id=201,
                     hh_id=2,
                     person_num=1,
+                    day_id=2,
+                    o_lat=37.8,
+                    o_lon=-122.4,
+                    d_lat=37.85,
+                    d_lon=-122.45,
                     o_purpose_category=PurposeCategory.HOME,
                     d_purpose_category=PurposeCategory.WORK,
                 ),
             ]
         )
 
-        link_result = link_trips(
-            unlinked_trips,
+        linked_result = link_trips(
+            unlinked_trips_fixture,
             change_mode_code=PurposeCategory.CHANGE_MODE.value,
             transit_mode_codes=[Mode.BART.value],
         )
 
-        # Add TAZ/MAZ via mock spatial join
-        unlinked_with_zones, linked_with_zones, _, _ = add_test_taz_maz_ids(
-            unlinked_trips=link_result["unlinked_trips"],
-            linked_trips=link_result["linked_trips"],
-            tours=None,
-            persons=persons,
-            households=households,
+        # Add joint_trip_id for extract_tours validation
+        linked_result["linked_trips"] = linked_result["linked_trips"].with_columns(
+            pl.lit(None).cast(pl.Int64).alias("joint_trip_id")
         )
 
+        # Perform tour extraction
         tour_result = extract_tours(
             persons=persons,
             households=households,
-            unlinked_trips=unlinked_with_zones,
-            linked_trips=linked_with_zones,
+            unlinked_trips=linked_result["unlinked_trips"],
+            linked_trips=linked_result["linked_trips"],
             joint_trips=None,
         )
 
-        # Add TAZ/MAZ to tours as well
-        _, _, tours_with_zones, _ = add_test_taz_maz_ids(
-            unlinked_trips=None,
-            linked_trips=None,
+        # Add TAZ/MAZ via mock spatial join (skip households since we want to preserve null TAZ)
+        data = add_test_taz_maz_ids(
+            unlinked_trips=tour_result["unlinked_trips"],
+            linked_trips=tour_result["linked_trips"],
             tours=tour_result["tours"],
-            persons=persons,
-            households=households,
+        )
+        data.update(
+            {
+                "households": households,
+                "persons": persons,
+                "days": days,
+            }
         )
 
-        result = format_daysim(
-            persons,
-            households,
-            unlinked_with_zones,
-            tour_result["linked_trips"],
-            tours_with_zones,
-            days,
-        )
+        result = format_daysim(**data)
 
         # Only household 1 should remain
         assert len(result["households_daysim"]) == 1

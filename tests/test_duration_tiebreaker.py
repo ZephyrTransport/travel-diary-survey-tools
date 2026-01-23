@@ -69,6 +69,9 @@ def create_test_data(
         dwell_buffer_distance=100,  # in meters
     ).values()
 
+    # Add joint_trip_id column for extract_tours validation
+    linked_trips = linked_trips.with_columns(pl.lit(None).cast(pl.Int64).alias("joint_trip_id"))
+
     return persons, households, unlinked_trips, linked_trips
 
 

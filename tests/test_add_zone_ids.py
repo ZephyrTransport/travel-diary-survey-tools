@@ -185,7 +185,7 @@ class TestAddZoneIds:
     def zone_shapefile(self, tmp_path):
         """Create a test zone shapefile."""
         zones_gdf = gpd.GeoDataFrame(
-            {"taz_id": ["TAZ1", "TAZ2", "TAZ3"]},
+            {"taz_id": [1, 2, 3]},
             geometry=[
                 Polygon([(0, 0), (1, 0), (1, 1), (0, 1)]),
                 Polygon([(1, 1), (2, 1), (2, 2), (1, 2)]),
@@ -219,20 +219,20 @@ class TestAddZoneIds:
 
         # Check households has home_taz
         assert "home_taz" in result["households"].columns
-        assert result["households"]["home_taz"][0] == "TAZ1"
-        assert result["households"]["home_taz"][1] == "TAZ2"
+        assert result["households"]["home_taz"][0] == 1
+        assert result["households"]["home_taz"][1] == 2
 
         # Check persons has work_taz and school_taz
         assert "work_taz" in result["persons"].columns
         assert "school_taz" in result["persons"].columns
-        assert result["persons"]["work_taz"][0] == "TAZ1"
-        assert result["persons"]["school_taz"][2] == "TAZ3"
+        assert result["persons"]["work_taz"][0] == 1
+        assert result["persons"]["school_taz"][2] == 3
 
         # Check trips has o_taz and d_taz
         assert "o_taz" in result["unlinked_trips"].columns
         assert "d_taz" in result["unlinked_trips"].columns
-        assert result["unlinked_trips"]["o_taz"][0] == "TAZ1"
-        assert result["unlinked_trips"]["d_taz"][1] == "TAZ3"
+        assert result["unlinked_trips"]["o_taz"][0] == 1
+        assert result["unlinked_trips"]["d_taz"][1] == 3
 
     def test_add_multiple_zone_geographies(
         self, sample_households, sample_persons, sample_trips, tmp_path
@@ -276,12 +276,47 @@ class TestAddZoneIds:
         assert "work_taz" in result["persons"].columns
         assert "work_county" in result["persons"].columns
 
+    def test_string_zone_ids(self, sample_households, sample_persons, sample_trips, tmp_path):
+        """Test handling of non-numeric (string) zone IDs."""
+        # Create zones with string IDs (not convertible to integers)
+        zones_gdf = gpd.GeoDataFrame(
+            {"zone_id": ["TAZ_A", "TAZ_B", "TAZ_C"]},
+            geometry=[
+                Polygon([(0, 0), (1, 0), (1, 1), (0, 1)]),
+                Polygon([(1, 1), (2, 1), (2, 2), (1, 2)]),
+                Polygon([(2, 2), (3, 2), (3, 3), (2, 3)]),
+            ],
+            crs="EPSG:4326",
+        )
+        shp_path = tmp_path / "zones.shp"
+        zones_gdf.to_file(shp_path)
+
+        zone_geographies = [
+            {
+                "shapefile": str(shp_path),
+                "zone_id_field": "zone_id",
+                "zone_name": "taz",
+            }
+        ]
+
+        result = add_zone_ids(
+            households=sample_households,
+            persons=sample_persons,
+            unlinked_trips=sample_trips,
+            zone_geographies=zone_geographies,
+        )
+
+        # Check that string zone IDs are preserved
+        assert result["households"]["home_taz"][0] == "TAZ_A"
+        assert result["households"]["home_taz"][1] == "TAZ_B"
+        assert result["persons"]["work_taz"][2] == "TAZ_C"
+
     def test_replaces_existing_zone_column(
         self, sample_households, sample_persons, sample_trips, zone_shapefile
     ):
         """Test that existing zone columns are replaced with warning."""
         # Add existing zone column
-        sample_households = sample_households.with_columns(pl.lit("OLD_VALUE").alias("home_taz"))
+        sample_households = sample_households.with_columns(pl.lit(999).alias("home_taz"))
 
         zone_geographies = [
             {
@@ -299,8 +334,8 @@ class TestAddZoneIds:
         )
 
         # Should have replaced the old value
-        assert result["households"]["home_taz"][0] == "TAZ1"
-        assert result["households"]["home_taz"][0] != "OLD_VALUE"
+        assert result["households"]["home_taz"][0] == 1
+        assert result["households"]["home_taz"][0] != 999
 
     def test_preserves_original_columns(
         self, sample_households, sample_persons, sample_trips, zone_shapefile
