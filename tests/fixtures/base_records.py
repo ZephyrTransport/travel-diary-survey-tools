@@ -109,6 +109,7 @@ def create_person(
     commute_subsidy_use_3: BooleanYesNo = BooleanYesNo.NO,
     commute_subsidy_use_4: BooleanYesNo = BooleanYesNo.NO,
     value_of_time: float = 15.0,
+    person_weight: float = 1.0,
     # Optional location fields
     home_lat: float | None = None,
     home_lon: float | None = None,
@@ -147,6 +148,7 @@ def create_person(
         commute_subsidy_use_3: Free parking used (BooleanYesNo)
         commute_subsidy_use_4: Discounted parking used (BooleanYesNo)
         value_of_time: Value of time in $/hour
+        person_weight: Person expansion factor
         home_lat: Home latitude (optional)
         home_lon: Home longitude (optional)
         work_lat: Work latitude (optional)
@@ -180,6 +182,7 @@ def create_person(
         "commute_subsidy_use_3": commute_subsidy_use_3.value,
         "commute_subsidy_use_4": commute_subsidy_use_4.value,
         "value_of_time": value_of_time,
+        "person_weight": person_weight,
     }
 
     # Set job_type - default to FIXED (1) for employed, MISSING (995) for non-workers

@@ -47,9 +47,11 @@ class LabeledEnum(Enum, metaclass=LabeledEnumMeta):
 
     Each enum member is defined as a tuple of (value, label):
         MEMBER_NAME = (1, "Descriptive Label")
+        or
+        MEMBER_NAME = ("some_string", "Descriptive Label")
 
     The enum provides:
-    - value: The integer value
+    - value: The integer or string value
     - label: The human-readable label
     - field_name: The canonical field name
     - description: The field description
@@ -80,7 +82,7 @@ class LabeledEnum(Enum, metaclass=LabeledEnumMeta):
 
     _label_: str
 
-    def __new__(cls, value: int, label: str) -> "LabeledEnum":
+    def __new__(cls, value: int | str, label: str) -> "LabeledEnum":
         """Create a new enum member with value and label.
 
         Args:
@@ -117,18 +119,18 @@ class LabeledEnum(Enum, metaclass=LabeledEnumMeta):
 
     @overload
     @classmethod
-    def from_value(cls, value: int, strict: bool = True) -> "LabeledEnum": ...
+    def from_value(cls, value: int | str, strict: bool = True) -> "LabeledEnum": ...
 
     @overload
     @classmethod
-    def from_value(cls, value: int, strict: bool = False) -> Optional["LabeledEnum"]: ...
+    def from_value(cls, value: int | str, strict: bool = False) -> Optional["LabeledEnum"]: ...
 
     @classmethod
-    def from_value(cls, value: int, strict: bool = True) -> Optional["LabeledEnum"]:
+    def from_value(cls, value: int | str, strict: bool = True) -> Optional["LabeledEnum"]:
         """Look up an enum member by its value.
 
         Args:
-            value: The integer value to search for
+            value: The integer or string value to search for
             strict: If True (default), raise ValueError if not found.
                    If False, return None if not found.
 
@@ -185,7 +187,7 @@ class LabeledEnum(Enum, metaclass=LabeledEnumMeta):
         return getattr(cls, "field_description", None)
 
     @classmethod
-    def to_dict(cls) -> dict[int, str]:
+    def to_dict(cls) -> dict[int | str, str]:
         """Get a dictionary mapping enum values to labels.
 
         Returns:

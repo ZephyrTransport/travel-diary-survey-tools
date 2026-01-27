@@ -35,7 +35,7 @@ Loads weight files and joins them to survey data tables. Can optionally derive m
 **Weight Hierarchy:**
 
 ```
-household_weight
+hh_weight
   └─ person_weight (carry forward via hh_id)
       └─ day_weight (carry forward via person_id)
           └─ unlinked_trip_weight (carry forward via day_id)

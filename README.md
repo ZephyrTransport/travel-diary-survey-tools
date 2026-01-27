@@ -89,25 +89,42 @@ subgraph Pipeline[**Pipeline**]
   Imputation --> JointTrips([Joint Trips])
   JointTrips --> LinkTrips([Link Trips])
   LinkTrips --> ExtractTours([Extract Tours])
-  ExtractTours --> Weighting([Weighting])
-  Weighting --> Format{Format Output}
+  ExtractTours --> Format{Format Output}
 
+  Format --> PUMS
   Format --> ActivitySim --> CnV1 --> ActivitySim
   Format --> DaySim --> CnV2 --> DaySim
-  Format --> Analysis --> CnV3 --> Analysis
-  Format --> Etc["... Other Formats ..."]
+  Format --> CTRAMP --> CnV3 --> CTRAMP
+  Format --> Standard --> CnV4
 
   subgraph Output[" "]
-    direction LR
-    ActivitySim{{ActivitySim<br>Format}}
-    DaySim{{DaySim<br>Format}}
-    Analysis{{Standard<br>Format}}
-    Etc{{Other<br>Formats}}
+    direction TB
+    WeightingPipeline --> Modeling
+  end
 
+  subgraph WeightingPipeline[**Weighting**]
+    direction TB
+    PUMS --> Weighting([Weighting]) --> Weights
+    Weighting([Weighting])
+    Weights[/"Expansion<br>Weights"\]
+  end
+
+  subgraph Modeling["Modeling"]
+    direction TB
+
+    ActivitySim{{ActivitySim<br>Format}}
     CnV1("Calibration &<br>Validation")
+
+    DaySim{{DaySim<br>Format}}
     CnV2("Calibration &<br>Validation")
-    CnV3("Analysis &<br>Validation")
-    Etc("etc...")
+
+    CTRAMP{{CT-RAMP<br>Format}}
+    CnV3("Calibration &<br>Validation")
+
+    Standard{{Standard<br>Format}}
+    CnV4("Analysis &<br>Validation")
+
+    style space1 fill:none,stroke:none
   end
 end
 
@@ -123,13 +140,14 @@ subgraph DataModels[**Data Models**]
   Tours[["tours"]]
 end
 
-
 style Setup fill:#f9f9f9,stroke:#333,stroke-width:1px,color:#000
 style RunPy fill:#e1f5e1,color:#000
 style ConfigYAML fill:#fff4e1,color:#000
 style Pipeline fill:#e3f2fd,stroke:#333,stroke-width:1px,color:#000
 style DataModels fill:#f3e5f5,stroke:#333,stroke-width:1px,color:#000
 style Format fill:#fff4e1,color:#000
+
+style Output fill:none,stroke:#333,stroke-width:0px,color:#000
 
 style LoadData color:#000
 style CustomPre fill:#f0f0f0,color:#000
@@ -149,8 +167,11 @@ style Tours fill:#d1c4e9,color:#000,stroke:#000
 
 style ActivitySim fill:#ffe0b2,color:#000
 style DaySim fill:#ffe0b2,color:#000
-style Analysis fill:#ffe0b2,color:#000
+style CTRAMP fill:#ffe0b2,color:#000
+style Standard fill:#ffe0b2,color:#000
+style PUMS fill:#ffe0b2,color:#000
 ```
+
 
 ### Pipeline Steps
 

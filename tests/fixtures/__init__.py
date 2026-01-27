@@ -61,6 +61,14 @@ from .scenario_builders import (
     work_tour_no_usual_location,
 )
 
+# Re-export schema utilities
+from .schema_utils import (
+    empty_joint_trips,
+    empty_linked_trips,
+    empty_tours,
+    model_to_polars_schema,
+)
+
 # Re-export tour builders
 from .tour_records import create_tour, get_tour_schema
 
@@ -103,8 +111,12 @@ __all__ = [
     "create_transit_commute_processed",
     "create_university_student_household",
     "create_unlinked_trip",
+    "empty_joint_trips",
+    "empty_linked_trips",
+    "empty_tours",
     "get_tour_schema",
     "lookup_location",
+    "model_to_polars_schema",
     "multi_person_household",
     "multi_stop_tour",
     "multi_stop_tour_processed",

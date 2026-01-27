@@ -10,8 +10,10 @@ import polars as pl
 from data_canon.codebook.days import TravelDow
 from data_canon.codebook.tours import TourCategory, TourDataQuality
 from data_canon.codebook.trips import Mode, PurposeCategory
+from data_canon.models.survey import TourModel
 
 from .field_utils import add_optional_fields_batch
+from .schema_utils import model_to_polars_schema
 
 
 def create_tour(
@@ -32,8 +34,8 @@ def create_tour(
     o_lon: float | None = None,
     d_lat: float | None = None,
     d_lon: float | None = None,
-    o_location_type: int = 0,
-    d_location_type: int = 0,
+    o_location_type: int = 1,  # Default to HOME
+    d_location_type: int = 4,  # Default to OTHER
     origin_depart_time: datetime | None = None,
     origin_arrive_time: datetime | None = None,
     dest_depart_time: datetime | None = None,
@@ -44,6 +46,7 @@ def create_tour(
     tour_mode: Mode = Mode.MISSING,
     student_category: str = "Not student",
     data_quality: TourDataQuality = TourDataQuality.VALID,
+    tour_weight: float = 1.0,
     joint_tour_id: int | None = None,
     parent_tour_id: int | None = None,
     subtour_num: int = 0,
@@ -81,6 +84,7 @@ def create_tour(
         tour_mode: Primary tour mode enum
         student_category: Student category for work/school tours
         data_quality: Data quality flag enum
+        tour_weight: Tour expansion factor
         joint_tour_id: Joint tour ID (None for individual tours)
         parent_tour_id: Parent tour (None for primary tours)
         subtour_num: Subtour number (0 for primary tours)
@@ -114,6 +118,8 @@ def create_tour(
         "tour_category": tour_category.value,
         "o_taz": o_taz,
         "d_taz": d_taz,
+        "o_TAZ1454": o_taz,  # Copy for CTRAMP compatibility
+        "d_TAZ1454": d_taz,  # Copy for CTRAMP compatibility
         "o_lat": o_lat,
         "o_lon": o_lon,
         "d_lat": d_lat,
@@ -130,9 +136,11 @@ def create_tour(
         "tour_mode": tour_mode.value,
         "student_category": student_category,
         "data_quality": data_quality.value,
+        "tour_weight": tour_weight,
         "joint_tour_id": joint_tour_id,
         "parent_tour_id": parent_tour_id,
         "subtour_num": subtour_num,
+        "single_trip_tour": False,  # Default to False, set by tour extraction
     }
 
     # Add optional MAZ fields
@@ -142,10 +150,10 @@ def create_tour(
 
 
 def get_tour_schema() -> dict[str, type]:
-    """Get Polars schema for tour DataFrames with optional int fields.
+    """Get Polars schema for tour DataFrames from the canonical TourModel.
 
-    Use this when creating tour DataFrames to ensure columns with None
-    values get the correct Int64 type instead of Null type.
+    Adds test-specific zone ID fields that are not in the canonical model
+    but are commonly used in test fixtures.
 
     Example:
         tours = pl.DataFrame(
@@ -153,29 +161,22 @@ def get_tour_schema() -> dict[str, type]:
             schema=get_tour_schema()
         )
     """
-    return {
-        "tour_id": pl.Int64,
-        "person_id": pl.Int64,
-        "hh_id": pl.Int64,
-        "person_num": pl.Int64,
-        "day_id": pl.Int64,
-        "day_num": pl.Int64,
-        "tour_num": pl.Int64,
-        "tour_purpose": pl.Int64,
-        "tour_category": pl.Int64,
-        "o_taz": pl.Int64,
-        "d_taz": pl.Int64,
-        "origin_depart_time": pl.Datetime,
-        "origin_arrive_time": pl.Datetime,
-        "dest_depart_time": pl.Datetime,
-        "dest_arrive_time": pl.Datetime,
-        "travel_dow": pl.Int64,
-        "num_trips": pl.Int64,
-        "num_travelers": pl.Int64,
-        "tour_mode": pl.Int64,
-        "student_category": pl.String,
-        "data_quality": pl.Int64,
-        "joint_tour_id": pl.Int64,
-        "parent_tour_id": pl.Int64,
-        "subtour_num": pl.Int64,
-    }
+    schema = model_to_polars_schema(TourModel)
+
+    # Add test-specific zone ID fields
+    schema.update(
+        {
+            "person_num": pl.Int64,
+            "day_num": pl.Int64,
+            "o_taz": pl.Int64,
+            "d_taz": pl.Int64,
+            "o_TAZ1454": pl.Int64,
+            "d_TAZ1454": pl.Int64,
+            "travel_dow": pl.Int64,
+            "num_trips": pl.Int64,
+            "student_category": pl.String,
+            "data_quality": pl.Int64,
+        }
+    )
+
+    return schema
