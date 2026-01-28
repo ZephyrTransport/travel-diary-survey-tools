@@ -278,10 +278,9 @@ def format_ctramp(
         config=config,
     )
 
-    # Format mandatory locations - needs canonical households (home_taz) and formatted (income)
+    # Format mandatory locations - uses formatted persons and households
     mandatory_location_ctramp = format_mandatory_location(
-        persons_canonical=persons,
-        households_canonical=households,
+        persons_ctramp=persons_ctramp,
         households_ctramp=households_ctramp,
         config=config,
     )
@@ -324,9 +323,24 @@ def format_ctramp(
         "mandatory_locations_ctramp": mandatory_location_ctramp,
     }
 
-    # Clean up temporary columns (any column starting with _) from all tables
+    # Clean up temporary columns from all tables
+    # Remove columns starting with _ (temp columns)
+    # Remove intermediate category columns used only for format_mandatory_location
+    # Could probably leave them in buy dropping to conform to CT-RAMP spec
     for name, df in tables.items():
         temp_cols = [col for col in df.columns if col.startswith("_")]
+
+        # Remove category columns from persons_ctramp
+        if name == "persons_ctramp":
+            category_cols = ["employment_category", "student_category"]
+            temp_cols.extend([col for col in category_cols if col in df.columns])
+
+        # Remove home_taz from households_ctramp (keep only renamed 'taz')
+        if name == "households_ctramp":
+            home_taz_col = f"home_{config.taz_field}"
+            if home_taz_col in df.columns:
+                temp_cols.append(home_taz_col)
+
         if temp_cols:
             tables[name] = df.drop(temp_cols)
 

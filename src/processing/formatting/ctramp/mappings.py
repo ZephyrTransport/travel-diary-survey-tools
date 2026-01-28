@@ -9,6 +9,7 @@ import logging
 import polars as pl
 
 from data_canon.codebook.ctramp import (
+    CTRAMPEmploymentCategory,
     CTRAMPGender,
     CTRAMPModeType,
     CTRAMPPersonType,
@@ -39,6 +40,14 @@ GENDER_MAP = {
     # Gender.OTHER.value: ?...,
     # Gender.PNTA.value: ?...,
     # -1: ?...,
+}
+
+# Employment to CT-RAMP employment category mapping (for mandatory locations)
+EMPLOYMENT_TO_CTRAMP = {
+    Employment.EMPLOYED_FULLTIME.value: CTRAMPEmploymentCategory.FULL_TIME_EMPLOYED.value,
+    Employment.EMPLOYED_PARTTIME.value: CTRAMPEmploymentCategory.PART_TIME_EMPLOYED.value,
+    Employment.EMPLOYED_SELF.value: CTRAMPEmploymentCategory.FULL_TIME_EMPLOYED.value,
+    Employment.EMPLOYED_UNPAID.value: CTRAMPEmploymentCategory.PART_TIME_EMPLOYED.value,
 }
 
 # Employment to person type component

@@ -18,18 +18,21 @@ import polars as pl
 from data_canon.codebook.ctramp import (
     _INMF_MAXES,
     _INMF_REVERSE_LOOKUP,
+    CTRAMPEmploymentCategory,
     CTRAMPPersonType,
     CTRAMPPurpose,
+    CTRAMPStudentCategory,
     FreeParkingChoice,
     IMFChoice,
 )
 from data_canon.codebook.generic import BooleanYesNo
-from data_canon.codebook.persons import AgeCategory, Employment, JobType
+from data_canon.codebook.persons import AgeCategory, Employment, JobType, SchoolType, Student
 from utils.helpers import get_age_midpoint
 
 from .ctramp_config import CTRAMPConfig
 from .mappings import (
     EMPLOYMENT_MAP,
+    EMPLOYMENT_TO_CTRAMP,
     GENDER_MAP,
     SCHOOL_TYPE_MAP,
     STUDENT_MAP,
@@ -471,6 +474,58 @@ def format_persons(
         .alias("wfh_choice")
     )
 
+    # Compute employment_category from employment for mandatory locations
+    persons_ctramp = persons_ctramp.with_columns(
+        pl.col("employment")
+        .replace_strict(
+            EMPLOYMENT_TO_CTRAMP,
+            default=CTRAMPEmploymentCategory.NOT_EMPLOYED.value,
+        )
+        .alias("employment_category")
+    )
+
+    # Compute student_category from student and school_type for mandatory locations
+    persons_ctramp = persons_ctramp.with_columns(
+        pl.when(
+            pl.col("student").is_in(
+                [
+                    Student.FULLTIME_INPERSON.value,
+                    Student.PARTTIME_INPERSON.value,
+                    Student.FULLTIME_ONLINE.value,
+                    Student.PARTTIME_ONLINE.value,
+                ]
+            )
+            & pl.col("school_type").is_in(
+                [
+                    SchoolType.COLLEGE_2YEAR.value,
+                    SchoolType.COLLEGE_4YEAR.value,
+                    SchoolType.GRADUATE_SCHOOL.value,
+                ]
+            )
+        )
+        .then(pl.lit(CTRAMPStudentCategory.COLLEGE_OR_HIGHER.value))
+        .when(
+            pl.col("student").is_in(
+                [
+                    Student.FULLTIME_INPERSON.value,
+                    Student.PARTTIME_INPERSON.value,
+                    Student.FULLTIME_ONLINE.value,
+                    Student.PARTTIME_ONLINE.value,
+                ]
+            )
+            & pl.col("school_type").is_in(
+                [
+                    SchoolType.ELEMENTARY.value,
+                    SchoolType.MIDDLE_SCHOOL.value,
+                    SchoolType.HIGH_SCHOOL.value,
+                ]
+            )
+        )
+        .then(pl.lit(CTRAMPStudentCategory.GRADE_OR_HIGH_SCHOOL.value))
+        .otherwise(pl.lit(CTRAMPStudentCategory.NOT_STUDENT.value))
+        .alias("student_category")
+    )
+
     # Note: value_of_time is model output, not survey data
     # If it exists in the input, keep it; otherwise it will be null
 
@@ -487,6 +542,8 @@ def format_persons(
         "imf_choice",
         "inmf_choice",
         "wfh_choice",
+        "employment_category",
+        "student_category",
     ]
 
     # if value_of_time is not in input, drop

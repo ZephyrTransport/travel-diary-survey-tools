@@ -205,13 +205,6 @@ def format_households(
         pl.col("income_followup").cast(pl.Int64),
     )
 
-    # Rename columns to CT-RAMP naming convention
-    households_ctramp = households_ctramp.rename(
-        {
-            f"home_{config.taz_field}": "taz",
-        }
-    )
-
     # Map income categories to midpoint values
     income_detailed_map = {
         income_cat.value: int(get_income_midpoint(income_cat))
@@ -254,12 +247,13 @@ def format_households(
     # Select final columns in CT-RAMP order
     output_cols = [
         "hh_id",
-        "taz",
         "income",
         "autos",
         "jtf_choice",
         "size",
         "workers",
+        # Keep home_taz temporarily for format_mandatory_location (will be renamed to taz later)
+        f"home_{config.taz_field}",
     ]
 
     # Add weight and sampleRate if hh_weight exists
@@ -273,6 +267,11 @@ def format_households(
         output_cols.extend(["hh_weight", "sampleRate"])
 
     households_ctramp = households_ctramp.select(output_cols)
+
+    # Rename home_taz to taz and alias it for format_mandatory_location
+    households_ctramp = households_ctramp.with_columns(
+        pl.col(f"home_{config.taz_field}").alias("taz")
+    )
 
     logger.info("Formatted %d households for CT-RAMP", len(households_ctramp))
 
