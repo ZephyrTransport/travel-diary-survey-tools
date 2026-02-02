@@ -1,6 +1,7 @@
 """Tests for pipeline logging configuration."""
 
 import logging
+from datetime import UTC, datetime
 
 from pipeline.logger import setup_logging
 
@@ -168,4 +169,5 @@ class TestSetupLogging:
         # Check format: timestamp | level | message
         assert " | INFO | Test message" in content
         # Should have timestamp
-        assert "2026-01-" in content  # Current date
+        current_date_prefix = datetime.now(UTC).strftime("%Y-%m-")
+        assert current_date_prefix in content  # Current date
