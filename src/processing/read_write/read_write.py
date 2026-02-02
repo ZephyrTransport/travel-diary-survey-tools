@@ -51,6 +51,34 @@ def load_data(
     return data
 
 
+def _write_checks(
+    canonical_data: CanonicalData,
+    table: str,
+) -> None:
+    """Perform checks before writing a canonical table."""
+    # Check that the table exists at all
+    if not hasattr(canonical_data, table):
+        msg = f"Missing table {table}; cannot write."
+        raise ValueError(msg)
+
+    df = getattr(canonical_data, table)
+
+    # Check that it's not empty
+    if df is None or (isinstance(df, pl.DataFrame) and df.is_empty()):
+        msg = f"Table {table} is empty; cannot write."
+        raise ValueError(msg)
+
+    # If the table is truly canonical, validate it
+    if table in canonical_data.models:
+        logger.info("Validating %s...", table)
+        canonical_data.validate(table)
+    else:
+        logger.warning(
+            "Table %s not in CanonicalData models; skipping validation.",
+            table,
+        )
+
+
 @step()
 def write_data(
     output_paths: dict[str, str],
@@ -65,21 +93,9 @@ def write_data(
         df = getattr(canonical_data, table)
         file_path = Path(path)
 
-        # Check that the table exists at all
-        if not hasattr(canonical_data, table):
-            msg = f"CanonicalData missing table {table}; cannot write."
-            raise ValueError(msg)
-
-        # If the table is truly canonical, validate it
+        # Perform checks before writing
         if validate_input:
-            if table in canonical_data.models:
-                logger.info("Validating %s...", table)
-                canonical_data.validate(table)
-            else:
-                logger.warning(
-                    "Table %s not in CanonicalData models; skipping validation.",
-                    table,
-                )
+            _write_checks(canonical_data, table)
 
         if create_dirs:
             file_path.parent.mkdir(parents=True, exist_ok=True)

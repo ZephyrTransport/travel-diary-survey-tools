@@ -42,21 +42,6 @@ def format_mandatory_location(
     """
     logger.info("Formatting mandatory location data for CT-RAMP")
 
-    # Check if persons has work/school location columns
-    # If not, return empty DataFrame (no mandatory locations)
-    if (
-        f"work_{config.taz_field}" not in persons_ctramp.columns
-        and f"school_{config.taz_field}" not in persons_ctramp.columns
-    ):
-        return pl.DataFrame(
-            schema={
-                "person_id": pl.Int64,
-                "taz": pl.Int64,
-                "WorkLocation": pl.Int64,
-                "SchoolLocation": pl.Int64,
-            }
-        )
-
     # Join persons with households to get income and home TAZ
     mandatory_loc = persons_ctramp.join(
         households_ctramp.select(["hh_id", f"home_{config.taz_field}", "income"]),

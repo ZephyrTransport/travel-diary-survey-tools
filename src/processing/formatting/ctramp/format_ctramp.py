@@ -16,6 +16,15 @@ import logging
 
 import polars as pl
 
+from data_canon.models.ctramp import (
+    HouseholdCTRAMPModel,
+    IndividualTourCTRAMPModel,
+    IndividualTripCTRAMPModel,
+    JointTourCTRAMPModel,
+    JointTripCTRAMPModel,
+    MandatoryLocationCTRAMPModel,
+    PersonCTRAMPModel,
+)
 from pipeline.decoration import step
 
 from .ctramp_config import CTRAMPConfig
@@ -26,6 +35,17 @@ from .format_tours import format_individual_tour, format_joint_tour
 from .format_trips import format_individual_trip, format_joint_trip
 
 logger = logging.getLogger(__name__)
+
+
+MODEL_MAP = {
+    "households_ctramp": HouseholdCTRAMPModel,
+    "persons_ctramp": PersonCTRAMPModel,
+    "mandatory_locations_ctramp": MandatoryLocationCTRAMPModel,
+    "individual_trips_ctramp": IndividualTripCTRAMPModel,
+    "individual_tours_ctramp": IndividualTourCTRAMPModel,
+    "joint_trips_ctramp": JointTripCTRAMPModel,
+    "joint_tours_ctramp": JointTourCTRAMPModel,
+}
 
 
 def _drop_missing_taz(
@@ -168,6 +188,26 @@ def _drop_missing_taz(
     )
 
     return households, persons, tours, linked_trips, joint_trips
+
+
+def _drop_excess_fields(
+    df: pl.DataFrame,
+    model_cls: type,
+) -> pl.DataFrame:
+    """Drop columns from df that are not in the data model class.
+
+    Args:
+        df: Input DataFrame
+        model_cls: Data model class with defined fields
+    Returns:
+        DataFrame with only columns defined in the model class
+    valid_fields = set(model_cls.__fields__.keys())
+    cols_to_drop = [col for col in df.columns if col not in valid_fields]
+    return df.drop(cols_to_drop)
+    """
+    valid_fields = set(model_cls.__fields__.keys())
+    cols_to_drop = set(df.columns) - valid_fields
+    return df.drop(cols_to_drop)
 
 
 @step()
@@ -323,25 +363,9 @@ def format_ctramp(
         "mandatory_locations_ctramp": mandatory_location_ctramp,
     }
 
-    # Clean up temporary columns from all tables
-    # Remove columns starting with _ (temp columns)
-    # Remove intermediate category columns used only for format_mandatory_location
-    # Could probably leave them in buy dropping to conform to CT-RAMP spec
-    for name, df in tables.items():
-        temp_cols = [col for col in df.columns if col.startswith("_")]
-
-        # Remove category columns from persons_ctramp
-        if name == "persons_ctramp":
-            category_cols = ["employment_category", "student_category"]
-            temp_cols.extend([col for col in category_cols if col in df.columns])
-
-        # Remove home_taz from households_ctramp (keep only renamed 'taz')
-        if name == "households_ctramp":
-            home_taz_col = f"home_{config.taz_field}"
-            if home_taz_col in df.columns:
-                temp_cols.append(home_taz_col)
-
-        if temp_cols:
-            tables[name] = df.drop(temp_cols)
+    # Cleanup tables
+    for table_name, df in tables.items():
+        model_cls = MODEL_MAP[table_name]
+        tables[table_name] = _drop_excess_fields(df, model_cls)
 
     return tables

@@ -216,27 +216,26 @@ def format_individual_tour(
         )
         raise ValueError(msg)
 
-    # Select and rename to CTRAMP columns
-    output_cols = [
-        pl.col("hh_id"),
-        pl.col("person_id"),
-        pl.col("person_num"),
-        pl.col("person_type_ctramp").alias("person_type"),
-        pl.col("tour_num").alias("tour_id"),  # CTRAMP tour_id is tour_num
-        pl.col("tour_id").alias("_tour_id_canonical"),  # Temp column for joining with trips
-        pl.col("tour_category_ctramp").alias("tour_category"),
-        pl.col("tour_purpose_ctramp").alias("tour_purpose"),
-        pl.col(f"o_{config.taz_field}").cast(pl.Int64).alias("orig_taz"),
-        pl.col(f"d_{config.taz_field}").cast(pl.Int64).alias("dest_taz"),
-        pl.col("start_hour").cast(pl.Int64),
-        pl.col("end_hour").cast(pl.Int64),
-        pl.col("tour_mode_ctramp").alias("tour_mode"),
-        pl.col("atWork_freq").cast(pl.Int64),
-        pl.col("num_ob_stops").cast(pl.Int64),
-        pl.col("num_ib_stops").cast(pl.Int64),
-    ]
+    # Format columns to CTRAMP specifications
+    individual_tours = individual_tours.with_columns(
+        [
+            pl.col("person_type_ctramp").alias("person_type"),
+            pl.col("tour_num").alias("tour_id"),  # CTRAMP tour_id is tour_num
+            pl.col("tour_id").alias("_tour_id_canonical"),  # Temp column for joining with trips
+            pl.col("tour_category_ctramp").alias("tour_category"),
+            pl.col("tour_purpose_ctramp").alias("tour_purpose"),
+            pl.col(f"o_{config.taz_field}").cast(pl.Int64).alias("orig_taz"),
+            pl.col(f"d_{config.taz_field}").cast(pl.Int64).alias("dest_taz"),
+            pl.col("start_hour").cast(pl.Int64),
+            pl.col("end_hour").cast(pl.Int64),
+            pl.col("tour_mode_ctramp").alias("tour_mode"),
+            pl.col("atWork_freq").cast(pl.Int64),
+            pl.col("num_ob_stops").cast(pl.Int64),
+            pl.col("num_ib_stops").cast(pl.Int64),
+        ]
+    )
 
-    # Add weight and sampleRate if tour_weight exists
+    # Add sampleRate if tour_weight exists
     if "tour_weight" in individual_tours.columns:
         individual_tours = individual_tours.with_columns(
             pl.when(pl.col("tour_weight") > 0)
@@ -244,12 +243,9 @@ def format_individual_tour(
             .otherwise(None)
             .alias("sampleRate")
         )
-        output_cols.extend([pl.col("tour_weight"), pl.col("sampleRate")])
 
-    individual_tours_ctramp = individual_tours.select(output_cols)
-
-    logger.info("Formatted %d individual tour records", len(individual_tours_ctramp))
-    return individual_tours_ctramp
+    logger.info("Formatted %d individual tour records", len(individual_tours))
+    return individual_tours
 
 
 def format_joint_tour(

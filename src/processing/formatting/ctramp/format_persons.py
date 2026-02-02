@@ -528,27 +528,10 @@ def format_persons(
 
     # Note: value_of_time is model output, not survey data
     # If it exists in the input, keep it; otherwise it will be null
-
-    output_cols = [
-        "hh_id",
-        "person_id",
-        "person_num",
-        "age",
-        "gender",
-        "type",
-        "value_of_time",
-        "fp_choice",
-        "activity_pattern",
-        "imf_choice",
-        "inmf_choice",
-        "wfh_choice",
-        "employment_category",
-        "student_category",
-    ]
-
-    # if value_of_time is not in input, drop
     if "value_of_time" not in persons_ctramp.columns:
-        output_cols.remove("value_of_time")
+        persons_ctramp = persons_ctramp.with_columns(
+            pl.lit(None).cast(pl.Float64).alias("value_of_time")
+        )
 
     # Add weight and sampleRate if person_weight exists
     if "person_weight" in persons_ctramp.columns:
@@ -558,10 +541,6 @@ def format_persons(
             .otherwise(None)
             .alias("sampleRate")
         )
-        output_cols.extend(["person_weight", "sampleRate"])
-
-    # Select final columns in CT-RAMP order
-    persons_ctramp = persons_ctramp.select(output_cols)
 
     logger.info("Formatted %d persons for CT-RAMP", len(persons_ctramp))
 

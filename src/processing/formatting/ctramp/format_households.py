@@ -244,18 +244,6 @@ def format_households(
         pl.col("num_vehicles").cast(pl.Int64).alias("autos")
     )
 
-    # Select final columns in CT-RAMP order
-    output_cols = [
-        "hh_id",
-        "income",
-        "autos",
-        "jtf_choice",
-        "size",
-        "workers",
-        # Keep home_taz temporarily for format_mandatory_location (will be renamed to taz later)
-        f"home_{config.taz_field}",
-    ]
-
     # Add weight and sampleRate if hh_weight exists
     if "hh_weight" in households_ctramp.columns:
         households_ctramp = households_ctramp.with_columns(
@@ -264,9 +252,6 @@ def format_households(
             .otherwise(None)
             .alias("sampleRate")
         )
-        output_cols.extend(["hh_weight", "sampleRate"])
-
-    households_ctramp = households_ctramp.select(output_cols)
 
     # Rename home_taz to taz and alias it for format_mandatory_location
     households_ctramp = households_ctramp.with_columns(

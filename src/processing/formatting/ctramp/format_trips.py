@@ -167,41 +167,29 @@ def format_individual_trip(
         ]
     )
 
-    # Select and rename to CTRAMP columns
-    output_cols = [
-        pl.col("hh_id"),
-        pl.col("person_id"),
-        pl.col("person_num"),
-        pl.col("tour_id"),
-        pl.col("stop_id"),
-        pl.col("inbound"),
-        pl.col("tour_purpose"),
-        pl.col("orig_purpose"),
-        pl.col("dest_purpose"),
-        pl.col(f"o_{config.taz_field}").cast(pl.Int64).alias("orig_taz"),
-        pl.col(f"d_{config.taz_field}").cast(pl.Int64).alias("dest_taz"),
-        pl.lit(0).cast(pl.Int64).alias("parking_taz"),  # Default 0 (no parking)
-        pl.col("depart_hour").cast(pl.Int64),
-        pl.col("trip_mode"),
-        pl.col("tour_mode"),
-        pl.col("tour_category"),
-        pl.col("depart_minutes").cast(pl.Int64),
-        pl.col("arrive_minutes").cast(pl.Int64),
-    ]
+    # Ensure required columns are formatted and cast to correct types
+    individual_trips_ctramp = individual_trips.with_columns(
+        [
+            pl.col(f"o_{config.taz_field}").cast(pl.Int64).alias("orig_taz"),
+            pl.col(f"d_{config.taz_field}").cast(pl.Int64).alias("dest_taz"),
+            pl.lit(0).cast(pl.Int64).alias("parking_taz"),  # Default 0 (no parking)
+            pl.col("depart_hour").cast(pl.Int64),
+            pl.col("depart_minutes").cast(pl.Int64),
+            pl.col("arrive_minutes").cast(pl.Int64),
+        ]
+    )
 
     # Add weight and sampleRate if linked_trip_weight exists
-    if "linked_trip_weight" in individual_trips.columns:
-        individual_trips = individual_trips.with_columns(
-            pl.when(pl.col("linked_trip_weight") > 0)
-            .then(pl.col("linked_trip_weight").pow(-1))
-            .otherwise(None)
-            .alias("sampleRate")
+    if "linked_trip_weight" in individual_trips_ctramp.columns:
+        individual_trips_ctramp = individual_trips_ctramp.with_columns(
+            [
+                pl.col("linked_trip_weight").alias("trip_weight"),
+                pl.when(pl.col("linked_trip_weight") > 0)
+                .then(pl.col("linked_trip_weight").pow(-1))
+                .otherwise(None)
+                .alias("sampleRate"),
+            ]
         )
-        output_cols.extend(
-            [pl.col("linked_trip_weight").alias("trip_weight"), pl.col("sampleRate")]
-        )
-
-    individual_trips_ctramp = individual_trips.select(output_cols)
 
     logger.info("Formatted %d individual trip records", len(individual_trips_ctramp))
     return individual_trips_ctramp
