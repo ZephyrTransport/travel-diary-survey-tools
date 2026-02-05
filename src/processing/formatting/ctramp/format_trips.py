@@ -167,6 +167,11 @@ def format_individual_trip(
         ]
     )
 
+    # Add survey distance
+    individual_trips = individual_trips.with_columns(
+        (pl.col("distance_meters") / 1609.34).alias("distance_survey")
+    )
+
     # Ensure required columns are formatted and cast to correct types
     individual_trips_ctramp = individual_trips.with_columns(
         [

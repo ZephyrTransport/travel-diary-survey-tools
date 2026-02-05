@@ -224,6 +224,20 @@ class MandatoryLocationCTRAMPModel(BaseModel):
         default=None,
         description="Walk to transit work sub-zone (0=cannot walk to transit; 1=short-walk; 2=long-walk)",
     )
+    work_distance_survey: float | None = Field(
+        default=None,
+        ge=0,
+        description="""
+        Survey-reported home to work distance in miles calculated as average traveled distance to work
+        (for validation, not part of CT-RAMP spec)""",
+    )
+    school_distance_survey: float | None = Field(
+        default=None,
+        ge=0,
+        description="""
+        Survey-reported home to school distance in miles calculated as average traveled distance to school
+        (for validation, not part of CT-RAMP spec)""",
+    )
 
 
 class IndividualTourCTRAMPModel(BaseModel):
@@ -408,6 +422,11 @@ class IndividualTripCTRAMPModel(BaseModel):
         default=None,
         ge=0,
         description="Survey weight for the trip, aka linked_trip_weight (not part of CT-RAMP spec)",
+    )
+    distance_survey: float | None = Field(
+        default=None,
+        ge=0,
+        description="Survey-reported trip distance in miles (for validation, not part of CT-RAMP spec)",
     )
 
 

@@ -322,6 +322,7 @@ def format_ctramp(
     mandatory_location_ctramp = format_mandatory_location(
         persons_ctramp=persons_ctramp,
         households_ctramp=households_ctramp,
+        linked_trips_canonical=linked_trips,
         config=config,
     )
 

@@ -85,6 +85,23 @@ class CTRAMPConfig(BaseModel):
         ),
     )
 
+    # spatial buffer (meters) for matching fixed locations to trip destinations
+    fixed_location_buffer_meters: float = Field(
+        default=200.0,
+        ge=0,
+        description=(
+            "Spatial buffer in meters for matching fixed work/school "
+            "locations to trip destinations when calculating distances."
+        ),
+    )
+
+    # Distance units
+    distance_unit: str = Field(
+        default="miles",
+        pattern="^(miles|kilometers|meters)$",
+        description="Distance unit for CT-RAMP formatting ('miles', 'kilometers', or 'meters').",
+    )
+
     @model_validator(mode="after")
     def validate_income_ordering(self) -> "CTRAMPConfig":
         """Validate that income thresholds are in proper order."""
