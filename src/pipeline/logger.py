@@ -56,6 +56,9 @@ def setup_logging(
 
     # File handler
     if log_file is not None:
+        if not Path(log_file).exists():
+            Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+
         file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
         file_handler.setLevel(file_level)
         file_handler.setFormatter(formatter)

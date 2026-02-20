@@ -182,10 +182,12 @@ class PipelineCache:
             file_ext = ".pkl" if table_type == "pickle" else ".parquet"
             file_path = cache_path / f"{table_name}{file_ext}"
             file_size_mb = file_path.stat().st_size / (1024 * 1024)
-            size_str = f" [{file_size_mb:.2f} MB]"
             format_name = "pickle" if table_type == "pickle" else "parquet"
 
-            load_info.append(f"  ← {table_name} {obj_type}: {format_name}{shape}{size_str}")
+            load_info.append(
+                f"  {table_name:<20} {obj_type:<15} ← {format_name:<10}"
+                f"{shape:<20}{file_size_mb:>8.2f} MB"
+            )
 
         self._stats["loaded"] += 1
         logger.info(
@@ -416,6 +418,6 @@ def _save_data(cache_path: Path, name: str, obj: Any) -> tuple[str, str]:  # noq
 
     # Build info string (common for all types)
     file_size_mb = obj_path.stat().st_size / (1024 * 1024)
-    info = f"  → {name} {obj_type}: {format_name}{shape} [{file_size_mb:.2f} MB]"
+    info = f"  {name:<20} {obj_type:<15} → {format_name:<10}{shape:<20} {file_size_mb:>8.2f} MB"
 
     return data_type, info

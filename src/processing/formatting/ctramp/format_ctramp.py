@@ -93,7 +93,7 @@ def _drop_missing_taz(
     valid_hh_ids = households["hh_id"]
 
     # Step 2: Remove orphaned persons
-    persons = persons.filter(pl.col("hh_id").is_in(valid_hh_ids))
+    persons = persons.filter(pl.col("hh_id").is_in(valid_hh_ids.implode()))
 
     logger.info(
         "Dropped %d households without valid home TAZ (keeping %d households, %d persons)",
@@ -105,7 +105,7 @@ def _drop_missing_taz(
     # Step 3: Filter tours by household and TAZ fields
     if len(tours) > 0:
         tours = tours.filter(
-            pl.col("hh_id").is_in(valid_hh_ids)
+            pl.col("hh_id").is_in(valid_hh_ids.implode())
             & pl.col(f"o_{config.taz_field}").is_not_null()
             & (pl.col(f"o_{config.taz_field}") != -1)
             & pl.col(f"d_{config.taz_field}").is_not_null()
@@ -118,7 +118,7 @@ def _drop_missing_taz(
     # Step 4: Filter linked trips by tour and TAZ fields
     if len(linked_trips) > 0:
         linked_trips = linked_trips.filter(
-            pl.col("tour_id").is_in(valid_tour_ids)
+            pl.col("tour_id").is_in(valid_tour_ids.implode())
             & pl.col(f"o_{config.taz_field}").is_not_null()
             & (pl.col(f"o_{config.taz_field}") != -1)
             & pl.col(f"d_{config.taz_field}").is_not_null()
@@ -130,7 +130,7 @@ def _drop_missing_taz(
         # Remove tours that lost all their trips
         if len(tours) > 0:
             tours_before = len(tours)
-            tours = tours.filter(pl.col("tour_id").is_in(tours_with_trips))
+            tours = tours.filter(pl.col("tour_id").is_in(tours_with_trips.implode()))
             if tours_before != len(tours):
                 logger.info(
                     "Removed %d tours that had no valid trips remaining",

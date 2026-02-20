@@ -31,7 +31,7 @@ This matrix shows which columns are required in which pipeline steps.
 |  | `work_lon` | float or None | ≥ -180, ≤ 180 |  |  |  |  | ✓ |  |  |  |  |  |
 |  | `school_lat` | float or None | ≥ -90, ≤ 90 |  |  |  |  | ✓ |  |  |  |  |  |
 |  | `school_lon` | float or None | ≥ -180, ≤ 180 |  |  |  |  | ✓ |  |  |  |  |  |
-|  | `person_type` | PersonType |  |  |  |  |  |  |  |  |  |  |  |
+|  | `person_type` | data_canon.codebook.persons.PersonType or None |  |  |  |  |  |  |  |  |  |  |  |
 |  | `job_type` | data_canon.codebook.persons.JobType or None |  |  |  |  |  |  |  |  | ✓ |  |  |
 |  | `employment` | Employment |  |  |  |  |  | ✓ |  |  |  |  |  |
 |  | `student` | Student |  |  |  |  |  | ✓ |  |  |  |  |  |
@@ -40,20 +40,21 @@ This matrix shows which columns are required in which pipeline steps.
 |  | `work_mode` | data_canon.codebook.trips.Mode or None |  |  |  |  |  |  |  |  |  | ✓ |  |
 |  | `commute_subsidy_use_3` | data_canon.codebook.generic.BooleanYesNo or None |  |  |  |  |  |  |  |  | ✓ |  |  |
 |  | `commute_subsidy_use_4` | data_canon.codebook.generic.BooleanYesNo or None |  |  |  |  |  |  |  |  | ✓ |  |  |
-|  | `is_proxy` | bool |  |  |  |  |  |  |  |  |  | ✓ |  |
+|  | `is_proxy` | bool or None |  |  |  |  |  |  |  |  |  | ✓ |  |
 |  | `num_days_complete` | int | ≥ 0 |  |  |  |  |  |  |  |  |  |  |
 |  | `person_weight` | float or None | ≥ 0 |  |  |  |  |  |  |  |  |  |  |
 | **days** | `person_id` | int | ≥ 1, FK → `persons.person_id`, REQ_CHILD |  |  |  |  |  |  |  |  |  |  |
 |  | `day_id` | int | ≥ 1, UNIQUE |  |  |  |  |  |  |  |  |  |  |
 |  | `hh_id` | int | ≥ 1, FK → `households.hh_id` |  |  |  |  |  |  |  |  |  |  |
-|  | `travel_dow` | TravelDow |  |  |  |  |  |  |  |  |  |  |  |
+|  | `travel_date` | datetime |  |  |  |  |  |  |  |  |  |  |  |
+|  | `travel_dow` | TravelDow |  |  |  |  |  |  |  |  |  | ✓ |  |
 |  | `day_weight` | float or None | ≥ 0 |  |  |  |  |  |  |  |  |  |  |
 | **unlinked_trips** | `unlinked_trip_id` | int | ≥ 1, UNIQUE |  |  |  |  |  |  |  |  |  |  |
-|  | `day_id` | int | ≥ 1, FK → `days.day_id` |  |  |  |  |  |  |  |  |  |  |
+|  | `day_id` | int | ≥ 1, FK → `days.day_id` |  |  | ✓ |  | ✓ |  |  |  |  |  |
 |  | `person_id` | int | ≥ 1, FK → `persons.person_id` |  |  |  |  |  |  |  |  |  |  |
 |  | `hh_id` | int | ≥ 1, FK → `households.hh_id` |  |  |  |  |  |  |  |  |  |  |
 |  | `linked_trip_id` | int | ≥ 1, FK → `linked_trips.linked_trip_id` |  |  |  |  | ✓ |  |  |  |  |  |
-|  | `tour_id` | int | ≥ 1, FK → `tours.tour_id` |  |  |  |  |  |  |  |  | ✓ |  |
+|  | `tour_id` | int or None | ≥ 1, FK → `tours.tour_id` |  |  |  |  |  |  |  |  | ✓ |  |
 |  | `o_lon` | float | ≥ -180, ≤ 180 |  |  | ✓ |  |  |  |  |  |  |  |
 |  | `o_lat` | float | ≥ -90, ≤ 90 |  |  | ✓ |  |  |  |  |  |  |  |
 |  | `d_lon` | float | ≥ -180, ≤ 180 |  |  | ✓ |  |  |  |  |  |  |  |
@@ -314,6 +315,7 @@ This section shows the categorical values and labels for custom enum fields.
 | --- | --- |
 | 1 | Female |
 | 2 | Male |
+| 3 | Transgender |
 | 4 | Non-binary |
 | 995 | Missing Response |
 | 997 | Other/prefer to self-describe |
@@ -462,15 +464,18 @@ This section shows the categorical values and labels for custom enum fields.
 | 27 | Paratransit/Dial-A-Ride |
 | 30 | BART |
 | 31 | Airplane/helicopter |
+| 32 | Boat/ferry/water taxi |
 | 33 | Work car |
 | 34 | Friend/relative/colleague car |
 | 36 | Regular taxi |
 | 38 | University/college shuttle |
+| 39 | Light rail |
 | 41 | Intercity/commuter rail (ACE, Amtrak, Caltrain) |
 | 42 | Other rail |
 | 43 | Skateboard/rollerblade |
 | 44 | Golf cart |
 | 45 | ATV |
+| 46 | Local public bus |
 | 47 | Motorcycle (household) |
 | 49 | Rideshare (Uber, Lyft, etc.) |
 | 53 | MUNI Metro |
@@ -481,10 +486,14 @@ This section shows the categorical values and labels for custom enum fields.
 | 61 | Rapid transit bus (BRT) |
 | 62 | Employer shuttle/bus |
 | 63 | Medical transportation |
+| 64 | Uber |
+| 65 | Lyft |
+| 66 | Other rideshare (not Uber/Lyft) |
 | 67 | Local private bus |
 | 68 | Cable car/streetcar |
 | 69 | Bike-share (standard) |
 | 70 | Bike-share (electric) |
+| 71 | Scooter-share |
 | 73 | Moped-share (Scoot, etc.) |
 | 74 | Segway |
 | 75 | Other |
@@ -503,6 +512,7 @@ This section shows the categorical values and labels for custom enum fields.
 | 106 | Uber/Lyft/taxi/car service |
 | 107 | Micromobility (scooter, moped, etc.) |
 | 995 | Missing Response |
+| 997 | Other/Unknown |
 
 ## ModeType
 
@@ -641,6 +651,7 @@ This section shows the categorical values and labels for custom enum fields.
 | 7 | Social, leisure, religious, entertainment activity |
 | 10 | Went to primary workplace |
 | 11 | Went to work-related activity (e.g., meeting, delivery, worksite) |
+| 12 | Traveling for work (e.g., business trip) |
 | 13 | Volunteering |
 | 14 | Other work-related |
 | 21 | Attend K-12 school |
@@ -656,6 +667,10 @@ This section shows the categorical values and labels for custom enum fields.
 | 34 | Medical visit (e.g., doctor, dentist) |
 | 36 | Shopping for major item (e.g., furniture, car) |
 | 37 | Errand with appointment (e.g., haircut) |
+| 40 | To/from childcare or preschool |
+| 41 | To/from K-12 school or college |
+| 42 | To/from other person's work or volunteer activity |
+| 43 | To/from other person's scheduled activity (e.g., lesson, appointment) |
 | 44 | Other activity only (e.g., attend meeting, pick-up or drop-off item) |
 | 45 | Pick someone up |
 | 46 | Drop someone off |
@@ -666,11 +681,13 @@ This section shows the categorical values and labels for custom enum fields.
 | 52 | Social activity (e.g., visit friends/relatives) |
 | 53 | Leisure/entertainment/cultural (e.g., cinema, museum, park) |
 | 54 | Religious/civic/volunteer activity |
+| 55 | Vacation or leisure trip |
 | 56 | Family activity (e.g., watch child's game) |
 | 60 | Changed or transferred mode (e.g., waited for bus or exited bus) |
 | 61 | Other errand |
 | 62 | Other social |
 | 99 | Other reason |
+| 101 | Split/loop trip |
 | 150 | Went to another residence (e.g., someone else's home, second home) |
 | 152 | Went to temporary lodging (e.g., hotel, vacation rental) |
 | 995 | Missing Response |

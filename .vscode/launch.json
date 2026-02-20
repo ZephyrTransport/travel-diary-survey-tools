@@ -13,11 +13,20 @@
             "console": "integratedTerminal"
         },
         {
-            "name": "Python Debugger: Pipeline",
+            "name": "Python Debugger: 2023 Pipeline",
             "type": "debugpy",
             "request": "launch",
             "cwd": "${workspaceFolder}",
             "program": "projects/bats_2023/run.py",
+            "console": "integratedTerminal",
+            "args": []
+        },
+        {
+            "name": "Python Debugger: 2019 Pipeline",
+            "type": "debugpy",
+            "request": "launch",
+            "cwd": "${workspaceFolder}",
+            "program": "projects/bats_2019/run.py",
             "console": "integratedTerminal",
             "args": []
         }

@@ -1,15 +1,15 @@
-# DaySim Processing Pipeline Configuration for BATS 2023
-# This config file demonstrates the full pipeline with DaySim formatting
+# Processing Pipeline Configuration for BATS 2023
+# This config file demonstrates the full pipeline with DaySim and CTRAMP formatting
 
 # config.yaml
 
 # Define directory shorthands
 survey_dir: "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Full Weighted 2023 Dataset/WeightedDataset_02212025"
 weights_dir: "X:/survey_repos/ProjRoot_Mon-Thu20251201/WgtRoot_Mon-Thu20251201_nocommutemode/output/"
-output_dir: "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Processed/pipeline_20251230"
+output_dir: "M:/Data/HomeInterview/Bay Area Travel Study (across-years)/pipeline_lmz_20260209"
 TM1_shapefile_dir: "E:/GitHub/travel-model-one/utilities/geographies"
 TM2_shapefile_dir: "E:/GitHub/TM2/tm2py-utils/tm2py_utils/inputs/maz_taz/shapefiles"
-log_file: "{{ output_dir }}/pipeline.log" # If not set, logs just to console, if not absolute saves to .cache directory
+log_file: "{{ output_dir }}/pipeline_2023.log" # If not set, logs just to console, if not absolute saves to .cache directory
 
 # Pipeline configuration
 steps:
@@ -139,26 +139,26 @@ steps:
     params:
       output_paths:
         # Standard Survey Formats
-        households: "{{ output_dir }}/survey/households.csv"
-        persons: "{{ output_dir }}/survey/persons.csv"
-        days: "{{ output_dir }}/survey/days.csv"
-        unlinked_trips: "{{ output_dir }}/survey/unlinked_trips.csv"
-        linked_trips: "{{ output_dir }}/survey/linked_trips.csv"
-        tours: "{{ output_dir }}/survey/tours.csv"
-        joint_trips: "{{ output_dir }}/survey/joint_trips.csv"
+        households: "{{ output_dir }}/survey/households_2023.csv"
+        persons: "{{ output_dir }}/survey/persons_2023.csv"
+        days: "{{ output_dir }}/survey/days_2023.csv"
+        unlinked_trips: "{{ output_dir }}/survey/unlinked_trips_2023.csv"
+        linked_trips: "{{ output_dir }}/survey/linked_trips_2023.csv"
+        tours: "{{ output_dir }}/survey/tours_2023.csv"
+        joint_trips: "{{ output_dir }}/survey/joint_trips_2023.csv"
 
         # DaySim Formats
-        households_daysim: "{{ output_dir }}/daysim/households.csv"
-        persons_daysim: "{{ output_dir }}/daysim/persons.csv"
-        days_daysim: "{{ output_dir }}/daysim/days.csv"
-        linked_trips_daysim: "{{ output_dir }}/daysim/linked_trips.csv"
-        tours_daysim: "{{ output_dir }}/daysim/tours.csv"
+        households_daysim: "{{ output_dir }}/daysim_2023/households.csv"
+        persons_daysim: "{{ output_dir }}/daysim_2023/persons.csv"
+        days_daysim: "{{ output_dir }}/daysim_2023/days.csv"
+        linked_trips_daysim: "{{ output_dir }}/daysim_2023/linked_trips.csv"
+        tours_daysim: "{{ output_dir }}/daysim_2023/tours.csv"
 
         # CTRAMP Formats
-        households_ctramp: "{{ output_dir }}/ctramp/HouseholdData.csv"
-        persons_ctramp: "{{ output_dir }}/ctramp/PersonData.csv"
-        mandatory_locations_ctramp: "{{ output_dir }}/ctramp/MandatoryLocationData.csv"
-        individual_tours_ctramp: "{{ output_dir }}/ctramp/IndivTourData.csv"
-        individual_trips_ctramp: "{{ output_dir }}/ctramp/IndivTripData.csv"
-        joint_tours_ctramp: "{{ output_dir }}/ctramp/JointTourData.csv"
-        joint_trips_ctramp: "{{ output_dir }}/ctramp/JointTripData.csv"
+        households_ctramp: "{{ output_dir }}/ctramp_2023/HouseholdData.csv"
+        persons_ctramp: "{{ output_dir }}/ctramp_2023/PersonData.csv"
+        mandatory_locations_ctramp: "{{ output_dir }}/ctramp_2023/MandatoryLocationData.csv"
+        individual_tours_ctramp: "{{ output_dir }}/ctramp_2023/IndivTourData.csv"
+        individual_trips_ctramp: "{{ output_dir }}/ctramp_2023/IndivTripData.csv"
+        joint_tours_ctramp: "{{ output_dir }}/ctramp_2023/JointTourData.csv"
+        joint_trips_ctramp: "{{ output_dir }}/ctramp_2023/JointTripData.csv"

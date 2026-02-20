@@ -1,4 +1,4 @@
-"""Runner script for the BATS 2023 DaySim processing pipeline."""
+"""Runner script for the BATS 2019 DaySim processing pipeline."""
 
 import argparse
 import logging
@@ -6,14 +6,8 @@ import os
 from pathlib import Path
 
 import polars as pl
-from clean_bats_2023 import clean_2023_bats
+from clean_bats_2019 import clean_2019_bats
 
-from data_canon.models import (
-    ctramp as ctramp_models,
-)
-from data_canon.models import (
-    daysim as daysim_models,
-)
 from pipeline.decoration import step
 from pipeline.pipeline import Pipeline
 from processing import (
@@ -21,7 +15,6 @@ from processing import (
     add_zone_ids,
     detect_joint_trips,
     extract_tours,
-    format_ctramp,
     format_daysim,
     link_trips,
     load_data,
@@ -82,39 +75,21 @@ def custom_foo_bar(
 processing_steps = [
     custom_foo_bar,
     load_data,
-    clean_2023_bats,
+    clean_2019_bats,
     add_zone_ids,
     link_trips,
     detect_joint_trips,
     extract_tours,
-    format_ctramp,
     format_daysim,
     write_data,
     add_existing_weights,
 ]
 
 
-new_models = {
-    # Daysim models
-    "households_daysim": daysim_models.HouseholdDaysimModel,
-    "persons_daysim": daysim_models.PersonDaysimModel,
-    "days_daysim": daysim_models.PersonDayDaysimModel,
-    "linked_trips_daysim": daysim_models.LinkedTripDaysimModel,
-    "tours_daysim": daysim_models.TourDaysimModel,
-    # CT-RAMP models
-    "households_ctramp": ctramp_models.HouseholdCTRAMPModel,
-    "persons_ctramp": ctramp_models.PersonCTRAMPModel,
-    "mandatory_locations_ctramp": ctramp_models.MandatoryLocationCTRAMPModel,
-    "individual_tours_ctramp": ctramp_models.IndividualTourCTRAMPModel,
-    "individual_trips_ctramp": ctramp_models.IndividualTripCTRAMPModel,
-    "joint_tours_ctramp": ctramp_models.JointTourCTRAMPModel,
-    "joint_trips_ctramp": ctramp_models.JointTripCTRAMPModel,
-}
-
 # ---------------------------------------------------------------------
 if __name__ == "__main__":
     # Parse command-line arguments
-    parser = argparse.ArgumentParser(description="BATS 2023 DaySim Processing Pipeline")
+    parser = argparse.ArgumentParser(description="BATS 2019 DaySim Processing Pipeline")
     parser.add_argument(
         "--clear-cache",
         action="store_true",
@@ -122,14 +97,13 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    logger.info("Starting BATS 2023 DaySim Processing Pipeline")
+    logger.info("Starting BATS 2019 DaySim Processing Pipeline")
 
-    cache_dir = Path(".cache_2023")
+    cache_dir = Path(".cache_2019")
     pipeline = Pipeline(
         config_path=CONFIG_PATH,
         steps=processing_steps,
         caching=cache_dir,
-        data_models=new_models,
     )
 
     # Clear cache if requested

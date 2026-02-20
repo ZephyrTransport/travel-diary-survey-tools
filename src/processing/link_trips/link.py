@@ -112,6 +112,13 @@ def link_trip_ids(
         logger.info("No trips to link; returning empty DataFrame.")
         return unlinked_trips.with_columns(pl.lit(None).cast(pl.Utf8).alias("linked_trip_id"))
 
+    # If linked_trip_id already exists, throw warning and overwrite
+    if "linked_trip_id" in unlinked_trips.columns:
+        logger.warning(
+            "linked_trip_id column already exists in unlinked_trips; it will be overwritten!"
+        )
+        unlinked_trips = unlinked_trips.drop("linked_trip_id")
+
     # Step 1: Sort trips by person, day, and departure time
     unlinked_trips = unlinked_trips.sort(["person_id", "day_id", "depart_time", "arrive_time"])
 

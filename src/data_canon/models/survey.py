@@ -5,6 +5,8 @@ This module uses Pydantic for data validation.
 Models represent individual records (rows) rather than entire DataFrames.
 Use the validate_* functions to validate Polars DataFrames by iterating
 through rows.
+
+Any field without None as an allowed type is considered required core data.
 """
 
 from datetime import datetime
@@ -65,28 +67,28 @@ class PersonModel(BaseModel):
     work_lon: float | None = step_field(ge=-180, le=180, required_in_steps=["extract_tours"])
     school_lat: float | None = step_field(ge=-90, le=90, required_in_steps=["extract_tours"])
     school_lon: float | None = step_field(ge=-180, le=180, required_in_steps=["extract_tours"])
-    person_type: PersonType = step_field(required_in_steps=[])
-    job_type: JobType | None = step_field(required_in_steps=["format_ctramp"], default=None)
+    person_type: PersonType | None = step_field(required_in_steps=[])
+    job_type: JobType | None = step_field(required_in_steps=["format_ctramp"])
     employment: Employment = step_field(required_in_steps=["extract_tours"])
     student: Student = step_field(required_in_steps=["extract_tours"])
-    school_type: SchoolType | None = step_field(
-        required_in_steps=["extract_tours"],
-    )
-    work_park: WorkParking | None = step_field(
-        required_in_steps=["format_daysim"],
-    )
-    work_mode: Mode | None = step_field(
-        required_in_steps=["format_daysim"],
-    )
+    school_type: SchoolType | None = step_field(required_in_steps=["extract_tours"])
+    work_park: WorkParking | None = step_field(required_in_steps=["format_daysim"])
+    work_mode: Mode | None = step_field(required_in_steps=["format_daysim"])
+    # NOTE: These commute subsidy fields are only used in CTRAMP format
+    # But might be useful elsewhere, consider standardizing to be less vague
+    # and/or moved into a data model extension.
     commute_subsidy_use_3: BooleanYesNo | None = step_field(
-        required_in_steps=["format_ctramp"],
+        default=None, required_in_steps=["format_ctramp"]
     )
     commute_subsidy_use_4: BooleanYesNo | None = step_field(
-        required_in_steps=["format_ctramp"],
+        default=None, required_in_steps=["format_ctramp"]
     )
-    is_proxy: bool = step_field(required_in_steps=["format_daysim"])
+    # NOTE: is proxy is vague.
+    # Better and more flexible would be to have proxy_person_id on the proxied person
+    # This allows for multiple proxy reporters and is more explicit.
+    is_proxy: bool | None = step_field(default=None, required_in_steps=["format_daysim"])
     num_days_complete: int = step_field(ge=0, default=0)
-    person_weight: float | None = step_field(ge=0, required_in_steps=[])
+    person_weight: float | None = step_field(default=None, ge=0, required_in_steps=[])
 
 
 class PersonDayModel(BaseModel):
@@ -99,15 +101,18 @@ class PersonDayModel(BaseModel):
     )
     day_id: int = step_field(ge=1, unique=True)
     hh_id: int = step_field(ge=1, fk_to="households.hh_id")
-    travel_dow: TravelDow
-    day_weight: float | None = step_field(ge=0, required_in_steps=[])
+    travel_date: datetime = step_field(required_in_steps=[])
+    travel_dow: TravelDow = step_field(required_in_steps=["format_daysim"])
+    day_weight: float | None = step_field(default=None, ge=0, required_in_steps=[])
 
 
 class UnlinkedTripModel(BaseModel):
     """Trip data model for validation."""
 
     unlinked_trip_id: int = step_field(ge=1, unique=True)
-    day_id: int = step_field(ge=1, fk_to="days.day_id")
+    day_id: int = step_field(
+        ge=1, fk_to="days.day_id", required_in_steps=["link_trips", "extract_tours"]
+    )
     person_id: int = step_field(ge=1, fk_to="persons.person_id")
     hh_id: int = step_field(ge=1, fk_to="households.hh_id")
     linked_trip_id: int = step_field(
@@ -115,7 +120,7 @@ class UnlinkedTripModel(BaseModel):
         fk_to="linked_trips.linked_trip_id",
         required_in_steps=["extract_tours"],
     )
-    tour_id: int = step_field(
+    tour_id: int | None = step_field(
         ge=1,
         fk_to="tours.tour_id",
         required_in_steps=["format_daysim"],
@@ -139,7 +144,7 @@ class UnlinkedTripModel(BaseModel):
     depart_time: datetime | None = step_field(required_in_steps=["link_trips", "extract_tours"])
     arrive_time: datetime | None = step_field(required_in_steps=["link_trips", "extract_tours"])
     num_travelers: int = step_field(ge=1)
-    unlinked_trip_weight: float | None = step_field(ge=0, required_in_steps=[])
+    unlinked_trip_weight: float | None = step_field(default=None, ge=0, required_in_steps=[])
 
     # You can add custom row-level validators here
     # Don't confuse with the constom DataFrame-level validators elsewhere
@@ -202,7 +207,7 @@ class LinkedTripModel(BaseModel):
     depart_time: datetime = step_field(required_in_steps=["detect_joint_trips"])
     arrive_time: datetime = step_field(required_in_steps=["detect_joint_trips"])
     tour_direction: TourDirection = step_field(required_in_steps=["format_daysim"])
-    linked_trip_weight: float | None = step_field(ge=0, required_in_steps=[])
+    linked_trip_weight: float | None = step_field(default=None, ge=0, required_in_steps=[])
 
 
 class TourModel(BaseModel):
@@ -253,7 +258,7 @@ class TourModel(BaseModel):
     outbound_mode: ModeType | None = step_field()
     inbound_mode: ModeType | None = step_field()
     num_travelers: int = step_field(ge=1, required_in_steps=["format_ctramp"], default=1)
-    tour_weight: float | None = step_field(ge=0)
+    tour_weight: float | None = step_field(default=None, ge=0)
 
     @model_validator(mode="after")
     def validate_complete_tours(self) -> "TourModel":
@@ -313,3 +318,4 @@ class JointTripModel(BaseModel):
     )
     depart_time_mean: datetime = step_field(description="Mean departure time across member trips")
     depart_arrive_mean: datetime = step_field(description="Mean arrival time across member trips")
+    joint_trip_weight: float | None = step_field(default=None, ge=0, required_in_steps=[])

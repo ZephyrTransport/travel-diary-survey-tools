@@ -107,7 +107,15 @@ def create_concatenated_id(
         sequence_col
     ).cast(pl.Int64)
 
-    return df.with_columns(id_expr.alias(output_col))
+    df = df.with_columns(id_expr.alias(output_col))
+
+    # Check for nulls in the new ID column
+    null_count = df.filter(pl.col(output_col).is_null()).height
+    if null_count > 0:
+        msg = f"Created ID column '{output_col}' contains {null_count} null values."
+        raise ValueError(msg)
+
+    return df
 
 
 def create_linked_trip_id(

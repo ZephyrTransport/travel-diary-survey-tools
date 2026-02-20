@@ -233,6 +233,7 @@ def _derive_missing_weights(
             pl.col(source_weight)
             .filter(pl.col(source_weight).is_not_null() & (pl.col(source_weight) != 0))
             .mean()
+            .fill_null(0)
             .alias(target_weight)
         )
         tables[target_table] = target_df.join(aggregated, on=group_key, how="left")
@@ -240,7 +241,7 @@ def _derive_missing_weights(
 
 
 @step()
-def add_existing_weights(  # noqa: C901, PLR0912
+def add_existing_weights(  # noqa: C901, PLR0912, PLR0915
     weights: dict[str, WeightConfig | dict],
     derive_missing_weights: bool = False,
     households: pl.DataFrame | None = None,
@@ -381,7 +382,26 @@ def add_existing_weights(  # noqa: C901, PLR0912
         _derive_missing_weights(tables, provided_weights, has_weight)
 
     # Build results dict, excluding None values and internal tables
-    results = {name: df for name, df in tables.items() if df is not None}
+    # Do a quick check for any NULL weight values in any of the tables
+    results = {}
+    for table, _, weight in DEFAULT_WEIGHT_CONFIG_MAPPING.values():
+        df = tables.get(table)
+        # If empty, skip
+        if df is None:
+            continue
+
+        if weight in df.columns:
+            null_count = df.select(pl.col(weight).is_null().sum()).item()
+            if null_count > 0:
+                logger.warning(
+                    "Table %s has %d NULL values in weight column %s",
+                    table,
+                    null_count,
+                    weight,
+                )
+
+        # Add to results with canonical weight column name
+        results[table] = df
 
     logger.info("Weight attachment complete. Tables with weights: %s", list(has_weight.keys()))
 

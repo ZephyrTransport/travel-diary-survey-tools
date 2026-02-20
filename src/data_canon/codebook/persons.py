@@ -84,6 +84,7 @@ class Gender(LabeledEnum):
 
     FEMALE = (1, "Female")
     MALE = (2, "Male")
+    TRANS = (3, "Transgender")
     NON_BINARY = (4, "Non-binary")
     MISSING = (995, "Missing Response")
     OTHER = (997, "Other/prefer to self-describe")

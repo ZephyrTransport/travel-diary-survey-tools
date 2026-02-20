@@ -1,6 +1,8 @@
 # Large project files
 project/***/*.html
 
+.cache_*
+
 *_files
 
 # Byte-compiled / optimized / DLL files

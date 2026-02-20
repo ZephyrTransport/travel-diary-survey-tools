@@ -258,11 +258,6 @@ def _validates(
         if not (param_name in models and isinstance(param_value, pl.DataFrame)):
             continue
 
-        logger.info(
-            "Validating input '%s' for step '%s'",
-            param_name,
-            func.__name__,
-        )
         # Use validator instance
         step_name = func.__name__
         setattr(validator, param_name, param_value)

@@ -1,4 +1,4 @@
-"""Custom cleaning steps for the DaySim pipeline."""
+"""Custom cleaning steps for the  Bay Area Travel Study (BATS) 2023 pipeline."""
 
 import logging
 
@@ -113,15 +113,20 @@ def clean_2023_bats(
         ~pl.col("person_id").is_in(days["person_id"].unique().implode())
     )
 
+    logger.info(
+        "Creating dummy days for %d persons without days",
+        len(persons_without_days),
+    )
+
     # Get travel_dow from other household members' days
     days_for_dow = (
-        days.select(["hh_id", "travel_dow", "day_num"])
+        days.select(["hh_id", "travel_dow", "travel_date", "day_num"])
         .filter(pl.col("hh_id").is_in(persons_without_days["hh_id"].unique().implode()))
         .unique()
     )
 
     # Which day columns to include
-    day_cols = ["hh_id", "person_id", "day_id", "travel_dow", "day_num"]
+    day_cols = ["hh_id", "person_id", "day_id", "travel_dow", "travel_date", "day_num"]
 
     # Create a default day for each person without days
     dummy_days = (
