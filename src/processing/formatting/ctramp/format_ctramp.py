@@ -16,6 +16,7 @@ import logging
 
 import polars as pl
 
+from data_canon.codebook.ctramp import CTRAMPEmploymentCategory
 from data_canon.models.ctramp import (
     HouseholdCTRAMPModel,
     IndividualTourCTRAMPModel,
@@ -30,9 +31,10 @@ from pipeline.decoration import step
 from .ctramp_config import CTRAMPConfig
 from .format_households import format_households
 from .format_mandatory_location import format_mandatory_location
-from .format_persons import format_persons
+from .format_persons import enrich_persons_with_person_type, format_persons
 from .format_tours import format_individual_tour, format_joint_tour
 from .format_trips import format_individual_trip, format_joint_trip
+from .mappings import EMPLOYMENT_TO_CTRAMP, ctramp_student_category_expression
 
 logger = logging.getLogger(__name__)
 
@@ -201,11 +203,11 @@ def _drop_excess_fields(
         model_cls: Data model class with defined fields
     Returns:
         DataFrame with only columns defined in the model class
-    valid_fields = set(model_cls.__fields__.keys())
+    valid_fields = set(model_cls.model_fields.keys())
     cols_to_drop = [col for col in df.columns if col not in valid_fields]
     return df.drop(cols_to_drop)
     """
-    valid_fields = set(model_cls.__fields__.keys())
+    valid_fields = set(model_cls.model_fields.keys())
     cols_to_drop = set(df.columns) - valid_fields
     return df.drop(cols_to_drop)
 
@@ -291,8 +293,29 @@ def format_ctramp(
             joint_trips,
         ) = _drop_missing_taz(households, persons, tours, linked_trips, joint_trips, config)
 
-    # Format each table
+    # Format each table ----------------------------------------------------
+    # Format households first since it has no derived field dependencies
     households_ctramp = format_households(households, persons, tours, config)
+
+    # Derive/validate person_type and type for use in tour/trip formatting
+    # Pre-compute student_category and employment_category so person_type
+    # expression can use them for consistent classification
+    if "student_category" not in persons.columns:
+        persons = persons.with_columns(
+            ctramp_student_category_expression(school_taz_col=f"school_{config.taz_field}").alias(
+                "student_category"
+            )
+        )
+    if "employment_category" not in persons.columns:
+        persons = persons.with_columns(
+            pl.col("employment")
+            .replace_strict(
+                EMPLOYMENT_TO_CTRAMP,
+                default=CTRAMPEmploymentCategory.NOT_EMPLOYED.value,
+            )
+            .alias("employment_category")
+        )
+    persons_with_type = enrich_persons_with_person_type(persons)
 
     # Format tours - use empty DataFrame with proper schema if no tours exist
     if len(tours) == 0:
@@ -306,14 +329,14 @@ def format_ctramp(
         individual_tours_ctramp = format_individual_tour(
             tours_canonical=tours,
             linked_trips_canonical=linked_trips,
-            persons_canonical=persons,
+            persons_canonical=persons_with_type,
             households_ctramp=households_ctramp,
             config=config,
         )
 
     # Format persons with tour statistics (works with empty or populated tours)
     persons_ctramp = format_persons(
-        persons_canonical=persons,
+        persons_canonical=persons_with_type,
         tours_ctramp=individual_tours_ctramp,
         config=config,
     )

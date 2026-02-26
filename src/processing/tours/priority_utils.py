@@ -7,54 +7,9 @@ and can be used across different tour processing contexts.
 
 import polars as pl
 
-from data_canon.codebook.persons import PersonType
 from data_canon.codebook.trips import PurposeCategory
 
 from .tour_configs import TourConfig
-
-
-def get_purpose_priority(
-    person_type: PersonType,
-    purpose_cat: PurposeCategory,
-    config: TourConfig,
-) -> int:
-    """Get priority value for a person type and purpose category combination.
-
-    Priority values determine tour purpose selection when multiple destinations
-    exist in a tour. Lower values indicate higher priority.
-
-    Args:
-        person_type: PersonType enum value
-        purpose_cat: PurposeCategory enum value
-        config: TourConfig with person_type_mapping and priority mappings
-
-    Returns:
-        Priority value (lower = higher priority)
-
-    Raises:
-        ValueError: If person_type or purpose_cat not found in config mappings
-    """
-    # HOME purposes don't need priority (never tour destinations)
-    # Return a high value that will be filtered out
-    if purpose_cat == PurposeCategory.HOME:
-        return 999
-
-    # Map PersonType → PersonCategory string
-    if person_type not in config.person_type_mapping:
-        msg = f"PersonType {person_type} not in person_type_mapping"
-        raise ValueError(msg)
-    person_category_str = config.person_type_mapping[person_type]
-
-    # Get priority from nested map
-    purpose_priority_map = config.purpose_priority_by_persontype
-    if person_category_str not in purpose_priority_map:
-        msg = f"PersonCategory '{person_category_str}' not in purpose_priority_by_persontype"
-        raise ValueError(msg)
-    purpose_priorities = purpose_priority_map[person_category_str]
-    if purpose_cat not in purpose_priorities:
-        msg = f"PurposeCategory {purpose_cat} not mapped for PersonCategory '{person_category_str}'"
-        raise ValueError(msg)
-    return purpose_priorities[purpose_cat]
 
 
 def add_purpose_priority_column(
@@ -64,9 +19,8 @@ def add_purpose_priority_column(
 ) -> pl.DataFrame:
     """Add purpose priority column to dataframe.
 
-    Maps person_category (PersonType int) → PersonCategory string
-    → purpose priority value.
-
+    Maps person_category (PersonCategory string) → purpose priority value.
+        Purpose priority is determined by the nested mapping in the TourConfig:
     Args:
         df: DataFrame with person_category and d_purpose_category columns
         config: TourConfig with priority mappings
@@ -78,7 +32,7 @@ def add_purpose_priority_column(
 
     def _get_priority(s: dict) -> int:
         """Inner function for map_elements - receives struct as dict."""
-        # person_category is already a PersonCategory string (e.g., 'worker')
+        # person_category is a PersonCategory string (e.g., 'worker', 'student', 'other', etc.)
         # d_purpose_category is a PurposeCategory enum integer
         person_category_str = s["person_category"]
         purpose_cat = PurposeCategory(s["d_purpose_category"])
@@ -88,9 +42,9 @@ def add_purpose_priority_column(
             return 999
 
         # Get priority from nested map
-        purpose_priority_map = config.purpose_priority_by_persontype
+        purpose_priority_map = config.purpose_priority_by_personcat
         if person_category_str not in purpose_priority_map:
-            msg = f"PersonCategory '{person_category_str}' not in purpose_priority_by_persontype"
+            msg = f"PersonCategory '{person_category_str}' not in purpose_priority_by_personcat"
             raise ValueError(msg)
         purpose_priorities = purpose_priority_map[person_category_str]
         if purpose_cat not in purpose_priorities:

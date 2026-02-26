@@ -31,18 +31,18 @@ import polars as pl
 import pytest
 
 from data_canon.codebook.days import TravelDow
-from data_canon.codebook.daysim import DaysimPurpose
+from data_canon.codebook.daysim import DaysimPersonType, DaysimPurpose
 from data_canon.codebook.persons import (
     AgeCategory,
     Employment,
-    PersonType,
     SchoolType,
     Student,
 )
 from data_canon.codebook.tours import TourType
 from data_canon.codebook.trips import Driver, ModeType, Purpose, PurposeCategory
 from processing import extract_tours, link_trips
-from processing.formatting.daysim.mappings import PURPOSE_MAP
+from processing.formatting.daysim.mappings import AGE_MAP, PURPOSE_MAP
+from processing.formatting.daysim.person_type_utils import get_person_type_expr
 from tests.fixtures.scenario_builders import (
     multi_stop_tour,
     multi_tour_day,
@@ -163,6 +163,15 @@ def to_legacy_format(
         }
     )
 
+    if "pagey" not in persons_df.columns:
+        persons_df = persons_df.with_columns(
+            pagey=pl.col("age").replace(AGE_MAP),
+        )
+
+    # Derive person_type if not present in input
+    if "person_type" not in persons_df.columns:
+        persons_df = persons_df.with_columns(person_type=get_person_type_expr())
+
     # Build persons DataFrame
     persons_data = []
     for row in persons_df.iter_rows(named=True):
@@ -170,7 +179,7 @@ def to_legacy_format(
             "hhno": row["hh_id"],
             "pno": row["person_id"],
             "pptyp": row["person_type"],
-            "pwtyp": (1 if row["person_type"] == PersonType.FULL_TIME_WORKER else 0),
+            "pwtyp": (1 if row["person_type"] == DaysimPersonType.FULL_TIME_WORKER.value else 0),
             "pwtaz": -1,  # Not used in current tests
             "pstyp": 0,  # Not used in current tests
             "pstaz": -1,  # Not used in current tests
@@ -180,7 +189,7 @@ def to_legacy_format(
             "psycord": (row["school_lat"] if row["school_lat"] is not None else -1),
             "pwpcl": 0,  # Purpose category at work (not needed for tests)
             "pspcl": 0,  # Purpose category at school (not needed for tests)
-            "pagey": 35,  # Default age
+            "pagey": row["pagey"],
             "pgend": 1,  # Default gender
             "psexpfac": 1.0,  # Weight
             "num_days_complete_3dayweekday": 1,  # For weighting
@@ -367,7 +376,7 @@ def mode_hierarchy_data():
         {
             "person_id": [1],
             "hh_id": [1],
-            "person_type": [PersonType.FULL_TIME_WORKER],
+            "person_type": [DaysimPersonType.FULL_TIME_WORKER.value],
             "employment": [Employment.EMPLOYED_FULLTIME.value],
             "age": [AgeCategory.AGE_35_TO_44.value],
             "school_type": [SchoolType.MISSING.value],
@@ -675,7 +684,7 @@ def test_tour_timing():
         {
             "person_id": [1],
             "hh_id": [1],
-            "person_type": [PersonType.FULL_TIME_WORKER],
+            "person_type": [DaysimPersonType.FULL_TIME_WORKER.value],
             "employment": [Employment.EMPLOYED_FULLTIME.value],
             "age": [AgeCategory.AGE_35_TO_44.value],
             "school_type": [SchoolType.MISSING.value],
@@ -885,7 +894,7 @@ def test_tour_trip_counts():
         {
             "person_id": [1],
             "hh_id": [1],
-            "person_type": [PersonType.FULL_TIME_WORKER],
+            "person_type": [DaysimPersonType.FULL_TIME_WORKER.value],
             "employment": [Employment.EMPLOYED_FULLTIME.value],
             "age": [AgeCategory.AGE_35_TO_44.value],
             "school_type": [SchoolType.MISSING.value],
@@ -1005,7 +1014,7 @@ def test_incomplete_tour_at_end_of_day():
         {
             "person_id": [1],
             "hh_id": [1],
-            "person_type": [PersonType.FULL_TIME_WORKER],
+            "person_type": [DaysimPersonType.FULL_TIME_WORKER.value],
             "employment": [Employment.EMPLOYED_FULLTIME.value],
             "age": [AgeCategory.AGE_35_TO_44.value],
             "school_type": [SchoolType.MISSING.value],
@@ -1126,7 +1135,7 @@ def test_no_work_location():
         {
             "person_id": [1],
             "hh_id": [1],
-            "person_type": [PersonType.FULL_TIME_WORKER],
+            "person_type": [DaysimPersonType.FULL_TIME_WORKER.value],
             "employment": [Employment.EMPLOYED_FULLTIME.value],
             "age": [AgeCategory.AGE_35_TO_44.value],
             "school_type": [SchoolType.MISSING.value],

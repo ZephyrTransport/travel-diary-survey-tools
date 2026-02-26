@@ -10,11 +10,7 @@ from data_canon.codebook.daysim import (
     DaysimWorkerType,
 )
 from data_canon.codebook.generic import BooleanYesNo
-from data_canon.codebook.persons import (
-    Employment,
-    SchoolType,
-    Student,
-)
+from data_canon.codebook.persons import Employment
 from data_canon.codebook.trips import ModeType
 
 from .mappings import (
@@ -23,8 +19,8 @@ from .mappings import (
     MODE_TYPE_MAP,
     STUDENT_MAP,
     WORK_PARK_MAP,
-    AgeThreshold,
 )
+from .person_type_utils import get_person_type_expr
 
 logger = logging.getLogger(__name__)
 
@@ -170,87 +166,8 @@ def format_persons(persons: pl.DataFrame, days: pl.DataFrame) -> pl.DataFrame:
         ppaidprk=pl.col("work_park").replace_strict(WORK_PARK_MAP),
     )
 
-    # Derive person type (pptyp) using cascading logic
-    persons_daysim = persons_daysim.with_columns(
-        pptyp=pl.when(pl.col("pagey") < AgeThreshold.CHILD_PRESCHOOL)
-        .then(pl.lit(DaysimPersonType.CHILD_UNDER_5.value))
-        .when(pl.col("pagey") < AgeThreshold.CHILD_SCHOOL)
-        .then(pl.lit(DaysimPersonType.CHILD_NON_DRIVING_AGE.value))
-        # Age >= 16:
-        .when(
-            pl.col("employment").is_in(
-                [
-                    Employment.EMPLOYED_FULLTIME.value,
-                    Employment.EMPLOYED_SELF.value,
-                    Employment.EMPLOYED_FURLOUGHED.value,
-                    Employment.EMPLOYED_UNPAID.value,
-                ]
-            )
-        )
-        .then(pl.lit(DaysimPersonType.FULL_TIME_WORKER.value))
-        # Age >= 16 and not full-time employed:
-        .when(
-            (pl.col("pagey") < AgeThreshold.YOUNG_ADULT)  # 16-17
-            & (
-                pl.col("student").is_in(
-                    [
-                        Student.FULLTIME_INPERSON.value,
-                        Student.PARTTIME_INPERSON.value,
-                        Student.PARTTIME_ONLINE.value,
-                        Student.FULLTIME_ONLINE.value,
-                    ]
-                )
-            )
-        )
-        .then(pl.lit(DaysimPersonType.CHILD_DRIVING_AGE.value))
-        .when(
-            (pl.col("pagey") < AgeThreshold.ADULT)  # 18-24
-            & (
-                pl.col("school_type").is_in(
-                    [
-                        SchoolType.HOME_SCHOOL.value,
-                        SchoolType.HIGH_SCHOOL.value,
-                    ]
-                )
-            )
-            & (
-                pl.col("student").is_in(
-                    [
-                        Student.FULLTIME_INPERSON.value,
-                        Student.PARTTIME_INPERSON.value,
-                        Student.PARTTIME_ONLINE.value,
-                        Student.FULLTIME_ONLINE.value,
-                    ]
-                )
-            )
-        )
-        .then(pl.lit(DaysimPersonType.CHILD_DRIVING_AGE.value))
-        # Age >= 18:
-        .when(
-            pl.col("student").is_in(
-                [
-                    Student.FULLTIME_INPERSON.value,
-                    Student.PARTTIME_INPERSON.value,
-                    Student.PARTTIME_ONLINE.value,
-                    Student.FULLTIME_ONLINE.value,
-                ]
-            )
-        )
-        .then(pl.lit(DaysimPersonType.UNIVERSITY_STUDENT.value))
-        .when(
-            pl.col("employment").is_in(
-                [
-                    Employment.EMPLOYED_PARTTIME.value,
-                    Employment.EMPLOYED_SELF.value,
-                    Employment.EMPLOYED_UNPAID.value,
-                ]
-            )
-        )
-        .then(pl.lit(DaysimPersonType.PART_TIME_WORKER.value))
-        .when(pl.col("pagey") < AgeThreshold.SENIOR)
-        .then(pl.lit(DaysimPersonType.NON_WORKER.value))
-        .otherwise(pl.lit(DaysimPersonType.RETIRED.value))
-    )
+    # Derive person type (pptyp) using reusable expression
+    persons_daysim = persons_daysim.with_columns(pptyp=get_person_type_expr())
 
     # Derive worker type (pwtyp) from person type and employment
     persons_daysim = persons_daysim.with_columns(

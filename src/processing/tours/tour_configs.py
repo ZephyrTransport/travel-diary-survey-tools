@@ -33,10 +33,11 @@ times. Downstream formatters can transform to Daysim format (integer codes,
 HHMM times, tour reordering, etc.) as needed.
 """
 
+import polars as pl
 from pydantic import BaseModel, Field
 
 from data_canon.codebook.generic import LocationType
-from data_canon.codebook.persons import PersonType
+from data_canon.codebook.persons import AgeCategory, Employment, SchoolType, Student
 from data_canon.codebook.tours import PersonCategory
 from data_canon.codebook.trips import ModeType, PurposeCategory
 
@@ -88,7 +89,7 @@ class TourConfig(BaseModel):
 
     # Purpose priority by person category: lower number = higher priority
     # All non-HOME purposes must be explicitly mapped
-    purpose_priority_by_persontype: dict[str, dict[PurposeCategory, int]] = Field(
+    purpose_priority_by_personcat: dict[str, dict[PurposeCategory, int]] = Field(
         default={
             PersonCategory.WORKER: {
                 PurposeCategory.WORK: 1,
@@ -149,21 +150,6 @@ class TourConfig(BaseModel):
         ),
     )
 
-    # Map detailed person types to simplified categories for priority lookup
-    person_type_mapping: dict[PersonType, str] = Field(
-        default={
-            PersonType.FULL_TIME_WORKER: PersonCategory.WORKER,
-            PersonType.PART_TIME_WORKER: PersonCategory.WORKER,
-            PersonType.RETIRED: PersonCategory.OTHER,
-            PersonType.NON_WORKER: PersonCategory.OTHER,
-            PersonType.UNIVERSITY_STUDENT: PersonCategory.STUDENT,
-            PersonType.CHILD_DRIVING_AGE: PersonCategory.STUDENT,
-            PersonType.CHILD_NON_DRIVING_AGE: PersonCategory.STUDENT,
-            PersonType.CHILD_UNDER_5: PersonCategory.OTHER,
-        },
-        description=("Maps detailed person types to simplified categories for tour logic"),
-    )
-
     # ===================================================================
     # TOUR EXTRACTION BEHAVIOR
     # ===================================================================
@@ -188,6 +174,110 @@ class TourConfig(BaseModel):
             "when calculating duration tie-breaker (legacy: 4 hours)."
         ),
     )
+
+    def person_category_expression(
+        self,
+        age_col: str = "age",
+        employment_col: str = "employment",
+        student_col: str = "student",
+        school_type_col: str = "school_type",
+    ) -> pl.Expr:
+        """Create expression to derive person category from person attributes.
+
+        This replicates the pptyp logic from the old pipeline's 02a-reformat
+        step, converting employment/student/age data into person type categories.
+
+        Args:
+            age_col: Name of age column (categorical AgeCategory)
+            employment_col: Name of employment column
+            student_col: Name of student column
+            school_type_col: Name of school_type column
+
+        Returns:
+            Polars expression that evaluates to PersonCategory enum value
+
+        Note:
+            Age is a categorical variable (see AgeCategory enum):
+            1=under 5, 2=5-15, 3=16-17, 4=18-24, 5=25-34, etc.
+        """
+        # Define age group categories
+        working_age = [
+            AgeCategory.AGE_25_TO_34.value,
+            AgeCategory.AGE_35_TO_44.value,
+            AgeCategory.AGE_45_TO_54.value,
+            AgeCategory.AGE_55_TO_64.value,
+        ]
+
+        # Employment status indicators
+        is_full_time = pl.col(employment_col).is_in(
+            [
+                Employment.EMPLOYED_FULLTIME.value,
+                Employment.EMPLOYED_SELF.value,
+                Employment.EMPLOYED_UNPAID.value,
+            ]
+        )
+        is_part_time = pl.col(employment_col).is_in(
+            [
+                Employment.EMPLOYED_PARTTIME.value,
+                Employment.EMPLOYED_SELF.value,
+            ]
+        )
+
+        # Student and school status indicators
+        is_student = pl.col(student_col).is_in(
+            [
+                Student.FULLTIME_INPERSON.value,
+                Student.PARTTIME_INPERSON.value,
+                Student.PARTTIME_ONLINE.value,
+                Student.FULLTIME_ONLINE.value,
+            ]
+        )
+        is_high_school = pl.col(school_type_col).is_in(
+            [
+                SchoolType.HOME_SCHOOL.value,
+                SchoolType.HIGH_SCHOOL.value,
+            ]
+        )
+
+        # Age indicators
+        age = pl.col(age_col)
+        is_under_5 = age == AgeCategory.AGE_UNDER_5.value
+        is_5_to_15 = age == AgeCategory.AGE_5_TO_15.value
+        is_16_to_17 = age == AgeCategory.AGE_16_TO_17.value
+        is_18_to_24 = age == AgeCategory.AGE_18_TO_24.value
+        is_working_age = age.is_in(working_age)
+
+        # Build classification expression
+        _expr = (
+            pl.when(is_under_5)
+            .then(pl.lit(PersonCategory.OTHER))
+            .when(is_5_to_15)
+            .then(pl.lit(PersonCategory.STUDENT))
+            .when(is_16_to_17 & is_full_time)
+            .then(pl.lit(PersonCategory.WORKER))
+            .when(is_16_to_17 & is_student)
+            .then(pl.lit(PersonCategory.STUDENT))
+            .when(is_18_to_24 & is_full_time)
+            .then(pl.lit(PersonCategory.WORKER))
+            .when(is_18_to_24 & is_high_school & is_student)
+            .then(pl.lit(PersonCategory.STUDENT))
+            .when(is_18_to_24 & is_student)
+            .then(pl.lit(PersonCategory.STUDENT))
+            .when(is_18_to_24 & is_part_time)
+            .then(pl.lit(PersonCategory.WORKER))
+            .when(is_working_age & is_full_time)
+            .then(pl.lit(PersonCategory.WORKER))
+            .when(is_working_age & is_student)
+            .then(pl.lit(PersonCategory.STUDENT))
+            .when(is_working_age & is_part_time)
+            .then(pl.lit(PersonCategory.WORKER))
+            .when(is_working_age)
+            .then(pl.lit(PersonCategory.OTHER))
+            .otherwise(pl.lit(PersonCategory.OTHER))
+            .alias("person_category")
+        )
+
+        return _expr
 
     class ConfigDict:
         """Pydantic model configuration."""

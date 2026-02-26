@@ -31,7 +31,6 @@ This matrix shows which columns are required in which pipeline steps.
 |  | `work_lon` | float or None | ≥ -180, ≤ 180 |  |  |  |  | ✓ |  |  |  |  |  |
 |  | `school_lat` | float or None | ≥ -90, ≤ 90 |  |  |  |  | ✓ |  |  |  |  |  |
 |  | `school_lon` | float or None | ≥ -180, ≤ 180 |  |  |  |  | ✓ |  |  |  |  |  |
-|  | `person_type` | data_canon.codebook.persons.PersonType or None |  |  |  |  |  |  |  |  |  |  |  |
 |  | `job_type` | data_canon.codebook.persons.JobType or None |  |  |  |  |  |  |  |  | ✓ |  |  |
 |  | `employment` | Employment |  |  |  |  |  | ✓ |  |  |  |  |  |
 |  | `student` | Student |  |  |  |  |  | ✓ |  |  |  |  |  |
@@ -621,23 +620,6 @@ This section shows the categorical values and labels for custom enum fields.
 | 7 | Signup via rMove, Diary via browserMove |
 | 8 | Signup via rMove, Diary via call center |
 | 9 | Signup via rMove, Diary via rMove |
-
-## PersonType
-
-**Field name:** `person_type`
-
-**Description:** Person type derived from employment, student status, and age
-
-| Value | Label |
-| --- | --- |
-| 1 | Full-time worker |
-| 2 | Part-time worker |
-| 3 | Non-working adult 65+ |
-| 4 | Non-working adult < 65 |
-| 5 | University student |
-| 6 | High school student 16+ |
-| 7 | Child 5-15 |
-| 8 | Child 0-4 |
 
 ## Purpose
 

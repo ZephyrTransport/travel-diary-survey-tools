@@ -55,8 +55,6 @@ class WalkToTransitSubZone(LabeledEnum):
     LONG_WALK = 2, "long-walk"
 
 
-# NOTE: This is basically a re-map of the canonical PersonType enum
-# Can we just use that directly instead of redefining here?
 class CTRAMPPersonType(LabeledEnum):
     """Enumeration for person type categories."""
 

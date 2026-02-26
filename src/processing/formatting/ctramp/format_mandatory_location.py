@@ -198,8 +198,8 @@ def format_mandatory_location(
 
     Args:
         persons_ctramp: Formatted CT-RAMP persons DataFrame with person_id, hh_id,
-            person_num, person_type (converted), age (converted), employment_category,
-            student_category, work_taz, school_taz
+            person_num, person_type (integer code), age (non-binned continuous),
+            employment_category, student_category, work_taz, school_taz
         households_ctramp: Formatted CT-RAMP households DataFrame with hh_id, income,
             home_taz (for HomeTAZ field)
         linked_trips_canonical: Canonical linked trips DataFrame for distance calculations

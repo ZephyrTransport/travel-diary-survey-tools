@@ -26,16 +26,17 @@ from data_canon.codebook.ctramp import (
     IMFChoice,
 )
 from data_canon.codebook.generic import BooleanYesNo
-from data_canon.codebook.persons import AgeCategory, Employment, JobType, SchoolType, Student
+from data_canon.codebook.persons import AgeCategory, Employment, JobType
 from utils.helpers import get_age_midpoint
 
 from .ctramp_config import CTRAMPConfig
 from .mappings import (
-    EMPLOYMENT_MAP,
     EMPLOYMENT_TO_CTRAMP,
     GENDER_MAP,
-    SCHOOL_TYPE_MAP,
-    STUDENT_MAP,
+    ctramp_person_type_expression,
+    ctramp_student_category_expression,
+    log_person_type_warnings,
+    log_student_category_warnings,
 )
 
 logger = logging.getLogger(__name__)
@@ -275,72 +276,87 @@ def aggregate_tour_statistics(
     )
 
 
-def classify_person_type(
-    age: int,
-    employment: int,
-    student: int,
-    school_type: int,
-) -> int:
-    """Classify person type based on age, employment, and student status.
+def enrich_persons_with_person_type(
+    persons_canonical: pl.DataFrame,
+) -> pl.DataFrame:
+    """Enrich persons DataFrame with person_type and type fields.
 
-    CT-RAMP person type classification:
-    1. Full-time worker
-    2. Part-time worker
-    3. University student
-    4. Nonworker
-    5. Retired
-    6. Child of non-driving age
-    7. Child of driving age
-    8. Child too young for school
+    Derives person_type (integer code) and type (string label) based on age,
+    employment, and student status using the ctramp_person_type_expression.
+
+    If student_category and employment_category columns are present, they will
+    be used as inputs to person_type classification for consistency. Otherwise,
+    classification falls back to raw employment/student/school_type columns.
 
     Args:
-        age: AgeCategory enum value (1-11)
-        employment: Employment status code
-        student: Student status code
-        school_type: School type code
+        persons_canonical: Canonical persons DataFrame
 
     Returns:
-        int: CT-RAMP person type code
-
-    Note:
-        Age is an AgeCategory enum:
-        1=UNDER_5, 2=5_TO_15, 3=16_TO_17, 4=18_TO_24, 5=25_TO_34,
-        6=35_TO_44, 7=45_TO_54, 8=55_TO_64, 9=65_TO_74, 10=75_TO_84,
-        11=85_AND_UP
+        DataFrame with added person_type and type fields
     """
-    # Map to intermediate categories
-    emp_status = EMPLOYMENT_MAP.get(employment, "not_employed")
-    is_student = STUDENT_MAP.get(student, "not_student") == "student"
-    school_cat = SCHOOL_TYPE_MAP.get(school_type, "not_student")
-
-    # Classification based on AgeCategory enum
-    if age == AgeCategory.AGE_UNDER_5.value:
-        person_type = CTRAMPPersonType.CHILD_UNDER_5.value
-    elif age == AgeCategory.AGE_5_TO_15.value:
-        person_type = (
-            CTRAMPPersonType.CHILD_NON_DRIVING_AGE.value
-            if is_student
-            else CTRAMPPersonType.NON_WORKER.value
+    # Validate age column using AgeCategory enum from canonical model
+    # This is not a perfect validation since it's young ages could erroneously match an enum,
+    # but it provides a reasonable check that age codes are within expected categories.
+    invalid_ages = set(persons_canonical["age"]) - {x.value for x in AgeCategory}
+    if invalid_ages:
+        msg = (
+            f"Found invalid age codes in input data: {invalid_ages}. "
+            f"Expected values are: {[x.value for x in AgeCategory]}"
         )
-    elif age == AgeCategory.AGE_16_TO_17.value:
-        if is_student:
-            person_type = CTRAMPPersonType.CHILD_DRIVING_AGE.value
-        else:
-            person_type = CTRAMPPersonType.NON_WORKER.value
-    elif emp_status == "full_time":
-        person_type = CTRAMPPersonType.FULL_TIME_WORKER.value
-    elif emp_status == "part_time":
-        person_type = CTRAMPPersonType.PART_TIME_WORKER.value
-    elif is_student and school_cat in ("grade_school", "high_school"):
-        person_type = CTRAMPPersonType.CHILD_DRIVING_AGE.value
-    elif age >= AgeCategory.AGE_65_TO_74.value:  # Retired
-        person_type = CTRAMPPersonType.RETIRED.value
-    elif school_cat == "college":
-        person_type = CTRAMPPersonType.UNIVERSITY_STUDENT.value
-    else:
-        person_type = CTRAMPPersonType.NON_WORKER.value
+        raise ValueError(msg)
 
-    return person_type
+    # Check if person_type and type columns already exist and are valid
+    # If they are invalid, drop them to be re-derived
+    # in case some other person_type vestige was present in the data.
+    if "person_type" in persons_canonical.columns and "type" in persons_canonical.columns:
+        valid_person_types = set(CTRAMPPersonType.to_dict().keys())
+        existing_person_types = set(persons_canonical["person_type"].drop_nulls().unique())
+        if not existing_person_types.issubset(valid_person_types):
+            logger.warning(
+                "Existing person_type column contains invalid values: %s. "
+                "Dropping person_type and type columns to re-derive from attributes.",
+                existing_person_types - valid_person_types,
+            )
+            persons_canonical = persons_canonical.drop(["person_type", "type"])
+
+    # If person_type or type is missing, or does not match expected values, re-derive it
+    if "person_type" not in persons_canonical.columns or "type" not in persons_canonical.columns:
+        logger.info("person_type or type column missing, deriving person type from attributes")
+
+        # Determine whether pre-derived categories are available for consistency
+        has_employment_category = "employment_category" in persons_canonical.columns
+        has_student_category = "student_category" in persons_canonical.columns
+
+        expr_kwargs = {}
+        if has_employment_category:
+            expr_kwargs["employment_category_col"] = "employment_category"
+        if has_student_category:
+            expr_kwargs["student_category_col"] = "student_category"
+
+        persons_with_type = persons_canonical.with_columns(
+            # Integer person_type code
+            ctramp_person_type_expression(**expr_kwargs).alias("person_type"),
+            # String type (e.g. "full_time_worker"), derived from person_type code
+            ctramp_person_type_expression(**expr_kwargs)
+            .replace_strict(CTRAMPPersonType.to_dict())
+            .alias("type"),
+        )
+
+        # Check for impossible input combinations and log warnings
+        warnings = log_person_type_warnings(persons_with_type)
+        total_warnings = sum(warnings.values())
+        if total_warnings > 0:
+            msg = (
+                f"Found {total_warnings} problematic person attribute combinations. "
+                "Will rely on age-based defaults."
+            )
+            for category, count in warnings.items():
+                msg += f"\n  {category}: {count}"
+            logger.warning(msg)
+    else:
+        persons_with_type = persons_canonical
+
+    return persons_with_type
 
 
 def format_persons(
@@ -358,8 +374,7 @@ def format_persons(
     - Aggregate activity patterns and tour frequencies from tour data
 
     Args:
-        persons_canonical: Canonical persons DataFrame with person_id, hh_id, person_num,
-            age, gender, employment, student, school_type, commute_subsidy_use_3
+        persons_canonical: Canonical persons DataFrame with derived person_type field
             (free parking), commute_subsidy_use_4 (discounted parking), value_of_time
         tours_ctramp: Formatted CT-RAMP tours DataFrame with person_id and tour_purpose
             (CTRAMP-formatted purpose strings like 'work_low', 'school_grade', etc.)
@@ -388,39 +403,51 @@ def format_persons(
     """
     logger.info("Formatting person data for CT-RAMP")
 
-    # Apply person type classification
-    persons_ctramp = persons_canonical.with_columns(
-        pl.struct(["age", "employment", "student", "school_type"])
-        .map_elements(
-            lambda x: classify_person_type(
-                x["age"],
-                x["employment"],
-                x["student"],
-                x["school_type"],
-            ),
-            return_dtype=pl.Int64,
+    # Compute student_category BEFORE person_type derivation
+    # This allows person_type_expression to use the pre-derived category for consistency.
+    # Must be computed before age midpoint conversion (uses AgeCategory bins directly).
+    persons_with_cats = persons_canonical.with_columns(
+        ctramp_student_category_expression(school_taz_col=f"school_{config.taz_field}").alias(
+            "student_category"
         )
-        .alias("type_code")
     )
 
-    # Convert person type code to string label (raises if invalid)
-    persons_ctramp = persons_ctramp.with_columns(
-        pl.col("type_code")
-        .map_elements(
-            lambda code: CTRAMPPersonType.from_value(code).label,
-            return_dtype=pl.String,
+    # Compute employment_category from employment for mandatory locations
+    # Computed early so person_type can use the derived category for consistency
+    # (EMPLOYED_UNPAID -> Part-time in EMPLOYMENT_TO_CTRAMP, matching person_type logic)
+    persons_with_cats = persons_with_cats.with_columns(
+        pl.col("employment")
+        .replace_strict(
+            EMPLOYMENT_TO_CTRAMP,
+            default=CTRAMPEmploymentCategory.NOT_EMPLOYED.value,
         )
-        .alias("type")
+        .alias("employment_category")
     )
+
+    # Check for problematic student/school type combinations
+    student_warnings = log_student_category_warnings(persons_with_cats, config)
+    total_student_warnings = sum(student_warnings.values())
+    if total_student_warnings > 0:
+        msg = (
+            f"Found {total_student_warnings} problematic student/school type combinations. "
+            "Using age-based defaults where appropriate."
+        )
+        for category, count in student_warnings.items():
+            msg += f"\n  {category}: {count}"
+        logger.warning(msg)
+
+    # Derive/validate person_type and type fields
+    # Uses pre-derived student_category and employment_category for consistency
+    persons_with_type = enrich_persons_with_person_type(persons_with_cats)
 
     # Convert age category to continuous midpoint
-    persons_ctramp = persons_ctramp.with_columns(
+    persons_ctramp = persons_with_type.with_columns(
         pl.col("age")
         .map_elements(
             lambda code: (get_age_midpoint(ac) if (ac := AgeCategory.from_value(code)) else code),
             return_dtype=pl.Int64,
         )
-        .alias("age")
+        .alias("age"),
     )
 
     # Map gender (convert int enum to string "m"/"f")
@@ -474,57 +501,7 @@ def format_persons(
         .alias("wfh_choice")
     )
 
-    # Compute employment_category from employment for mandatory locations
-    persons_ctramp = persons_ctramp.with_columns(
-        pl.col("employment")
-        .replace_strict(
-            EMPLOYMENT_TO_CTRAMP,
-            default=CTRAMPEmploymentCategory.NOT_EMPLOYED.value,
-        )
-        .alias("employment_category")
-    )
-
-    # Compute student_category from student and school_type for mandatory locations
-    persons_ctramp = persons_ctramp.with_columns(
-        pl.when(
-            pl.col("student").is_in(
-                [
-                    Student.FULLTIME_INPERSON.value,
-                    Student.PARTTIME_INPERSON.value,
-                    Student.FULLTIME_ONLINE.value,
-                    Student.PARTTIME_ONLINE.value,
-                ]
-            )
-            & pl.col("school_type").is_in(
-                [
-                    SchoolType.COLLEGE_2YEAR.value,
-                    SchoolType.COLLEGE_4YEAR.value,
-                    SchoolType.GRADUATE_SCHOOL.value,
-                ]
-            )
-        )
-        .then(pl.lit(CTRAMPStudentCategory.COLLEGE_OR_HIGHER.value))
-        .when(
-            pl.col("student").is_in(
-                [
-                    Student.FULLTIME_INPERSON.value,
-                    Student.PARTTIME_INPERSON.value,
-                    Student.FULLTIME_ONLINE.value,
-                    Student.PARTTIME_ONLINE.value,
-                ]
-            )
-            & pl.col("school_type").is_in(
-                [
-                    SchoolType.ELEMENTARY.value,
-                    SchoolType.MIDDLE_SCHOOL.value,
-                    SchoolType.HIGH_SCHOOL.value,
-                ]
-            )
-        )
-        .then(pl.lit(CTRAMPStudentCategory.GRADE_OR_HIGH_SCHOOL.value))
-        .otherwise(pl.lit(CTRAMPStudentCategory.NOT_STUDENT.value))
-        .alias("student_category")
-    )
+    # Note: employment_category was already computed before person_type derivation
 
     # Note: value_of_time is model output, not survey data
     # If it exists in the input, keep it; otherwise it will be null
@@ -543,5 +520,123 @@ def format_persons(
         )
 
     logger.info("Formatted %d persons for CT-RAMP", len(persons_ctramp))
+    debug_ptype(persons_ctramp)
 
     return persons_ctramp
+
+
+def debug_ptype(persons_ctramp: pl.DataFrame) -> None:
+    """Log person type distributions and detect bad attribute combinations.
+
+    Prints a frequency table of person_type by student_category by
+    employment_category by age_bin for debugging. Then checks for known
+    bad combinations and logs WARNING-level messages with counts.
+    """
+    # Make a simple age bin, <5, 5-17, 18-64, 65+ for debugging purposes
+    persons_ctramp = persons_ctramp.with_columns(
+        pl.when(pl.col("age") < 5)  # noqa: PLR2004
+        .then(pl.lit("<5"))  # Young children (pre-school)
+        .when((pl.col("age") >= 5) & (pl.col("age") <= 17))  # noqa: PLR2004
+        .then(pl.lit("5-17"))  # School-aged children
+        .when((pl.col("age") >= 18) & (pl.col("age") <= 64))  # noqa: PLR2004
+        .then(pl.lit("18-64"))  # Working-age adults
+        .otherwise(pl.lit("65+"))  # Seniors
+        .alias("age_bin")
+    )
+
+    # Create freq table of person_type by student_status by employment_status by age for debugging
+    freq_dist = (
+        persons_ctramp.group_by("person_type", "student_category", "employment_category", "age_bin")
+        .agg(pl.len())
+        # Assign string person type labels for debugging
+        .with_columns(pl.col("person_type").replace_strict(CTRAMPPersonType.to_dict()))
+        .sort(["person_type", "student_category", "employment_category", "age_bin"])
+    )
+
+    # Flag known bad combos by joining a rules table onto the freq distribution.
+    # Rows matching a rule get an 'expected' value; clean rows stay empty.
+    bad_combo_rules = _bad_combo_rules()
+    join_keys = ["person_type", "student_category", "employment_category", "age_bin"]
+    freq_dist = freq_dist.join(bad_combo_rules, on=join_keys, how="left").with_columns(
+        pl.col("expected").fill_null(pl.lit(""))
+    )
+
+    # Print full table (bad combos are visible via the 'expected' column)
+    with pl.Config(tbl_rows=50):
+        s = freq_dist.__repr__()
+    logger.info(
+        "Person type distribution by student category, employment category, and age bin:\n%s", s
+    )
+
+    # Summary warning for flagged rows
+    flagged = freq_dist.filter(pl.col("expected") != "")
+    if len(flagged) > 0:
+        total_bad = flagged["len"].sum()
+        logger.warning(
+            "Detected %d persons in %d questionable person type/attribute combinations "
+            "(see 'expected' column above).",
+            total_bad,
+            len(flagged),
+        )
+
+
+def _bad_combo_rules() -> pl.DataFrame:
+    """Return a lookup table of known bad person_type / attribute combinations.
+
+    Each row describes a (person_type, student_category, employment_category,
+    age_bin) combo that should not occur, along with the expected correct
+    person_type classification.  Used by ``debug_ptype`` to flag rows in the
+    frequency distribution table.
+
+    Bad combos (from BATS 2023 analysis):
+    │ Full-time worker           ┆ College or higher    ┆ Part-time employed  ┆ 18-64  │ → university student
+    │ Full-time worker           ┆ Grade or high school ┆ Full-time employed  ┆ 5-17   │ → child of non-driving age
+    │ Full-time worker           ┆ Grade or high school ┆ Part-time employed  ┆ 5-17   │ → child type by age
+    │ Full-time worker           ┆ Not a student        ┆ Part-time employed  ┆ 18-64  │ → part-time worker
+    │ Nonworker                  ┆ College or higher    ┆ Not employed        ┆ 18-64  │ → university student
+    │ Part-time worker           ┆ College or higher    ┆ Part-time employed  ┆ 18-64  │ → university student
+    │ Retired                    ┆ College or higher    ┆ Full-time employed  ┆ 65+    │ → full-time worker
+    │ Retired                    ┆ College or higher    ┆ Part-time employed  ┆ 65+    │ → part-time worker
+    │ Retired                    ┆ Not a student        ┆ Full-time employed  ┆ 65+    │ → full-time worker
+    │ Retired                    ┆ Not a student        ┆ Part-time employed  ┆ 65+    │ → part-time worker
+    │ University student         ┆ College or higher    ┆ Full-time employed  ┆ 18-64  │ → full-time worker
+    │ University student         ┆ Not a student        ┆ Not employed        ┆ 18-64  │ → nonworker
+    │ University student         ┆ Not a student        ┆ Part-time employed  ┆ 18-64  │ → part-time worker
+    │ Child of driving age       ┆ Not a student        ┆ Not employed        ┆ 18-64  │ → nonworker
+
+    Note: rows 2-3 share the same join key (driving vs non-driving depends on
+    exact age within 5-17); consolidated as "child type by age" in the rules.
+
+    Returns:
+        DataFrame with columns (person_type, student_category,
+        employment_category, age_bin, expected).
+    """  # noqa: E501
+    pt = CTRAMPPersonType
+    ec = CTRAMPEmploymentCategory
+    sc = CTRAMPStudentCategory
+
+    # fmt: off
+    # (person_type_label, student_category, employment_category, age_bin, expected)
+    rows = [
+        (pt.FULL_TIME_WORKER.label,   sc.COLLEGE_OR_HIGHER.value,    ec.PART_TIME_EMPLOYED.value, "18-64", "university student"),  # noqa: E501
+        (pt.FULL_TIME_WORKER.label,   sc.GRADE_OR_HIGH_SCHOOL.value, ec.FULL_TIME_EMPLOYED.value, "5-17",  "child type by age"),  # noqa: E501
+        (pt.FULL_TIME_WORKER.label,   sc.GRADE_OR_HIGH_SCHOOL.value, ec.PART_TIME_EMPLOYED.value, "5-17",  "child type by age"),  # noqa: E501
+        (pt.FULL_TIME_WORKER.label,   sc.NOT_STUDENT.value,          ec.PART_TIME_EMPLOYED.value, "18-64", "part-time worker"),  # noqa: E501
+        (pt.NON_WORKER.label,         sc.COLLEGE_OR_HIGHER.value,    ec.NOT_EMPLOYED.value,       "18-64", "university student"),  # noqa: E501
+        (pt.PART_TIME_WORKER.label,   sc.COLLEGE_OR_HIGHER.value,    ec.PART_TIME_EMPLOYED.value, "18-64", "university student"),  # noqa: E501
+        (pt.RETIRED.label,            sc.COLLEGE_OR_HIGHER.value,    ec.FULL_TIME_EMPLOYED.value, "65+",   "full-time worker"),  # noqa: E501
+        (pt.RETIRED.label,            sc.COLLEGE_OR_HIGHER.value,    ec.PART_TIME_EMPLOYED.value, "65+",   "part-time worker"),  # noqa: E501
+        (pt.RETIRED.label,            sc.NOT_STUDENT.value,          ec.FULL_TIME_EMPLOYED.value, "65+",   "full-time worker"),  # noqa: E501
+        (pt.RETIRED.label,            sc.NOT_STUDENT.value,          ec.PART_TIME_EMPLOYED.value, "65+",   "part-time worker"),  # noqa: E501
+        (pt.UNIVERSITY_STUDENT.label, sc.COLLEGE_OR_HIGHER.value,    ec.FULL_TIME_EMPLOYED.value, "18-64", "full-time worker"),  # noqa: E501
+        (pt.UNIVERSITY_STUDENT.label, sc.NOT_STUDENT.value,          ec.NOT_EMPLOYED.value,       "18-64", "nonworker"),  # noqa: E501
+        (pt.UNIVERSITY_STUDENT.label, sc.NOT_STUDENT.value,          ec.PART_TIME_EMPLOYED.value, "18-64", "part-time worker"),  # noqa: E501
+        (pt.CHILD_DRIVING_AGE.label,  sc.NOT_STUDENT.value,          ec.NOT_EMPLOYED.value,       "18-64", "nonworker"),  # noqa: E501
+    ]
+    # fmt: on
+
+    return pl.DataFrame(
+        rows,
+        schema=["person_type", "student_category", "employment_category", "age_bin", "expected"],
+        orient="row",
+    )

@@ -8,7 +8,6 @@ from data_canon.codebook.days import TravelDow
 from data_canon.codebook.persons import (
     AgeCategory,
     Employment,
-    PersonType,
     SchoolType,
     Student,
 )
@@ -82,7 +81,6 @@ def test_duration_tiebreaker_equal_priority():
         person_data={
             "person_id": 100,
             "hh_id": 10,
-            "person_type": PersonType.FULL_TIME_WORKER.value,
         },
         unlinked_trips_data=[
             {
@@ -180,7 +178,6 @@ def test_duration_tiebreaker_different_priority():
         person_data={
             "person_id": 100,
             "hh_id": 10,
-            "person_type": PersonType.FULL_TIME_WORKER.value,
         },
         unlinked_trips_data=[
             {
@@ -267,7 +264,6 @@ def test_activity_duration_last_trip():
         person_data={
             "person_id": 101,
             "hh_id": 10,
-            "person_type": PersonType.FULL_TIME_WORKER.value,
             "age": AgeCategory.AGE_25_TO_34.value,
             "employment": Employment.EMPLOYED_FULLTIME.value,
             "school_type": SchoolType.MISSING.value,

@@ -21,22 +21,25 @@ logger = logging.getLogger(__name__)
 def prepare_person_locations(
     persons: pl.DataFrame,
     households: pl.DataFrame,
-    person_type_mapping: dict,
+    person_category_expression: pl.Expr,
 ) -> pl.DataFrame:
     """Prepare cached person location data with person categories.
 
     Args:
         persons: DataFrame with person attributes
         households: DataFrame with household attributes (home_lat, home_lon)
-        person_type_mapping: Dict mapping person_type enum to PersonCategory
+        person_category_expression: Polars expression to classify person categories
 
     Returns:
         DataFrame with person locations and categories
     """
     logger.info("Preparing person location data...")
 
+    # Classify person category to persons
+    persons_with_category = persons.with_columns(person_category_expression)
+
     # Join home location from households
-    persons_with_home = persons.join(
+    persons_with_home = persons_with_category.join(
         households.select(["hh_id", "home_lat", "home_lon"]),
         on="hh_id",
         how="left",
@@ -46,7 +49,7 @@ def prepare_person_locations(
     person_locations = persons_with_home.select(
         [
             "person_id",
-            "person_type",
+            "person_category",
             "home_lat",
             "home_lon",
             "work_lat",
@@ -56,19 +59,7 @@ def prepare_person_locations(
         ]
     )
 
-    # Add person category mapping
-    # Convert enum keys to integer values for Polars compatibility
-    person_type_map = {k.value: v for k, v in person_type_mapping.items()}
-    return person_locations.with_columns(
-        [
-            pl.col("person_type")
-            .replace_strict(
-                person_type_map,
-                default=person_type_map[next(iter(person_type_map.keys()))],
-            )
-            .alias("person_category")
-        ]
-    )
+    return person_locations
 
 
 def classify_trip_locations(

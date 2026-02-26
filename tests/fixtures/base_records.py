@@ -1,13 +1,11 @@
 """Base record builders for households, persons, and days.
 
 This module provides simplified builders for core survey entities.
-Person types are derived automatically using the pipeline's
-derive_person_type() function.
+Person types (person_category) are now derived during tour processing,
+not stored in canonical survey data.
 """
 
 from datetime import UTC, date, datetime
-
-import polars as pl
 
 from data_canon.codebook.days import TravelDow
 from data_canon.codebook.generic import BooleanYesNo
@@ -27,7 +25,6 @@ from data_canon.codebook.persons import (
     WorkParking,
 )
 from data_canon.codebook.trips import Mode
-from processing.tours.person_type import derive_person_type
 
 
 def create_household(
@@ -132,8 +129,8 @@ def create_person(
 ) -> dict:
     """Create a complete canonical person record.
 
-    Person type is automatically derived from age/employment/student using the
-    pipeline's derive_person_type() function.
+    Person category is derived during tour processing based on age/employment/student
+    attributes, not stored in canonical survey data.
 
     Args:
         person_id: Person ID
@@ -168,7 +165,7 @@ def create_person(
         **overrides: Override any default values
 
     Returns:
-        Complete person record dict with person_type auto-derived
+        Complete person record dict
     """
     record = {
         "person_id": person_id,
@@ -243,13 +240,8 @@ def create_person(
     # Complete days
     record["num_days_complete"] = num_complete_days
 
-    # Apply overrides before deriving person_type
+    # Apply overrides
     record = {**record, **overrides}
-
-    # Derive person_type using pipeline function (single source of truth)
-    person_df = pl.DataFrame([record])
-    person_df = derive_person_type(person_df)
-    record["person_type"] = person_df["person_type"][0]
 
     return record
 

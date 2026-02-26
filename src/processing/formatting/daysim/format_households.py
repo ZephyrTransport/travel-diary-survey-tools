@@ -4,7 +4,7 @@ import logging
 
 import polars as pl
 
-from data_canon.codebook.persons import PersonType
+from data_canon.codebook.daysim import DaysimPersonType
 
 from .mappings import (
     INCOME_DETAILED_TO_MIDPOINT,
@@ -46,14 +46,14 @@ def format_households(
 
     # Calculate household composition from persons_daysim
     hh_composition = persons_daysim.group_by("hhno").agg(
-        hhftw=(pl.col("pptyp") == PersonType.FULL_TIME_WORKER.value).sum(),
-        hhptw=(pl.col("pptyp") == PersonType.PART_TIME_WORKER.value).sum(),
-        hhret=(pl.col("pptyp") == PersonType.RETIRED.value).sum(),
-        hhoad=(pl.col("pptyp") == PersonType.NON_WORKER.value).sum(),
-        hhuni=(pl.col("pptyp") == PersonType.UNIVERSITY_STUDENT.value).sum(),
-        hhhsc=(pl.col("pptyp") == PersonType.CHILD_DRIVING_AGE.value).sum(),
-        hh515=(pl.col("pptyp") == PersonType.CHILD_NON_DRIVING_AGE.value).sum(),
-        hhcu5=(pl.col("pptyp") == PersonType.CHILD_UNDER_5.value).sum(),
+        hhftw=(pl.col("pptyp") == DaysimPersonType.FULL_TIME_WORKER.value).sum(),
+        hhptw=(pl.col("pptyp") == DaysimPersonType.PART_TIME_WORKER.value).sum(),
+        hhret=(pl.col("pptyp") == DaysimPersonType.RETIRED.value).sum(),
+        hhoad=(pl.col("pptyp") == DaysimPersonType.NON_WORKER.value).sum(),
+        hhuni=(pl.col("pptyp") == DaysimPersonType.UNIVERSITY_STUDENT.value).sum(),
+        hhhsc=(pl.col("pptyp") == DaysimPersonType.CHILD_DRIVING_AGE.value).sum(),
+        hh515=(pl.col("pptyp") == DaysimPersonType.CHILD_NON_DRIVING_AGE.value).sum(),
+        hhcu5=(pl.col("pptyp") == DaysimPersonType.CHILD_UNDER_5.value).sum(),
     )
 
     # Rename columns to DaySim naming convention

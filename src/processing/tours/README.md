@@ -17,9 +17,9 @@ Builds tour and subtour structures from linked trip sequences using spatial and 
 - `linked_trips`: Journey records with coordinates and timing (pl.DataFrame)
 - `**kwargs`: Configuration parameters for TourConfig:
   - `distance_thresholds`: Dict of location type → distance threshold (meters)
-  - `person_type_mapping`: Person type classification rules
   - `mode_hierarchy`: Mode priority for tour mode assignment
   - `purpose_hierarchy`: Purpose priority by person type
+  - `person_category_expression`: Polars expression to classify person categories (e.g. worker, student)
 
 **Outputs:**
 - Dictionary containing:
@@ -66,7 +66,7 @@ Builds tour and subtour structures from linked trip sequences using spatial and 
 **Phase 5: Tour Attribute Aggregation**
 1. Group trips by tour_id (and subtour_id for subtours)
 2. Compute tour-level attributes:
-   - `tour_purpose`: Highest priority destination purpose (person-type specific hierarchy)
+   - `tour_purpose`: Highest priority destination purpose (person-category specific hierarchy)
    - `tour_mode`: Highest priority travel mode (from configurable mode hierarchy)
    - `origin_depart_time`: First trip's departure time
    - `dest_arrive_time`: Last trip's arrival time
@@ -80,9 +80,9 @@ Builds tour and subtour structures from linked trip sequences using spatial and 
 **Configuration via TourConfig:**
 - `distance_thresholds`: Controls location classification sensitivity
   - home: 100m, work: 200m, school: 200m (defaults)
-- `person_type_mapping`: Rules for classifying person types (full-time worker, student, etc.)
 - `mode_hierarchy`: Priority order for determining tour mode from multiple trip modes
-- `purpose_hierarchy`: Purpose priority by person type (work trips prioritized for workers, etc.)
+- `purpose_hierarchy`: Purpose priority by person category (work trips prioritized for workers, etc.)
+- `person_category_expression`: Polars expression to classify person categories (e.g. worker, student)
 
 **Notes:**
 - Hierarchical tour structure: Home-based tours → Work-based subtours

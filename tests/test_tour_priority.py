@@ -5,15 +5,14 @@ import datetime
 import polars as pl
 import pytest
 
-from data_canon.codebook.persons import PersonType
+from data_canon.codebook.tours import PersonCategory
 from data_canon.codebook.trips import ModeType, PurposeCategory
 from processing.tours.priority_utils import (
     add_activity_duration_column,
     add_mode_priority_column,
     add_purpose_priority_column,
-    get_purpose_priority,
 )
-from processing.tours.tour_configs import PersonCategory, TourConfig
+from processing.tours.tour_configs import TourConfig
 
 
 @pytest.fixture
@@ -22,69 +21,20 @@ def default_config():
     return TourConfig()
 
 
-class TestGetPurposePriority:
-    """Test get_purpose_priority function."""
+class TestPersonCategory:
+    """Test PersonCategory constants."""
 
-    def test_home_purpose_returns_high_priority(self, default_config):
-        """Test that HOME purpose returns 999 priority."""
-        priority = get_purpose_priority(
-            PersonType.FULL_TIME_WORKER,
-            PurposeCategory.HOME,
-            default_config,
-        )
-        assert priority == 999
+    def test_worker_constant(self):
+        """Test that WORKER constant has expected value."""
+        assert PersonCategory.WORKER == "worker"
 
-    def test_valid_worker_work_priority(self, default_config):
-        """Test valid worker-work priority lookup."""
-        priority = get_purpose_priority(
-            PersonType.FULL_TIME_WORKER,
-            PurposeCategory.WORK,
-            default_config,
-        )
-        # Work should be high priority for workers
-        assert isinstance(priority, int)
-        assert priority < 10  # Should be a low (high priority) number
+    def test_student_constant(self):
+        """Test that STUDENT constant has expected value."""
+        assert PersonCategory.STUDENT == "student"
 
-    def test_invalid_person_type_raises_error(self):
-        """Test that invalid person type raises ValueError."""
-        # Create a config without certain person types
-        config = TourConfig()
-        config.person_type_mapping = {}  # Empty mapping
-
-        with pytest.raises(ValueError, match="not in person_type_mapping"):
-            get_purpose_priority(
-                PersonType.FULL_TIME_WORKER,
-                PurposeCategory.WORK,
-                config,
-            )
-
-    def test_missing_person_category_raises_error(self):
-        """Test that missing person category in priority map raises error."""
-        config = TourConfig()
-        config.person_type_mapping = {PersonType.FULL_TIME_WORKER: "NonexistentCategory"}
-        config.purpose_priority_by_persontype = {}  # Empty map
-
-        with pytest.raises(ValueError, match="not in purpose_priority_by_persontype"):
-            get_purpose_priority(
-                PersonType.FULL_TIME_WORKER,
-                PurposeCategory.WORK,
-                config,
-            )
-
-    def test_missing_purpose_in_category_raises_error(self):
-        """Test that missing purpose in category map raises error."""
-        config = TourConfig()
-        config.person_type_mapping = {PersonType.FULL_TIME_WORKER: "worker"}
-        config.purpose_priority_by_persontype = {
-            "worker": {}  # Empty purpose map
-        }
-
-        with pytest.raises(ValueError, match="not mapped for"):
-            get_purpose_priority(
-                PersonType.FULL_TIME_WORKER,
-                PurposeCategory.WORK,
-                config,
-            )
+    def test_other_constant(self):
+        """Test that OTHER constant has expected value."""
+        assert PersonCategory.OTHER == "other"
 
 
 class TestAddPurposePriorityColumn:

@@ -9,17 +9,19 @@ import logging
 
 import polars as pl
 
-from data_canon.codebook.ctramp import CTRAMPTourCategory, TourComposition
+from data_canon.codebook.ctramp import CTRAMPEmploymentCategory, CTRAMPTourCategory, TourComposition
 from data_canon.codebook.persons import SchoolType
 from data_canon.codebook.tours import TourDirection
 from data_canon.codebook.trips import PurposeCategory
 from processing.formatting.ctramp.mappings import (
-    PERSON_TYPE_TO_CTRAMP,
-    map_mode_to_ctramp,
-    map_purpose_category_to_ctramp,
+    EMPLOYMENT_TO_CTRAMP,
+    ctramp_mode_expression,
+    ctramp_purpose_category_expression,
+    ctramp_student_category_expression,
 )
 
 from .ctramp_config import CTRAMPConfig
+from .format_persons import enrich_persons_with_person_type
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +45,8 @@ def format_individual_tour(
         linked_trips_canonical: Canonical trips DataFrame with tour_id, tour_direction
             (1=outbound, 2=inbound, 3=subtour)
         persons_canonical: Canonical persons DataFrame with person_id, person_num,
-            person_type, school_type
+            person_type (for mode mapping), school_type (for purpose mapping) are optional
+            but re-derived if missing or invalid
         households_ctramp: Formatted CT-RAMP households DataFrame with hh_id, income
         config: CT-RAMP configuration with income thresholds
 
@@ -63,6 +66,27 @@ def format_individual_tour(
     """
     logger.info("Formatting individual tour data for CT-RAMP")
 
+    # Derive/validate person_type in persons_with_type before joining to tours
+    if "person_type" not in persons_canonical.columns or "type" not in persons_canonical.columns:
+        logger.info("Deriving person_type for tour formatting")
+        # Pre-compute student_category and employment_category for consistency
+        if "student_category" not in persons_canonical.columns:
+            persons_canonical = persons_canonical.with_columns(
+                ctramp_student_category_expression(school_taz_col="school_taz").alias(
+                    "student_category"
+                )
+            )
+        if "employment_category" not in persons_canonical.columns:
+            persons_canonical = persons_canonical.with_columns(
+                pl.col("employment")
+                .replace_strict(
+                    EMPLOYMENT_TO_CTRAMP,
+                    default=CTRAMPEmploymentCategory.NOT_EMPLOYED.value,
+                )
+                .alias("employment_category")
+            )
+        persons_canonical = enrich_persons_with_person_type(persons_canonical)
+
     # Filter to individual tours only (not joint)
     individual_tours = tours_canonical.filter(pl.col("joint_tour_id").is_null())
 
@@ -76,11 +100,6 @@ def format_individual_tour(
         households_ctramp.select(["hh_id", "income"]),
         on="hh_id",
         how="left",
-    )
-
-    # Remap person_type to CTRAMP format (keep as integer enum value)
-    individual_tours = individual_tours.with_columns(
-        pl.col("person_type").replace_strict(PERSON_TYPE_TO_CTRAMP).alias("person_type_ctramp")
     )
 
     # Calculate subtour count (at-work tours)
@@ -101,7 +120,7 @@ def format_individual_tour(
 
     # Map tour purpose to CTRAMP format
     individual_tours = individual_tours.with_columns(
-        map_purpose_category_to_ctramp(
+        ctramp_purpose_category_expression(
             pl.col("tour_purpose"),
             pl.col("income"),
             pl.col("school_type"),
@@ -148,7 +167,7 @@ def format_individual_tour(
         num_travelers_expr = pl.lit(1)
 
     individual_tours = individual_tours.with_columns(
-        map_mode_to_ctramp(
+        ctramp_mode_expression(
             pl.col("tour_mode"),
             num_travelers_expr,
             None,  # Tours don't have access/egress modes
@@ -219,7 +238,6 @@ def format_individual_tour(
     # Format columns to CTRAMP specifications
     individual_tours = individual_tours.with_columns(
         [
-            pl.col("person_type_ctramp").alias("person_type"),
             pl.col("tour_num").alias("tour_id"),  # CTRAMP tour_id is tour_num
             pl.col("tour_id").alias("_tour_id_canonical"),  # Temp column for joining with trips
             pl.col("tour_category_ctramp").alias("tour_category"),
@@ -411,7 +429,7 @@ def format_joint_tour(
     # Map purpose and mode
     joint_tours_formatted = joint_tours_formatted.with_columns(
         [
-            map_purpose_category_to_ctramp(
+            ctramp_purpose_category_expression(
                 pl.col("tour_purpose"),
                 pl.col("income"),
                 pl.lit(SchoolType.MISSING.value),  # Joint tours not for school
@@ -419,7 +437,7 @@ def format_joint_tour(
                 config.income_med_threshold,
                 config.income_high_threshold,
             ).alias("tour_purpose_ctramp"),
-            map_mode_to_ctramp(
+            ctramp_mode_expression(
                 pl.col("tour_mode"),
                 pl.col("num_travelers"),
                 None,  # Tours don't have access/egress modes
