@@ -261,8 +261,8 @@ steps:
   - name: link_trips
     validate: true
     params:
-      change_mode_code: 11  # Purpose code for 'change_mode'
-      transit_mode_codes: [12, 13, 14]
+      change_mode_enum: 11  # Purpose code for 'change_mode'
+      transit_mode_enums: [12, 13, 14]
       max_dwell_time: 180  # in minutes
       dwell_buffer_distance: 100  # in meters
 

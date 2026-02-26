@@ -37,8 +37,8 @@ steps:
     validate_input: true
     cache: true
     params:
-      change_mode_code: 11  # Purpose code for 'change_mode'
-      transit_mode_codes: [12, 13, 14] # NOTE: this is not elegant
+      change_mode_enum: CHANGE_MODE
+      transit_mode_enums: [FERRY, TRANSIT, LONG_DISTANCE]
       max_dwell_time: 180  # in minutes
       dwell_buffer_distance: 100  # in meters
 

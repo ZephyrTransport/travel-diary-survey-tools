@@ -270,8 +270,8 @@ def test_linking_row_count():
     legacy_result, _ = link_trip_legacy(legacy_data, act_dur_limit=35, act_dur_limit2=15)
     new_result = link_trips(
         new_data,
-        change_mode_code=PURPOSE_MAP_NEW["change_mode"],
-        transit_mode_codes=[MODE_MAP["transit"]],
+        change_mode_enum=PURPOSE_MAP_NEW["change_mode"],
+        transit_mode_enums=[MODE_MAP["transit"]],
         max_dwell_time=120,
         dwell_buffer_distance=100,
     )
@@ -296,8 +296,8 @@ def test_linked_trip_purposes():
     # Run new implementation
     new_result = link_trips(
         new_data,
-        change_mode_code=PURPOSE_MAP_NEW["change_mode"],
-        transit_mode_codes=[MODE_MAP["transit"]],
+        change_mode_enum=PURPOSE_MAP_NEW["change_mode"],
+        transit_mode_enums=[MODE_MAP["transit"]],
         max_dwell_time=120,
         dwell_buffer_distance=100,
     )
@@ -330,8 +330,8 @@ def test_linked_trip_modes():
     legacy_result, _ = link_trip_legacy(legacy_data, act_dur_limit=35, act_dur_limit2=15)
     new_result = link_trips(
         new_data,
-        change_mode_code=PURPOSE_MAP_NEW["change_mode"],
-        transit_mode_codes=[MODE_MAP["transit"]],
+        change_mode_enum=PURPOSE_MAP_NEW["change_mode"],
+        transit_mode_enums=[MODE_MAP["transit"]],
         max_dwell_time=120,
         dwell_buffer_distance=100,
     )

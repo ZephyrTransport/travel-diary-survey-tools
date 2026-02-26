@@ -84,8 +84,8 @@ def single_trip_tour_data():
     # Link trips
     link_result = link_trips(
         unlinked_trips=unlinked_trips,
-        change_mode_code=PurposeCategory.CHANGE_MODE.value,
-        transit_mode_codes=[ModeType.TRANSIT.value],
+        change_mode_enum=PurposeCategory.CHANGE_MODE.value,
+        transit_mode_enums=[ModeType.TRANSIT.value],
     )
     unlinked_trips_with_ids = link_result["unlinked_trips"]
     linked_trips = link_result["linked_trips"].with_columns(
@@ -188,8 +188,8 @@ def partial_tour_data():
     # Link trips
     link_result = link_trips(
         unlinked_trips=unlinked_trips,
-        change_mode_code=PurposeCategory.CHANGE_MODE.value,
-        transit_mode_codes=[ModeType.TRANSIT.value],
+        change_mode_enum=PurposeCategory.CHANGE_MODE.value,
+        transit_mode_enums=[ModeType.TRANSIT.value],
     )
     unlinked_trips_with_ids = link_result["unlinked_trips"]
     linked_trips = link_result["linked_trips"].with_columns(
@@ -292,8 +292,8 @@ def distant_destinations_data():
     # Link trips
     link_result = link_trips(
         unlinked_trips=unlinked_trips,
-        change_mode_code=PurposeCategory.CHANGE_MODE.value,
-        transit_mode_codes=[ModeType.TRANSIT.value],
+        change_mode_enum=PurposeCategory.CHANGE_MODE.value,
+        transit_mode_enums=[ModeType.TRANSIT.value],
     )
     unlinked_trips_with_ids = link_result["unlinked_trips"]
     linked_trips = link_result["linked_trips"].with_columns(
@@ -449,8 +449,8 @@ def test_tour_num_sequential():
     # Link trips first
     link_result = link_trips(
         unlinked_trips=unlinked_trips,
-        change_mode_code=PurposeCategory.CHANGE_MODE.value,
-        transit_mode_codes=[ModeType.TRANSIT.value],
+        change_mode_enum=PurposeCategory.CHANGE_MODE.value,
+        transit_mode_enums=[ModeType.TRANSIT.value],
     )
     unlinked_trips_with_ids = link_result["unlinked_trips"]
     linked_trips = link_result["linked_trips"].with_columns(
@@ -566,8 +566,8 @@ def test_all_tours_have_required_fields():
     # Link trips first
     link_result = link_trips(
         unlinked_trips=unlinked_trips,
-        change_mode_code=PurposeCategory.CHANGE_MODE.value,
-        transit_mode_codes=[ModeType.TRANSIT.value],
+        change_mode_enum=PurposeCategory.CHANGE_MODE.value,
+        transit_mode_enums=[ModeType.TRANSIT.value],
     )
     unlinked_trips_with_ids = link_result["unlinked_trips"]
     linked_trips = link_result["linked_trips"].with_columns(

@@ -13,8 +13,8 @@ Quick-start example for analyzing transit trips from survey data.
    ```yaml
    - name: link_trips
      params:
-       change_mode_code: 11          # Purpose code for transfers
-       transit_mode_codes: [12, 13, 14]  # Ferry, transit, long distance
+       change_mode_enum: 11          # Purpose code for transfers
+       transit_mode_enums: [12, 13, 14]  # Ferry, transit, long distance
        max_dwell_time: 180           # Max minutes between segments
        dwell_buffer_distance: 100    # Max meters between trip endpoints
    ```
@@ -73,14 +73,14 @@ steps:
 
   - name: link_trips
     params:
-      change_mode_code: 11
-      transit_mode_codes: [12, 13, 14]  # Ferry, transit, long distance
+      change_mode_enum: 11
+      transit_mode_enums: [12, 13, 14]  # Ferry, transit, long distance
       max_dwell_time: 180
       dwell_buffer_distance: 100
 
   - name: summarize_transit_trips
     params:
-      transit_mode_codes: [12, 13]  # Exclude long distance from analysis
+      transit_mode_enums: [12, 13]  # Exclude long distance from analysis
 ```
 
 The `run.py` script loads this config and executes each step using the Pipeline framework.

@@ -14,7 +14,7 @@ def summarize_transit_trips(
     unlinked_trips: pl.DataFrame,
     linked_trips: pl.DataFrame,
     trip_weights: pl.DataFrame,
-    transit_mode_codes: list[int],
+    transit_mode_enums: list[int],
 ) -> dict[str, pl.DataFrame]:
     """Summarize transit trips for analysis."""
     county_names = {
@@ -98,7 +98,7 @@ def summarize_transit_trips(
 
     # Calculate transit boardings per linked trip and join back to linked trips
     total_boardings = (
-        unlinked_trips.filter(pl.col("mode_type").is_in(transit_mode_codes))
+        unlinked_trips.filter(pl.col("mode_type").is_in(transit_mode_enums))
         .group_by("linked_trip_id")
         .agg(pl.count("trip_id").alias("boardings"))
     )
@@ -115,7 +115,7 @@ def summarize_transit_trips(
     )
 
     # Filter to transit trips only
-    linked_transit_trips = linked_trips.filter(pl.col("mode_type").is_in(transit_mode_codes))
+    linked_transit_trips = linked_trips.filter(pl.col("mode_type").is_in(transit_mode_enums))
 
     # Summarize total transit trips by origin and destination county
     transit_summary = (

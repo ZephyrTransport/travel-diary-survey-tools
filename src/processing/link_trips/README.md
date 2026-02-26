@@ -13,8 +13,8 @@ Links unlinked trip segments into complete journey records by detecting mode cha
 **Inputs:**
 - `unlinked_trips`: Individual trip records (pl.DataFrame)
   - Required columns: person_id, day_id, depart_time, arrive_time, o/d locations, o/d purposes, mode_type
-- `change_mode_code`: Purpose code indicating a mode change (int)
-- `transit_mode_codes`: List of mode codes that count as transit (list[int])
+- `change_mode_enum`: Purpose code indicating a mode change (int)
+- `transit_mode_enums`: List of mode codes that count as transit (list[int])
 - `max_dwell_time`: Maximum time gap between trips to link them, in minutes (default: 120)
 - `dwell_buffer_distance`: Maximum spatial distance between trips to link, in meters (default: 100)
 
@@ -28,7 +28,7 @@ Links unlinked trip segments into complete journey records by detecting mode cha
 **Phase 1: Link Trip IDs**
 1. Sort unlinked trips by person, day, and departure time
 2. For each person-day sequence:
-   - If previous trip's destination purpose is `change_mode_code`, continue the current linked trip
+   - If previous trip's destination purpose is `change_mode_enum`, continue the current linked trip
    - Validate spatial/temporal continuity:
      - Time gap between trips ≤ `max_dwell_time` minutes
      - Distance between previous destination and current origin ≤ `dwell_buffer_distance` meters

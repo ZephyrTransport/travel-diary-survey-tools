@@ -7,9 +7,8 @@ import polars as pl
 from data_canon.codebook.trips import AccessEgressMode, Driver, ModeType
 from pipeline.decoration import step
 from utils.create_ids import create_linked_trip_id
-from utils.helpers import (
-    expr_haversine,
-)
+from utils.enum_helpers import resolve_enum_labels
+from utils.helpers import expr_haversine
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,8 +37,8 @@ MODE_TYPE_TO_ACCESS_EGRESS = {
 @step()
 def link_trips(
     unlinked_trips: pl.DataFrame,
-    change_mode_code: int,
-    transit_mode_codes: list[int],
+    change_mode_enum: str,
+    transit_mode_enums: list[str],
     max_dwell_time: float = 120,
     dwell_buffer_distance: float = 100,
 ) -> dict[str, pl.DataFrame]:
@@ -47,8 +46,8 @@ def link_trips(
 
     Args:
         unlinked_trips: DataFrame containing trip data
-        change_mode_code: Purpose code indicating a mode change
-        transit_mode_codes: List of mode codes that count as transit
+        change_mode_enum: Enum label indicating a mode change
+        transit_mode_enums: List of enum labels that count as transit
         max_dwell_time: Maximum time gap between trips to link them (minutes)
         dwell_buffer_distance: Maximum distance between trips to link (meters)
 
@@ -61,7 +60,7 @@ def link_trips(
     # Link trip IDs
     unlinked_trips_with_ids = link_trip_ids(
         unlinked_trips,
-        change_mode_code,
+        change_mode_enum,
         max_dwell_time,
         dwell_buffer_distance,
     )
@@ -69,7 +68,7 @@ def link_trips(
     # Aggregate linked trips
     linked_trips = aggregate_linked_trips(
         unlinked_trips_with_ids,
-        transit_mode_codes,
+        transit_mode_enums,
     )
 
     logger.info("Trip linking completed.")
@@ -81,7 +80,7 @@ def link_trips(
 
 def link_trip_ids(
     unlinked_trips: pl.DataFrame,
-    change_mode_code: int,
+    change_mode_enum: str,
     max_dwell_time: float = 120,
     dwell_buffer_distance: float = 100,
 ) -> pl.DataFrame:
@@ -98,7 +97,7 @@ def link_trip_ids(
 
     Args:
         unlinked_trips: DataFrame containing trip data
-        change_mode_code: Purpose code indicating a mode change
+        change_mode_enum: Enum label indicating a mode change
         max_dwell_time: Maximum time gap between trips to link them (minutes)
         dwell_buffer_distance: Maximum distance between trips to link (meters)
 
@@ -129,6 +128,11 @@ def link_trip_ids(
         .over("person_id")
         .name.map(lambda c: f"prev_{c}")
     )
+
+    # Get change mode integer code value from enum label
+    change_mode_code = resolve_enum_labels(
+        table_name="unlinked_trips", field_name="d_purpose_category", enum_labels=[change_mode_enum]
+    )[0]
 
     # Step 3: Is new linked trips when:
     #  - prev_purpose not change_mode_code
@@ -181,10 +185,9 @@ def link_trip_ids(
     )
 
 
-# NOTE: Consider removing from this stage and leave to downstream "formatting"
 def aggregate_linked_trips(
     unlinked_trips: pl.DataFrame,
-    transit_mode_codes: list[int],
+    transit_mode_enums: list[str],
 ) -> pl.DataFrame:
     """Aggregate linked trips into single records, summarizing key info.
 
@@ -200,13 +203,17 @@ def aggregate_linked_trips(
 
     Args:
         unlinked_trips: DataFrame with linked_trip_id column
-        transit_mode_codes: List of mode codes that count as transit
+        transit_mode_enums: List of mode enums that count as transit
 
     Returns:
         Aggregated DataFrame with one row per linked trip
 
     """
     logger.info("Aggregating linked trips...")
+
+    transit_mode_codes = resolve_enum_labels(
+        table_name="unlinked_trips", field_name="mode_type", enum_labels=transit_mode_enums
+    )
 
     # First, find the mode type from the longest duration trip segment
     mode_selection = (

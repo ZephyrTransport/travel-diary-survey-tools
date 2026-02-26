@@ -49,7 +49,7 @@ class TestLinkTripIds:
 
         result = link_trip_ids(
             trips,
-            change_mode_code=10,
+            change_mode_enum=10,
             max_dwell_time=120,
             dwell_buffer_distance=100,
         )
@@ -90,7 +90,7 @@ class TestLinkTripIds:
 
         result = link_trip_ids(
             trips,
-            change_mode_code=10,
+            change_mode_enum=10,
             max_dwell_time=120,
             dwell_buffer_distance=100,
         )
@@ -127,7 +127,7 @@ class TestLinkTripIds:
 
         result = link_trip_ids(
             trips,
-            change_mode_code=10,
+            change_mode_enum=10,
             max_dwell_time=120,
             dwell_buffer_distance=100,
         )
@@ -164,7 +164,7 @@ class TestLinkTripIds:
 
         result = link_trip_ids(
             trips,
-            change_mode_code=10,
+            change_mode_enum=10,
             max_dwell_time=120,  # 120 minutes
             dwell_buffer_distance=100,
         )
@@ -201,7 +201,7 @@ class TestLinkTripIds:
 
         result = link_trip_ids(
             trips,
-            change_mode_code=10,
+            change_mode_enum=10,
             max_dwell_time=120,
             dwell_buffer_distance=10,  # 10 miles
         )
@@ -249,7 +249,7 @@ class TestLinkTripIds:
 
         result = link_trip_ids(
             trips,
-            change_mode_code=10,
+            change_mode_enum=10,
             max_dwell_time=120,
             dwell_buffer_distance=100,
         )
@@ -298,7 +298,7 @@ class TestLinkTripIds:
 
         result = link_trip_ids(
             trips,
-            change_mode_code=10,
+            change_mode_enum=10,
             max_dwell_time=120,
             dwell_buffer_distance=100,
         )
@@ -335,7 +335,7 @@ class TestLinkTripIds:
 
         result = link_trip_ids(
             trips,
-            change_mode_code=10,
+            change_mode_enum=10,
             max_dwell_time=120,
             dwell_buffer_distance=100,
         )
@@ -363,7 +363,7 @@ class TestLinkTripIds:
 
         result = link_trip_ids(
             trips,
-            change_mode_code=10,
+            change_mode_enum=10,
             max_dwell_time=120,
             dwell_buffer_distance=100,
         )
@@ -424,7 +424,7 @@ class TestAggregateLinkedTrips:
             }
         )
 
-        result = aggregate_linked_trips(trips, transit_mode_codes=[ModeType.TRANSIT.value])
+        result = aggregate_linked_trips(trips, transit_mode_enums=[ModeType.TRANSIT.value])
 
         # Should have one aggregated trip
         assert len(result) == 1
@@ -505,7 +505,7 @@ class TestAggregateLinkedTrips:
             }
         )
 
-        result = aggregate_linked_trips(trips, transit_mode_codes=[ModeType.TRANSIT.value])
+        result = aggregate_linked_trips(trips, transit_mode_enums=[ModeType.TRANSIT.value])
 
         # Should select transit mode
         assert result["mode_type"][0] == ModeType.TRANSIT.value
@@ -559,7 +559,7 @@ class TestAggregateLinkedTrips:
             }
         )
 
-        result = aggregate_linked_trips(trips, transit_mode_codes=[ModeType.TRANSIT.value])
+        result = aggregate_linked_trips(trips, transit_mode_enums=[ModeType.TRANSIT.value])
 
         # Should select drive (mode 3) as longest duration
         assert result["mode_type"][0] == ModeType.CAR.value
@@ -610,7 +610,7 @@ class TestAggregateLinkedTrips:
             }
         )
 
-        result = aggregate_linked_trips(trips, transit_mode_codes=[ModeType.TRANSIT.value])
+        result = aggregate_linked_trips(trips, transit_mode_enums=[ModeType.TRANSIT.value])
 
         row = result.row(0, named=True)
         # Total duration: 8:00 to 8:45 = 45 min
@@ -682,7 +682,7 @@ class TestAggregateLinkedTrips:
             }
         )
 
-        result = aggregate_linked_trips(trips, transit_mode_codes=[ModeType.TRANSIT.value])
+        result = aggregate_linked_trips(trips, transit_mode_enums=[ModeType.TRANSIT.value])
 
         # Should have two aggregated trips
         assert len(result) == 2
@@ -759,8 +759,8 @@ class TestLinkTripsIntegration:
 
         result = link_trips(
             trips,
-            change_mode_code=PurposeCategory.CHANGE_MODE.value,
-            transit_mode_codes=[ModeType.TRANSIT.value],
+            change_mode_enum=PurposeCategory.CHANGE_MODE.value,
+            transit_mode_enums=[ModeType.TRANSIT.value],
             max_dwell_time=120,
             dwell_buffer_distance=100,
         )
@@ -816,8 +816,8 @@ class TestLinkTripsIntegration:
 
         result = link_trips(
             trips,
-            change_mode_code=10,
-            transit_mode_codes=[ModeType.TRANSIT.value],
+            change_mode_enum=10,
+            transit_mode_enums=[ModeType.TRANSIT.value],
             max_dwell_time=120,
         )
 
@@ -1010,7 +1010,7 @@ class TestTableLevelUniqueness:
 
         # Aggregate into linked trips table
         linked_trips = aggregate_linked_trips(
-            unlinked_trips, transit_mode_codes=[ModeType.TRANSIT.value]
+            unlinked_trips, transit_mode_enums=[ModeType.TRANSIT.value]
         )
 
         # CRITICAL: linked_trips table MUST have unique linked_trip_ids
@@ -1100,7 +1100,7 @@ class TestTableLevelUniqueness:
         )
 
         linked_trips = aggregate_linked_trips(
-            unlinked_trips, transit_mode_codes=[ModeType.TRANSIT.value]
+            unlinked_trips, transit_mode_enums=[ModeType.TRANSIT.value]
         )
 
         # 4 unlinked segments become 2 linked trips
@@ -1203,8 +1203,8 @@ class TestTableLevelUniqueness:
 
         result = link_trips(
             trips,
-            change_mode_code=PurposeCategory.CHANGE_MODE.value,
-            transit_mode_codes=[ModeType.TRANSIT.value],
+            change_mode_enum=PurposeCategory.CHANGE_MODE.value,
+            transit_mode_enums=[ModeType.TRANSIT.value],
             max_dwell_time=120,
         )
 

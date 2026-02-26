@@ -83,8 +83,8 @@ def link_and_detect_joint_trips(
     # Link trips first
     link_result = link_trips(
         unlinked_trips=unlinked_trips,
-        change_mode_code=PurposeCategory.CHANGE_MODE.value,
-        transit_mode_codes=[ModeType.TRANSIT.value],
+        change_mode_enum=PurposeCategory.CHANGE_MODE.value,
+        transit_mode_enums=[ModeType.TRANSIT.value],
     )
     unlinked_trips_with_ids = link_result["unlinked_trips"]
     linked_trips = link_result["linked_trips"]
