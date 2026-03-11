@@ -1,6 +1,7 @@
 """Trip formatting for CT-RAMP.
 
 Transforms canonical trip data into CT-RAMP model format, including:
+
 - Individual trips (trips on individual tours)
 - Joint trips (trips on joint tours)
 """
@@ -28,6 +29,9 @@ def format_individual_trip(
     """Format individual trips to CT-RAMP specification.
 
     Transforms linked trip data (for individual tours only) to CT-RAMP format.
+    Links trips to individual tours via tour_id. Includes stop purpose, mode,
+    location, and sequence within tour. Distinguishes outbound, inbound, and
+    subtour trips.
 
     Args:
         linked_trips_canonical: Canonical DataFrame with linked trip fields (tour_id,
@@ -210,6 +214,8 @@ def format_joint_trip(
     """Format joint trips to CT-RAMP specification.
 
     Transforms joint trip data using mean coordinates from joint_trips table.
+    Links trips to joint tours using aggregated joint trip data. Maintains
+    participant information for each trip leg.
 
     Args:
         joint_trips_canonical: Aggregated joint trip DataFrame with joint_trip_id, hh_id,

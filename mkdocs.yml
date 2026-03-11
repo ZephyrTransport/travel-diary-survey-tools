@@ -1,0 +1,86 @@
+site_name: Travel Diary Survey Tools
+site_description: Documentation for travel diary survey data models and codebooks
+repo_url: https://github.com/BayAreaMetro/travel-diary-survey-tools
+
+theme:
+  name: material
+  palette:
+    primary: indigo
+  features:
+    - navigation.sections
+    - navigation.tabs
+    - content.code.copy
+
+plugins:
+  - search
+  - autorefs
+  - include-markdown:
+      rewrite_relative_urls: true
+  - mkdocstrings:
+      handlers:
+        python:
+          import:
+            - https://docs.pydantic.dev/latest/objects.inv
+          options:
+            docstring_style: google
+            group_by_category: true
+            show_source: false
+            show_root_heading: true
+            show_symbol_type_heading: false
+            show_symbol_type_toc: false
+            members_order: source
+            show_bases: false
+            show_if_no_docstring: true
+            inherited_members: false
+            show_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+            separate_signature: false
+            show_root_members_full_path: false
+            heading_level: 2
+            # Show class attributes for Pydantic models
+            show_root_toc_entry: true
+            show_category_heading: false
+            annotations_path: source
+            line_length: 80
+            members: true
+            extensions:
+              - griffe_pydantic
+            filters:
+              - "!^_"
+              - "!^LabeledEnum$"
+              - "!^Enum$"
+              - "!^[a-z_]+$"  # Exclude lowercase module variables
+
+nav:
+  - Home: index.md
+  - Codebook: codebook.md
+  - Data Models:
+      - Survey Data Models: models/index.md
+      - Travel Model-Formatted Data Models:
+          - DaySim: models/daysim.md
+          - CTRAMP: models/ctramp.md
+  - Pipeline: pipeline.md
+  - Pipeline Steps:
+      - Load Data: pipeline_steps/read_write.md
+      - Cleaning: pipeline_steps/cleaning.md
+      - Imputation: pipeline_steps/imputation.md
+      - Link Trips: pipeline_steps/link_trips.md
+      - Detect Joint Trips: pipeline_steps/detect_joint_trips.md
+      - Extract Tours: pipeline_steps/extract_tours.md
+      - Weighting: pipeline_steps/weighting.md
+      - Format Output:
+          - DaySim Format: pipeline_steps/format_output/daysim.md
+          - CT-RAMP Format: pipeline_steps/format_output/ctramp.md
+      - Final Check: pipeline_steps/final_check.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - tables

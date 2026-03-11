@@ -1,6 +1,8 @@
-"""Data models for DaySim file formats.
+"""Data models for CT-RAMP file formats.
 
-Based on https://github.com/BayAreaMetro/modeling-website/wiki/DataDictionary
+Based on [https://github.com/BayAreaMetro/modeling-website/wiki/DataDictionary](https://github.com/BayAreaMetro/modeling-website/wiki/DataDictionary)
+
+See [Pipeline Steps > Format Output > CT-RAMP Format](../pipeline_steps/format_output/ctramp.md)
 """
 # ruff: noqa: E501 N815
 

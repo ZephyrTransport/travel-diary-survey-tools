@@ -110,10 +110,21 @@ def compute_day_completeness(days: pl.DataFrame) -> pl.DataFrame:
 def format_persons(persons: pl.DataFrame, days: pl.DataFrame) -> pl.DataFrame:
     """Format person data to DaySim specification.
 
-    Applies mapping dictionaries and derives person type (pptyp) and worker
-    type (pwtyp) based on age, employment, and student status.
+    Applies mapping dictionaries and derives person type (`pptyp`) and worker
+    type (`pwtyp`) based on age, employment, and student status.
+
+    Key Transformations:
+
+    - **Person Type Classification**: Full-time worker, part-time worker, university
+      student, non-working adult, retired, child by age based on age, employment
+      status, student status (cascading logic below)
+    - **Day Completeness**: Mark complete travel days vs partial reporting (from days table)
+    - **Activity Patterns**: Work at home frequency, school location type derived from
+      usual work/school locations
+    - **Usual Days**: Calculate usual work/school days per week
 
     Person type (pptyp) cascading logic:
+
     - Age < 5: Child 0-4 (type 8)
     - Age < 16: Child 5-15 (type 7)
     - Full-time employed: Full-time worker (type 1)

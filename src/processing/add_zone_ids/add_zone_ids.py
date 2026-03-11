@@ -69,6 +69,7 @@ def add_zone_ids(
     """Add zone IDs for multiple geographic levels based on locations.
 
     Automatically applies each zone geography to standard locations:
+
     - households: home_lon/lat → home_{zone_name}
     - persons: work_lon/lat → work_{zone_name},
                 school_lon/lat → school_{zone_name}

@@ -1,4 +1,8 @@
-"""Loads all canonical tables from input paths."""
+"""Data input/output operations for the survey processing pipeline.
+
+This module provides pipeline steps for loading canonical survey tables from files
+and writing them to various output formats.
+"""
 
 import logging
 from pathlib import Path
@@ -16,7 +20,30 @@ logger = logging.getLogger(__name__)
 def load_data(
     input_paths: dict[str, str],
 ) -> dict[str, pl.DataFrame | gpd.GeoDataFrame]:
-    """Load all canonical tables from input paths."""
+    """Load canonical survey tables from file paths into memory.
+
+    Args:
+        input_paths: Dictionary mapping table names to file paths.
+            Supported formats: CSV, TSV, Parquet, Shapefile, GeoJSON.
+
+    Returns:
+        Dictionary of table names to DataFrames (pl.DataFrame or gpd.GeoDataFrame).
+        Typical tables include households, persons, days, unlinked_trips, etc.
+
+    Algorithm:
+        1. Iterate through each table name and file path in input_paths
+        2. Validate file path exists, providing helpful error message with broken path component
+        3. Load data based on file extension:
+            - .csv/.tsv → polars.read_csv()
+            - .parquet → polars.read_parquet()
+            - .shp/.shp.zip/.geojson → geopandas.read_file()
+        4. Return dictionary of loaded tables
+
+    Notes:
+        - All CSV/Parquet files loaded as Polars DataFrames for performance
+        - Geospatial files loaded as GeoPandas GeoDataFrames
+        - Path validation helps diagnose configuration errors
+    """
     data = {}
 
     for table, path in input_paths.items():
@@ -88,7 +115,31 @@ def write_data(
     validate_input: bool,
     create_dirs: bool = True,
 ) -> None:
-    """Write all canonical tables to output paths."""
+    """Write canonical survey tables to output file paths.
+
+    Args:
+        output_paths: Dictionary mapping table names to output file paths.
+        canonical_data: CanonicalData instance containing DataFrames to write.
+        validate_input: Whether to run validation before writing.
+        create_dirs: Whether to create parent directories (default: True).
+
+    Algorithm:
+        1. If validate_input=True, validate each table using canonical data models
+        2. For each table in output_paths:
+            - Retrieve DataFrame from canonical_data
+            - Create parent directories if needed
+            - Write data based on file extension:
+                - .csv → DataFrame.write_csv()
+                - .parquet → DataFrame.write_parquet()
+                - .shp/.shp.zip/.geojson → GeoDataFrame.to_file()
+                - .txt → Path.write_text()
+        3. Log completion status
+
+    Notes:
+        - Validation ensures output conforms to canonical data schemas
+        - Automatic directory creation prevents path errors
+        - Supports multiple output formats for flexibility
+    """
     for table, path in output_paths.items():
         logger.info("Writing %s to:\n%s...", table, path)
 

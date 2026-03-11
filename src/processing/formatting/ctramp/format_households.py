@@ -1,8 +1,17 @@
 """Household formatting for CT-RAMP.
 
 Transforms canonical household data into CT-RAMP model format, including:
-- Income conversion to $2000 midpoint values
-- TAZ mapping
+
+- **Income Conversion**: Converts categorical income values to midpoint dollars
+  in configurable base year
+- **Income Bracketing**: Classifies households into low/med/high/very high
+  income brackets using user-defined thresholds
+- **Spatial Fields**: Maps home TAZ (optionally filters households without
+  valid TAZ)
+- **Joint Tour Frequency**: Derives jtf_choice field from joint tour counts by
+  purpose category
+- **Excludes**: Random number fields (ao_rn, fp_rn, cdap_rn) and auto_suff
+  (model simulation fields)
 
 Note: Model-output fields (walk_subzone, humanVehicles, autonomousVehicles,
 random number fields, auto_suff) are excluded as they are not derivable from
@@ -143,8 +152,10 @@ def format_households(
 ) -> pl.DataFrame:
     """Format household data to CT-RAMP specification.
 
-    Transforms household data from canonical format to CT-RAMP format.
+    Transforms household data from canonical format to
+    [`HouseholdCTRAMPModel`][data_canon.models.ctramp.HouseholdCTRAMPModel]
     Key transformations:
+
     - Rename fields to CT-RAMP conventions
     - Convert income categories to midpoint values
     - Compute household aggregates (size, workers, vehicles)
@@ -161,13 +172,14 @@ def format_households(
 
     Returns:
         DataFrame with CT-RAMP household fields:
-        - hh_id: Household ID
-        - taz: Home TAZ
-        - income: Annual household income (midpoint value)
-        - autos: Number of automobiles
-        - size: Number of persons
-        - workers: Number of workers
-        - jtf_choice: Joint tour frequency (count of unique joint tours)
+
+            - hh_id: Household ID
+            - taz: Home TAZ
+            - income: Annual household income (midpoint value)
+            - autos: Number of automobiles
+            - size: Number of persons
+            - workers: Number of workers
+            - jtf_choice: Joint tour frequency (count of unique joint tours)
 
     Notes:
         - Model-output fields (walk_subzone, humanVehicles, autonomousVehicles,

@@ -1,15 +1,44 @@
 """DaySim Formatting Step.
 
-Transforms canonical survey data (persons, households, trips, tours) into
-DaySim model format. DaySim is an activity-based travel demand model
-requiring specific data structures and coding schemes.
+Transforms canonical survey data (persons, households, trips, tours, days) into
+DaySim activity-based travel demand model format, applying model-specific coding
+schemes and data structures. See [DaySim Data Models](../../models/daysim.md).
 
-This module serves as the main orchestrator, delegating formatting of each
-table type to specialized modules:
-- format_persons: Person type classification and day completeness
-- format_households: Household composition and income processing
-- format_trips: Linked trip mode, path type, and driver/passenger codes
-- format_tours: Tour purpose, timing, and location mapping
+This module orchestrates specialized formatting for each table type, applying
+DaySim-specific integer codes for categorical variables while maintaining
+referential integrity across tables.
+
+# Components
+
+* [`format_persons`][processing.formatting.daysim.format_persons]: Produces persons_daysim
+  table consistent with [`PersonDaysimModel`][data_canon.models.daysim.PersonDaysimModel].
+* [`format_households`][processing.formatting.daysim.format_households]: Produces
+  households_daysim table consistent with
+  [`HouseholdDaysimModel`][data_canon.models.daysim.HouseholdDaysimModel].
+* [`format_linked_trips`][processing.formatting.daysim.format_trips]: Produces
+  trips_daysim table consistent with
+  [`LinkedTripDaysimModel`][data_canon.models.daysim.LinkedTripDaysimModel].
+* [`format_tours`][processing.formatting.daysim.format_tours]: Produces tours_daysim table
+  consistent with [`TourDaysimModel`][data_canon.models.daysim.TourDaysimModel].
+* [`format_days`][processing.formatting.daysim.format_days]: Produces days_daysim table
+  consistent with [`PersonDayDaysimModel`][data_canon.models.daysim.PersonDayDaysimModel].
+
+# Data Quality Filters
+
+- **Partial Tours**: Optionally drop tours without return home
+- **Missing TAZ**: Remove records without spatial assignment (required for model)
+- **Invalid Tours**: Filter out tours failing validation rules (zero distance,
+  negative duration, data quality flags)
+
+# Implementation Notes
+
+- DaySim requires specific integer codes for categorical variables
+- Formatting maintains referential integrity across tables
+- TAZ (Traffic Analysis Zone) assignment critical for model application
+- Person type classification affects downstream choice model applicability
+- Mode/purpose hierarchies ensure consistent coding
+- Output validates against DaySim data specifications
+- Days with invalid/partial tours become "no travel" days in the model
 """
 
 import logging
@@ -42,34 +71,56 @@ def format_daysim(
 ) -> dict[str, pl.DataFrame]:
     """Format canonical survey data to DaySim model specification.
 
-    Transforms person, household, trip, and tour data from canonical format to
-    DaySim format required by the activity-based travel demand model. This
-    includes:
-    - Person type classification based on age, employment, and student status
-    - Household composition calculation from person data
-    - Trip mode, path type, and driver/passenger code derivation
-    - Tour purpose, timing, and location mapping
-    - Day completeness computation for survey weighting (optional)
+    Converts canonical survey tables to DaySim activity-based travel demand model
+    format. See module docstring for complete component descriptions.
 
     Args:
-        persons: Canonical person data with demographic and location fields
-        households: Canonical household data with income and dwelling fields
-        unlinked_trips: Canonical unlinked trip data with mode, purpose, and
-            timing fields
-        linked_trips: Canonical linked trip data with mode, purpose, and
-            timing fields
-        tours: Canonical tour data with purpose, timing, and location fields
-        days: Day-level data for completeness calculation
+        persons: Person attributes in canonical format. Required columns:
+            person_id, hh_id, age, employment, student, etc.
+        households: Household attributes in canonical format. Required columns:
+            hh_id, home_taz, income, etc.
+        unlinked_trips: Individual trip segments with mode, purpose, and timing.
+        linked_trips: Journey records with coordinates, mode, purpose, and timing.
+        tours: Tour records with purpose, timing, and location fields.
+        days: Person-day records for completeness calculation.
         drop_partial_tours: If True, remove tours not marked as complete
+            (default: True). Tours without return home are excluded.
         drop_missing_taz: If True, remove households without valid TAZ/MAZ IDs
+            (default: True). Required for model application.
         drop_invalid_tours: If True, remove tours marked as invalid
+            (default: True). Filters out zero distance, negative duration, and
+            data quality flagged tours.
 
     Returns:
-        Dictionary with keys:
-        - households_daysim: Formatted household data
-        - persons_daysim: Formatted person data
-        - trips_daysim: Formatted trip data
-        - tours_daysim: Formatted tour data
+        Dictionary containing:
+            - households_daysim: Formatted household data with person type
+              composition and income categories
+            - persons_daysim: Formatted person data with person type, day pattern,
+              and completeness flags
+            - days_daysim: Formatted day-level data with summaries
+            - linked_trips_daysim: Formatted trip data with DaySim mode, path type,
+              and driver/passenger codes
+            - tours_daysim: Formatted tour data with DaySim purpose codes and
+              timing
+
+    !!! Example
+
+        ```python
+
+        result = format_daysim(
+            persons=canonical_persons,
+            households=canonical_households,
+            unlinked_trips=canonical_unlinked_trips,
+            linked_trips=canonical_linked_trips,
+            tours=canonical_tours,
+            days=canonical_days,
+            drop_partial_tours=True,
+            drop_missing_taz=True,
+            drop_invalid_tours=True
+        )
+        households_daysim = result["households_daysim"]
+        persons_daysim = result["persons_daysim"]
+        ```
     """
     logger.info("Starting DaySim formatting")
 

@@ -1,10 +1,19 @@
 """Person formatting for CT-RAMP.
 
 Transforms canonical person data into CT-RAMP model format, including:
-- Person type classification based on age, employment, and student status
-- Activity pattern determination (Mandatory/Non-mandatory/Home)
-- Free parking choice based on commute subsidies
-- Tour frequency placeholder values
+
+- **Person Type Classification**: Derives CT-RAMP person type from age category,
+  employment status, and student status
+- **Gender Mapping**: Converts to binary m/f format (configurable default for
+  non-binary/missing)
+- **Free Parking**: Determines eligibility based on commute subsidies
+- **Tour Frequency Fields**: Derives imf_choice (mandatory tour frequency),
+  inmf_choice (non-mandatory tour frequency), and activity_pattern from
+  tour data when available
+- **Work-from-Home**: Sets wfh_choice based on work tours vs work days
+- **Value of Time**: Calculates based on employment type and household income
+  bracket
+- **Placeholders**: Uses sensible defaults when tour data is unavailable
 
 Note: Some fields like activity_pattern, imf_choice, and inmf_choice require
 tour data and are set to placeholder values. These would be populated from
@@ -368,6 +377,7 @@ def format_persons(
 
     Transforms person data from canonical format to CT-RAMP format.
     Key transformations:
+
     - Classify person type based on age, employment, student status
     - Map gender to m/f format
     - Determine free parking eligibility
@@ -382,18 +392,19 @@ def format_persons(
 
     Returns:
         DataFrame with CT-RAMP person fields:
-        - hh_id: Household ID
-        - person_id: Person ID
-        - person_num: Person number
-        - age: Person age
-        - gender: Gender (m/f)
-        - type: Person type (1-8)
-        - value_of_time: Value of time ($/hour)
-        - fp_choice: Free parking choice (1/2)
-        - activity_pattern: Daily activity pattern (M/N/H)
-        - imf_choice: Individual mandatory tour frequency
-        - inmf_choice: Individual non-mandatory tour frequency
-        - wfh_choice: Work from home choice (0/1)
+
+            - hh_id: Household ID
+            - person_id: Person ID
+            - person_num: Person number
+            - age: Person age
+            - gender: Gender (m/f)
+            - type: Person type (1-8)
+            - value_of_time: Value of time ($/hour)
+            - fp_choice: Free parking choice (1/2)
+            - activity_pattern: Daily activity pattern (M/N/H)
+            - imf_choice: Individual mandatory tour frequency
+            - inmf_choice: Individual non-mandatory tour frequency
+            - wfh_choice: Work from home choice (0/1)
 
     Notes:
         - activity_pattern: M=mandatory tours, N=non-mandatory only, H=no tours

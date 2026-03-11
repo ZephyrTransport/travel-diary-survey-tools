@@ -20,6 +20,14 @@ def format_days(
     Creates person-day records with tour counts by purpose, stop counts,
     begin/end at home flags, work at home duration, and location coordinates.
 
+    Key Transformations:
+
+    - **Day-Level Summaries**: Tour count by purpose (work, school, escort, etc.),
+      stop counts by purpose, total travel time and distance
+    - **Tour Categories**: Classify tours as home-based, work-based, or usual work location
+    - **Activity Patterns**: Begin/end at home flags, work at home duration
+    - **Usual Locations**: Work and school coordinates for spatial modeling
+
     Args:
         persons: Canonical person data with person_id, hh_id, work/school coords
         days: Canonical day data with day_id, person_id, travel_dow, day_weight
@@ -27,16 +35,17 @@ def format_days(
 
     Returns:
         DataFrame with DaySim PersonDay format including:
-        - hhno, pno, day: Identifiers
-        - beghom, endhom: Begin/end at home flags
-        - hbtours, wbtours, uwtours: Total/work-based/usual work tours
-        - wktours, sctours, estours, pbtours, shtours, mltours, sotours, retours, metours:
-          Tour counts by purpose
-        - wkstops, scstops, esstops, pbstops, shstops, mlstops, sostops, restops, mestops:
-          Stop counts by purpose
-        - wkathome: Minutes worked at home
-        - pwxcord, pwycord, psxcord, psycord: Work/school coordinates
-        - pdexpfac: Person-day expansion factor
+
+            - hhno, pno, day: Identifiers
+            - beghom, endhom: Begin/end at home flags
+            - hbtours, wbtours, uwtours: Total/work-based/usual work tours
+            - wktours, sctours, estours, pbtours, shtours, mltours, sotours, retours, metours:
+              Tour counts by purpose
+            - wkstops, scstops, esstops, pbstops, shstops, mlstops, sostops, restops, mestops:
+              Stop counts by purpose
+            - wkathome: Minutes worked at home
+            - pwxcord, pwycord, psxcord, psycord: Work/school coordinates
+            - pdexpfac: Person-day expansion factor
     """
     logger.info("Formatting person-day data for DaySim")
 

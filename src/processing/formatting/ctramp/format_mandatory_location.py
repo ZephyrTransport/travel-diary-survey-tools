@@ -207,11 +207,11 @@ def format_mandatory_location(
 
     Returns:
         DataFrame with CT-RAMP mandatory location fields:
-        - HHID, PersonID, PersonNum
-        - HomeTAZ, Income
-        - PersonType, PersonAge
-        - EmploymentCategory, StudentCategory
-        - WorkLocation, SchoolLocation
+            - HHID, PersonID, PersonNum
+            - HomeTAZ, Income
+            - PersonType, PersonAge
+            - EmploymentCategory, StudentCategory
+            - WorkLocation, SchoolLocation
 
     Notes:
         - Excludes model-only fields (walk subzones)

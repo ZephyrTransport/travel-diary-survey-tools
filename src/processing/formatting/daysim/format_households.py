@@ -25,15 +25,27 @@ def format_households(
     Calculates household composition from person data and applies income
     fallback logic.
 
+    Key Transformations:
+
+    - **Household Composition***: Aggregate person types within household (full-time workers,
+      part-time workers, retirees, non-working adults, university students, high school
+      students, children by age)
+    - **Income Processing**: Categorize household income into DaySim bins using midpoint
+      values, handle missing values with fallback logic from detailed to followup income
+    - **Size and Type**: Household size from person count, household type derived from
+      composition (workers, students, children)
+    - **Coordinates**: Home location coordinates and TAZ/MAZ assignment
+
     Household composition fields:
-    - hhftw: Full-time workers
-    - hhptw: Part-time workers
-    - hhret: Retirees (non-working seniors)
-    - hhoad: Other adults (non-working < 65)
-    - hhuni: University students
-    - hhhsc: High school students 16+
-    - hh515: Children 5-15
-    - hhcu5: Children 0-4
+
+    - `hhftw`: Full-time workers
+    - `hhptw`: Part-time workers
+    - `hhret`: Retirees (non-working seniors)
+    - `hhoad`: Other adults (non-working < 65)
+    - `hhuni`: University students
+    - `hhhsc`: High school students 16+
+    - `hh515`: Children 5-15
+    - `hhcu5`: Children 0-4
 
     Args:
         households: DataFrame with canonical household fields

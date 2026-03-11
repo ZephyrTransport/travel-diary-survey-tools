@@ -1,6 +1,7 @@
 """Tour formatting for CT-RAMP.
 
 Transforms canonical tour data into CT-RAMP model format, including:
+
 - Individual tours (non-joint tours)
 - Joint tours (household member group tours)
 """
@@ -36,6 +37,18 @@ def format_individual_tour(
     """Format individual tours to CT-RAMP specification.
 
     Transforms tour data (excluding joint tours) to CT-RAMP format.
+    Key Transformations:
+
+    - Filtering: Excludes joint tours (processes only tours with
+      joint_tour_id IS NULL)
+    - Purpose Mapping: Converts canonical purpose categories to CT-RAMP tour
+      purposes
+    - Mode Translation: Maps canonical mode types to CT-RAMP mode codes
+    - Time-of-Day: Extracts start/end hours from departure/arrival times
+    - Stop Counts: Computes outbound and inbound stop counts from linked trips
+    - Subtour Frequency: Calculates atWork_freq by counting subtours for each
+      parent work tour
+    - Excludes: Model simulation fields (random numbers, wait times, logsums)
 
     Args:
         tours_canonical: Canonical tours DataFrame with tour_id, hh_id, person_id,
@@ -52,13 +65,14 @@ def format_individual_tour(
 
     Returns:
         DataFrame with CT-RAMP individual tour fields:
-        - hh_id, person_id, person_num, person_type
-        - tour_id, tour_category, tour_purpose
-        - orig_taz, dest_taz
-        - start_hour, end_hour
-        - tour_mode
-        - atWork_freq (subtour count)
-        - num_ob_stops, num_ib_stops
+
+            - hh_id, person_id, person_num, person_type
+            - tour_id, tour_category, tour_purpose
+            - orig_taz, dest_taz
+            - start_hour, end_hour
+            - tour_mode
+            - atWork_freq (subtour count)
+            - num_ob_stops, num_ib_stops
 
     Notes:
         - Excludes joint tours (joint_tour_id IS NULL)
@@ -276,6 +290,15 @@ def format_joint_tour(
     """Format joint tours to CT-RAMP specification.
 
     Transforms joint tour data with participant aggregation.
+    Key Transformations:
+
+    - Identifies tours shared by multiple household members using joint_tour_id
+    - Composition: Classifies as adults-only, children-only, or mixed based on
+      configurable age threshold
+    - Participant List: Maintains ordered list of person_num for all tour
+      participants
+    - Same Fields: Purpose, mode, time-of-day, stops, destinations (like
+      individual tours)
 
     Args:
         tours_canonical: Canonical tours DataFrame with tour_id, joint_tour_id, hh_id,

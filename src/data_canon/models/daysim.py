@@ -1,6 +1,7 @@
 """Data models for DaySim file formats.
 
-Based on https://github.com/RSGInc/DaySim/wiki/docs/Daysim%20Input%20Data%20File%20Documentation.docx
+See [Pipeline Steps > Format Output > DaySim Format](../pipeline_steps/format_output/daysim.md)
+
 """
 
 from pydantic import BaseModel, Field

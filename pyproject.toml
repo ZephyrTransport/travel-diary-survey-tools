@@ -32,6 +32,11 @@ dev = [
     "pytest-cov>=7.0.0",
     "ruff>=0.14.3",
     "black>=25.12.0",
+    "mkdocs>=1.6.0,<2.0",
+    "mkdocs-material>=9.5.0",
+    "mkdocstrings[python]>=0.26.0",
+    "griffe-pydantic>=1.0.0",
+    "mkdocs-include-markdown-plugin>=6.0.0",
 ]
 
 [build-system]
@@ -56,7 +61,6 @@ lint.ignore = [
 ]
 lint.pydocstyle.convention = "google"
 exclude = ["archive", "*.html", "uv.lock"]
-
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = [

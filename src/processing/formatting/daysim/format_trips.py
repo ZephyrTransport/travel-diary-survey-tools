@@ -534,6 +534,18 @@ def format_linked_trips(
     in the core linked_trips table per the pipeline design philosophy,
     deferring format-specific aggregations to output formatters.
 
+    Key Transformations:
+
+    - **Mode Codes**: Map canonical mode_type to DaySim mode codes (walk, bike, SOV, HOV2,
+      HOV3, transit, etc.), distinguish auto modes by occupancy (drive alone vs shared
+      ride)
+    - **Path Type**: Derive transit path type from mode hierarchy (ferry > BART > premium >
+      LRT > bus), special handling for transit access/egress modes
+    - **Driver/Passenger**: Code driver vs passenger for auto trips, TNC occupancy (alone,
+      2, 3+), link to household vehicle information
+    - **Trip Sequence**: Number trips within tours and half-tours (outbound/inbound)
+    - **Purpose Codes**: Map origin and destination purpose categories to DaySim codes
+
     Args:
         persons: DataFrame with canonical person fields
         unlinked_trips: DataFrame with canonical unlinked trip fields

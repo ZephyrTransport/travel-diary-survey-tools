@@ -13,7 +13,6 @@ from utils.helpers import expr_haversine
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ModeType to AccessEgressMode mapping for transit access/egress
 MODE_TYPE_TO_ACCESS_EGRESS = {
     ModeType.WALK.value: AccessEgressMode.WALK.value,
     ModeType.BIKE.value: AccessEgressMode.BICYCLE.value,
@@ -31,6 +30,12 @@ MODE_TYPE_TO_ACCESS_EGRESS = {
     ModeType.OTHER.value: AccessEgressMode.OTHER.value,
     ModeType.MISSING.value: AccessEgressMode.MISSING.value,
 }
+"""ModeType to AccessEgressMode mapping for transit access/egress.
+
+Maps travel mode types to access/egress mode categories used in transit trip analysis.
+This mapping is used when aggregating linked trips to classify non-transit segments
+as access or egress modes for transit journeys.
+"""
 
 
 # Trip Linker Functions --------------------------------------------------------
@@ -42,18 +47,63 @@ def link_trips(
     max_dwell_time: float = 120,
     dwell_buffer_distance: float = 100,
 ) -> dict[str, pl.DataFrame]:
-    """Link trips and aggregate them into complete journey records.
+    """Link unlinked trip segments into complete journey records.
+
+    Detects mode changes and aggregates trip chains by validating spatial and
+    temporal continuity across consecutive trips.
 
     Args:
-        unlinked_trips: DataFrame containing trip data
-        change_mode_enum: Enum label indicating a mode change
-        transit_mode_enums: List of enum labels that count as transit
-        max_dwell_time: Maximum time gap between trips to link them (minutes)
-        dwell_buffer_distance: Maximum distance between trips to link (meters)
+        unlinked_trips: Individual trip records with person_id, day_id,
+            depart_time, arrive_time, o/d locations, o/d purposes, mode_type.
+        change_mode_enum: Enum label indicating a mode change purpose.
+        transit_mode_enums: List of enum labels that count as transit modes.
+        max_dwell_time: Maximum time gap between trips to link them, in
+            minutes (default: 120).
+        dwell_buffer_distance: Maximum spatial distance between trips to link,
+            in meters (default: 100).
 
     Returns:
-        Tuple of (trips with linked_trip_id, aggregated linked trips)
+        Dictionary containing:
+            - unlinked_trips: Original trips with added linked_trip_id column
+            - linked_trips: Aggregated journey records with combined attributes
 
+    Algorithm:
+        # Phase 1: Link Trip IDs
+
+        1. Sort unlinked trips by person, day, and departure time
+        2. For each person-day sequence:
+            - If previous trip's destination purpose is change_mode_enum,
+              continue current linked trip
+            - Validate spatial/temporal continuity:
+                - Time gap between trips ≤ max_dwell_time minutes
+                - Distance between previous destination and current origin
+                  ≤ dwell_buffer_distance meters
+            - Otherwise, start a new linked trip
+        3. Assign globally unique linked_trip_id =
+           (day_id * 1000) + sequence_number
+
+        # Phase 2: Aggregate Linked Trips
+
+        1. Group unlinked trips by linked_trip_id
+        2. For each linked trip, aggregate:
+            - Origin/Destination: First trip's origin, last trip's destination
+            - Timing: First depart_time, last arrive_time
+            - Distance: Sum of all trip distances
+            - Duration: Sum of all trip durations (including dwell time)
+            - Purposes: First origin purpose, last destination purpose
+            - Mode Logic:
+                - If any trip uses transit → mode_type = TRANSIT
+                - Otherwise, use mode of longest distance trip
+            - Transit Details: Count boarding/alighting, aggregate access/egress modes
+            - Driver/Passenger: Aggregate from component trips
+        3. Create trip_list array containing all component trip IDs
+
+    Notes:
+        - Links trips when travelers make intermediate stops for mode changes or transfers
+        - Preserves full trip detail in unlinked_trips while creating journey-level linked_trips
+        - Transit detection ensures multi-modal journeys classified correctly
+        - Access/egress mode mapping converts trip modes to transit-specific codes
+        - Spatial/temporal thresholds prevent false linkages across separate journeys
     """
     logger.info("Linking trips...")
 

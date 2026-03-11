@@ -195,25 +195,92 @@ def detect_joint_trips(
     """Detect joint trips among household members using similarity matching.
 
     Identifies trips where multiple household members traveled together by
-    comparing origin-destination-time similarity. Uses either strict buffer
-    thresholds or Mahalanobis distance with configurable covariance.
+    comparing origin-destination-time similarity using either strict buffer
+    thresholds or Mahalanobis distance.
 
     Args:
-        linked_trips: DataFrame with trip coordinates and times
-        households: DataFrame with household info (used for pre-filtering)
-        method: Detection method ('buffer' or 'mahalanobis')
-        time_threshold_minutes: Max time difference for buffer method
-        space_threshold_meters: Max spatial distance for buffer method
-        covariance: Diagonal (4 values) or full (4x4) covariance for
-            Mahalanobis
-        confidence_level: Confidence threshold for Mahalanobis (0-1).
-            Higher = stricter. E.g., 0.90 is strict, 0.75 is moderate.
-        log_discrepancies: If True, log DEBUG details when detected size
-            differs from reported num_travelers
+        linked_trips: Journey records with coordinates and timing. Required columns:
+            linked_trip_id, hh_id, person_id, o/d coordinates, depart/arrive times.
+        households: Household table for pre-filtering.
+        method: Detection method - "buffer" or "mahalanobis" (default: "buffer").
+        time_threshold_minutes: Max time difference for buffer method (default: 15.0).
+        space_threshold_meters: Max spatial distance for buffer method (default: 100.0).
+        covariance: Covariance matrix for mahalanobis method - diagonal (4 values) or
+            full (4x4 matrix). If None, uses defaults (~84m spatial, ~4.5min temporal).
+        confidence_level: Statistical confidence level for mahalanobis (default: 0.90).
+            Higher = stricter. 0.90 is strict, 0.75 is moderate.
+        log_discrepancies: Whether to log trips with reported vs detected traveler
+            mismatches (default: False).
 
     Returns:
-        Dictionary with updated linked_trips (with joint_trip_id) and
-        new joint_trips table
+        Dictionary containing:
+            - linked_trips: Original trips with added joint_trip_id column
+            - joint_trips: Aggregated table of shared trips with participant lists
+
+    Algorithm:
+        # Phase 1: Household Pre-filtering
+
+        1. Filter to households with 2+ members who took trips
+        2. Reduces search space to only households where joint trips are possible
+
+        # Phase 2: Pairwise Distance Calculation
+
+        1. Within each multi-person household, compute pairwise distances between
+           all trip combinations using 4D space:
+            - Origin coordinates (o_lon, o_lat)
+            - Destination coordinates (d_lon, d_lat)
+            - Departure time
+            - Arrival time
+        2. Store distances in condensed matrix format for efficiency
+
+        # Phase 3: Similarity Filtering
+
+        ## Buffer Method (default):
+
+        - Filter trip pairs where:
+            - Spatial distance (haversine) ≤ space_threshold_meters for both
+              origin AND destination
+            - Absolute time difference ≤ time_threshold_minutes for both
+              departure AND arrival
+        - Simple, interpretable thresholds
+
+        ## Mahalanobis Method:
+
+        - Calculate statistical distance using covariance matrix:
+            - Accounts for correlated variations in space/time
+            - Compares to chi-squared distribution at confidence_level
+        - More sophisticated, calibrated to actual joint trip patterns
+        - Can capture joint trips more flexibly than fixed thresholds
+
+        # Phase 4: Clique Detection
+
+        1. Build graph where nodes = trips, edges = similar trip pairs
+        2. Detect maximal cliques (groups of mutually-similar trips)
+        3. Handle overlapping cliques by selecting disjoint set with maximum coverage
+        4. Each clique represents one joint trip event
+        5. Ensures transitivity: if A travels with B, and B with C, then A,B,C form
+           one joint trip
+
+        # Phase 5: Joint Trip Aggregation
+
+        1. Assign unique joint_trip_id to each clique
+        2. Create joint_trips table with:
+            - Representative location/time (mean of participants)
+            - person_list: Array of participating person IDs
+            - trip_list: Array of individual linked_trip_ids
+            - num_participants: Count of travelers
+        3. Validate against reported num_travelers field if available
+
+    Notes:
+        - Only compares trips within same household (joint trips across
+          households not detected)
+        - Mahalanobis method requires calibrated covariance matrix (see
+          scripts/calibrate_joint_trip_covariance.py)
+        - Clique detection prevents false positives from partial or
+          coincidental matches
+        - Handles survey reporting errors where respondents over/under-report
+          number of travelers
+        - Non-joint trips retain joint_trip_id = NULL
     """
     # Validate and construct config
     config = JointTripConfig(
