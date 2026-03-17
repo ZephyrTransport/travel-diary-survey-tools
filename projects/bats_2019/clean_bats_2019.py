@@ -8,7 +8,7 @@ from typing import get_args
 import polars as pl
 
 from data_canon.codebook.persons import JobType
-from data_canon.codebook.trips import Purpose, PurposeCategory
+from data_canon.codebook.trips import ModeType, Purpose, PurposeCategory
 from data_canon.models.survey import HouseholdModel, PersonDayModel, PersonModel, UnlinkedTripModel
 from pipeline.decoration import step
 from utils.helpers import expr_haversine
@@ -429,6 +429,45 @@ def clean_trips(unlinked_trips: pl.DataFrame) -> pl.DataFrame:
             col,
             {997: Purpose.OTHER.value},
         )
+
+    # Re-map mode_type
+    # From M:\Data\HomeInterview\Bay Area Travel Study 2018-2019\Data\
+    #   Final Version with Imputations\
+    #   Final Updated Dataset as of 10-18-2021\
+    #   Consolidated_SB1_TNC_Study_Codebook_March2021.xlsx
+    #  1    Walk
+    #  2    Bike
+    #  3    Car
+    #  4    Taxi
+    #  5    Transit
+    #  6    Schoolbus
+    #  7    Other
+    #  8    Shuttle/vanpool
+    #  9    TNC
+    #  10   Carshare
+    #  11   Bikeshare
+    #  12   Scooter share
+    #  13   Long-distance passenger mode
+    mode_type_map = {
+        1: ModeType.WALK.value,
+        2: ModeType.BIKE.value,
+        3: ModeType.CAR.value,
+        4: ModeType.TAXI.value,
+        5: ModeType.TRANSIT.value,
+        6: ModeType.SCHOOL_BUS.value,
+        7: ModeType.OTHER.value,
+        8: ModeType.SHUTTLE.value,
+        9: ModeType.TNC.value,
+        10: ModeType.CARSHARE.value,
+        11: ModeType.BIKESHARE.value,
+        12: ModeType.SCOOTERSHARE.value,
+        13: ModeType.LONG_DISTANCE.value,
+    }
+    unlinked_trips = unlinked_trips.with_columns(
+        pl.col("mode_type")
+        .replace_strict(mode_type_map, default=pl.col("mode_type"))
+        .alias("mode_type")
+    )
 
     # Num_travelers: replace <0 with None
     unlinked_trips = unlinked_trips.with_columns(
