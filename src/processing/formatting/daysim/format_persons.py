@@ -220,10 +220,10 @@ def format_persons(persons: pl.DataFrame, days: pl.DataFrame) -> pl.DataFrame:
         .otherwise(pl.lit(-1)),
         pwxco=pl.when(pl.col("pwtyp") != DaysimWorkerType.NON_WORKER.value)
         .then(pl.col("pwxco"))
-        .otherwise(pl.lit(None)),
+        .otherwise(pl.lit(-1)),
         pwyco=pl.when(pl.col("pwtyp") != DaysimWorkerType.NON_WORKER.value)
         .then(pl.col("pwyco"))
-        .otherwise(pl.lit(None)),
+        .otherwise(pl.lit(-1)),
         pstaz=pl.when(pl.col("pstyp") != DaysimStudentType.NOT_STUDENT.value)
         .then(pl.col("pstaz"))
         .otherwise(pl.lit(-1)),
@@ -232,10 +232,10 @@ def format_persons(persons: pl.DataFrame, days: pl.DataFrame) -> pl.DataFrame:
         .otherwise(pl.lit(-1)),
         psxco=pl.when(pl.col("pstyp") != DaysimStudentType.NOT_STUDENT.value)
         .then(pl.col("psxco"))
-        .otherwise(pl.lit(None)),
+        .otherwise(pl.lit(-1)),
         psyco=pl.when(pl.col("pstyp") != DaysimStudentType.NOT_STUDENT.value)
         .then(pl.col("psyco"))
-        .otherwise(pl.lit(None)),
+        .otherwise(pl.lit(-1)),
     )
 
     # If person weight is in data, use that, else default to 1.0

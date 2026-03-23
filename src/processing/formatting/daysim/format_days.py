@@ -200,11 +200,6 @@ def format_days(
             pl.lit(0).cast(pl.Int16).alias("mestops"),
             # Work at home (placeholder)
             pl.lit(0).cast(pl.Int16).alias("wkathome"),
-            # Location coordinates
-            pl.col("work_lon").alias("pwxco"),
-            pl.col("work_lat").alias("pwyco"),
-            pl.col("school_lon").alias("psxco"),
-            pl.col("school_lat").alias("psyco"),
             # Expansion factor
             pl.col("day_weight").fill_null(0).alias("pdexpfac"),
         ]

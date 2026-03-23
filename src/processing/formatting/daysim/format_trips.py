@@ -512,6 +512,11 @@ def _prepare_basic_fields(linked_trips: pl.DataFrame, persons: pl.DataFrame) -> 
             # Map purposes
             pl.col("opurp").replace(PURPOSE_MAP).alias("opurp"),
             pl.col("dpurp").replace(PURPOSE_MAP).alias("dpurp"),
+            # Fill the usual nulls when zones are not matched (out of area, missing data, etc.)
+            pl.col("otaz").fill_null(-1),
+            pl.col("opcl").fill_null(-1),
+            pl.col("dtaz").fill_null(-1),
+            pl.col("dpcl").fill_null(-1),
         ]
     )
 

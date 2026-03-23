@@ -128,6 +128,7 @@ steps:
   # This prepares a new set of files formatted for DaySim
   - name: format_daysim
     validate_input: false
+    validate_output: true
     cache: false
     params:
       drop_partial_tours: true
