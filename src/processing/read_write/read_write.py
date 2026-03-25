@@ -4,16 +4,107 @@ This module provides pipeline steps for loading canonical survey tables from fil
 and writing them to various output formats.
 """
 
+import inspect
 import logging
 from pathlib import Path
+from typing import get_args, get_origin
 
 import geopandas as gpd
+import openpyxl
 import polars as pl
 
 from data_canon.core.dataclass import CanonicalData
+from data_canon.core.labeled_enum import LabeledEnum
 from pipeline.decoration import step
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_enum_from_type(annotation: object) -> type[LabeledEnum] | None:
+    """Extract a LabeledEnum class from a type annotation, handling Unions.
+
+    Args:
+        annotation: The field's type annotation (e.g. ``PurposeCategory | None``).
+
+    Returns:
+        The LabeledEnum subclass if one is found, otherwise ``None``.
+    """
+    origin = get_origin(annotation)
+    if origin is not None:
+        for arg in get_args(annotation):
+            if arg is type(None):
+                continue
+            if inspect.isclass(arg) and issubclass(arg, LabeledEnum):
+                return arg
+        return None
+    if inspect.isclass(annotation) and issubclass(annotation, LabeledEnum):
+        return annotation
+    return None
+
+
+_EXCLUDE_CODEBOOK_MODULES = {
+    "data_canon.codebook.ctramp",
+    "data_canon.codebook.daysim",
+}
+
+
+def _collect_enums_for_tables(
+    table_names: list[str],
+    canonical_data: CanonicalData,
+) -> dict[str, type[LabeledEnum]]:
+    """Collect all LabeledEnum classes referenced by the given table models.
+
+    Iterates the Pydantic model for each table and returns a deduplicated
+    mapping of ``{class_name: class}`` ordered by insertion.  Enums defined
+    in model-specific codebook modules (CT-RAMP, DaySim) are excluded because
+    they represent travel-model output codes rather than survey labels.
+
+    Args:
+        table_names: Table names whose models should be inspected.
+        canonical_data: CanonicalData instance that holds the model mapping.
+
+    Returns:
+        Ordered dict of enum class name to enum class.
+    """
+    seen: dict[str, type[LabeledEnum]] = {}
+    for table in table_names:
+        model = canonical_data.models.get(table)
+        if model is None:
+            continue
+        for field_info in model.model_fields.values():
+            enum_cls = _extract_enum_from_type(field_info.annotation)
+            if enum_cls is not None and enum_cls.__module__ not in _EXCLUDE_CODEBOOK_MODULES:
+                seen[enum_cls.__name__] = enum_cls
+    return seen
+
+
+def _write_enum_codebook(
+    path: str,
+    enums: dict[str, type[LabeledEnum]],
+) -> None:
+    """Write a .xlsx workbook with one sheet per LabeledEnum.
+
+    Each sheet has three columns:
+    - ``{EnumName} Value`` — the integer (or string) value
+    - ``{EnumName} Label`` — the human-readable label
+    - ``{EnumName} Value Label`` — value and label joined with a space
+
+    Args:
+        path: Destination path for the .xlsx file.
+        enums: Mapping of enum class name to enum class to write.
+    """
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)  # remove the default empty sheet
+
+    for enum_name, enum_cls in sorted(enums.items()):
+        ws = wb.create_sheet(title=enum_name[:31])  # Excel sheet names max 31 chars
+        ws.append([f"{enum_name} Value", f"{enum_name} Label", f"{enum_name} Value Label"])
+        for member in enum_cls:
+            ws.append([member.value, member.label, f"{member.value} {member.label}"])
+
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    wb.save(path)
+    logger.info("Wrote enum codebook (%d sheets) to %s", len(enums), path)
 
 
 @step()
@@ -114,6 +205,7 @@ def write_data(
     canonical_data: CanonicalData,
     validate_input: bool,
     create_dirs: bool = True,
+    enum_codebook_path: str | None = None,
 ) -> None:
     """Write canonical survey tables to output file paths.
 
@@ -122,6 +214,11 @@ def write_data(
         canonical_data: CanonicalData instance containing DataFrames to write.
         validate_input: Whether to run validation before writing.
         create_dirs: Whether to create parent directories (default: True).
+        enum_codebook_path: Optional path for an .xlsx enum codebook.
+            When provided, a workbook is written with one worksheet per
+            LabeledEnum found in the models for the written tables.
+            Each sheet contains ``Value``, ``Label``, and ``Value Label``
+            columns.  Must end in ``.xlsx``.
 
     Algorithm:
         1. If validate_input=True, validate each table using canonical data models
@@ -133,7 +230,9 @@ def write_data(
                 - .parquet → DataFrame.write_parquet()
                 - .shp/.shp.zip/.geojson → GeoDataFrame.to_file()
                 - .txt → Path.write_text()
-        3. Log completion status
+        3. If enum_codebook_path is set, discover all LabeledEnum types from
+           the models for the written tables and write a codebook workbook.
+        4. Log completion status
 
     Notes:
         - Validation ensures output conforms to canonical data schemas
@@ -164,5 +263,12 @@ def write_data(
         else:
             msg = f"Unsupported file format for table {table}: {path}"
             raise ValueError(msg)
+
+    if enum_codebook_path is not None:
+        if not enum_codebook_path.endswith(".xlsx"):
+            msg = f"enum_codebook_path must end in .xlsx, got: {enum_codebook_path}"
+            raise ValueError(msg)
+        enums = _collect_enums_for_tables(list(output_paths.keys()), canonical_data)
+        _write_enum_codebook(enum_codebook_path, enums)
 
     logger.info("All data written successfully.")

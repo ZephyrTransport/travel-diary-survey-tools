@@ -104,6 +104,7 @@ if __name__ == "__main__":
         config_path=CONFIG_PATH,
         steps=processing_steps,
         caching=cache_dir,
+        log_file_mode="w" if args.clear_cache else "a",
     )
 
     # Clear cache if requested

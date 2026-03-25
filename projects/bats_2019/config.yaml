@@ -5,7 +5,7 @@
 
 # Define directory shorthands
 survey_dir: "M:/Data/HomeInterview/Bay Area Travel Study 2018-2019/Data/Final Version with Imputations/Final Updated Dataset as of 10-18-2021"
-output_dir: "M:/Data/HomeInterview/Bay Area Travel Study (across-years)/pipeline_lmz_20260209"
+output_dir: "E:/Box/Modeling and Surveys/Surveys/Travel Diary Survey/BATS_across_years/20260320"
 TM1_shapefile_dir: "E:/GitHub/travel-model-one/utilities/geographies"
 TM2_shapefile_dir: "E:/GitHub/TM2/tm2py-utils/tm2py_utils/inputs/maz_taz/shapefiles"
 log_file: "{{ output_dir }}/pipeline_2019.log" # If not set, logs just to console, if not absolute saves to .cache directory

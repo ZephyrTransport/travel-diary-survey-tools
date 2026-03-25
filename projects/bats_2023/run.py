@@ -130,6 +130,7 @@ if __name__ == "__main__":
         steps=processing_steps,
         caching=cache_dir,
         data_models=new_models,
+        log_file_mode="w" if args.clear_cache else "a",
     )
 
     # Clear cache if requested

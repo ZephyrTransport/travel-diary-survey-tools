@@ -81,11 +81,11 @@ This matrix shows which columns are required in which pipeline steps.
 |  | `tour_id` | int | ≥ 1, FK → `tours.tour_id` |  |  |  |  |  |  |  |  | ✓ |  |
 |  | `travel_dow` | TravelDow |  |  |  |  |  | ✓ |  |  |  |  |  |
 |  | `o_purpose` | Purpose |  |  |  |  |  |  |  |  | ✓ |  |  |
-|  | `o_purpose_category` | int |  |  |  |  |  |  |  |  |  |  |  |
+|  | `o_purpose_category` | PurposeCategory |  |  |  |  |  |  |  |  |  |  |  |
 |  | `o_lat` | float | ≥ -90, ≤ 90 |  |  |  | ✓ |  |  |  |  |  |  |
 |  | `o_lon` | float | ≥ -180, ≤ 180 |  |  |  | ✓ |  |  |  |  |  |  |
 |  | `d_purpose` | Purpose |  |  |  |  |  |  |  |  | ✓ |  |  |
-|  | `d_purpose_category` | int |  |  |  |  |  | ✓ |  |  |  |  |  |
+|  | `d_purpose_category` | PurposeCategory |  |  |  |  |  | ✓ |  |  |  |  |  |
 |  | `d_lat` | float | ≥ -90, ≤ 90 |  |  |  | ✓ |  |  |  |  |  |  |
 |  | `d_lon` | float | ≥ -180, ≤ 180 |  |  |  | ✓ |  |  |  |  |  |  |
 |  | `mode_type` | ModeType |  |  |  |  |  | ✓ |  |  |  |  |  |

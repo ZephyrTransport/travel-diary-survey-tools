@@ -10,6 +10,7 @@ dependencies = [
     "hypothesis>=6.151.5",
     "networkx>=3.6.1",
     "numpy>=2.3.4",
+    "openpyxl>=3.1.0",
     "polars>=1.35.1",
     "pyarrow>=22.0.0",
     "pydantic>=2.12.4",

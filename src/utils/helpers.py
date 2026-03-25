@@ -160,6 +160,10 @@ def expr_haversine(
         dlon / 2
     ).sin().pow(2)
 
+    # Clamp a to [0, 1] to guard against floating-point values slightly outside
+    # the valid domain of arcsin, which would cause a hard Rust/native crash.
+    a = a.clip(0.0, 1.0)
+
     distance = 2 * r * a.sqrt().arcsin()
 
     if units in ["kilometers", "km"]:

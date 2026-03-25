@@ -9,6 +9,7 @@ def setup_logging(
     log_file: Path | str | None,
     console_level: int = logging.INFO,
     file_level: int = logging.DEBUG,
+    log_file_mode: str = "a",
 ) -> logging.Logger:
     """Configure logging to both console and file.
 
@@ -16,6 +17,8 @@ def setup_logging(
         log_file: Path to the log file
         console_level: Logging level for console output
         file_level: Logging level for file output
+        log_file_mode: File open mode for the log file. Use "a" to append
+            (default) or "w" to overwrite at the start of each run.
 
     Returns:
         Configured logger instance
@@ -59,7 +62,7 @@ def setup_logging(
         if not Path(log_file).exists():
             Path(log_file).parent.mkdir(parents=True, exist_ok=True)
 
-        file_handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
+        file_handler = logging.FileHandler(log_file, mode=log_file_mode, encoding="utf-8")
         file_handler.setLevel(file_level)
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)

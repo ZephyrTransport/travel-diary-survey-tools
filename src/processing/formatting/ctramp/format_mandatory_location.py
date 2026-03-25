@@ -56,12 +56,22 @@ def calc_fixed_location_distances(
         )
 
     logger.info(
-        "Calculated fixed location distances for %d persons",
+        "Calculating fixed location distances for %d persons",
         _mandatory_locations.select("person_id").n_unique(),
     )
 
-    # Join trips with person fixed locations
-    trips_with_locations = linked_trips_canonical.join(
+    # Pre-filter trips to only the persons with a fixed location before joining,
+    # to avoid scanning the full trips table in the right-join.
+    person_ids = _mandatory_locations["person_id"]
+    trips_filtered = linked_trips_canonical.filter(pl.col("person_id").is_in(person_ids))
+    logger.debug(
+        "Joining %d trips (filtered from %d) against %d %s-location persons",
+        len(trips_filtered),
+        len(linked_trips_canonical),
+        len(_mandatory_locations),
+        fixed_type,
+    )
+    trips_with_locations = trips_filtered.join(
         _mandatory_locations.select(
             "person_id",
             "home_lat",
@@ -73,8 +83,10 @@ def calc_fixed_location_distances(
         on="person_id",
         how="right",
     )
+    logger.debug("Join complete: %d trip-person rows", len(trips_with_locations))
 
     # Calculate flags for origin/destination proximity
+    logger.debug("Computing haversine proximity flags")
     trips_with_flags = trips_with_locations.with_columns(
         [
             (
@@ -126,6 +138,7 @@ def calc_fixed_location_distances(
             ),
         ]
     )
+    logger.debug("Proximity flags computed")
 
     # Filter for home-work or work-home trips within buffer and ignore direction
     # i.e., trips that start or end at home and the other end at the fixed location
@@ -182,6 +195,11 @@ def calc_fixed_location_distances(
             )
         ).select(["person_id", f"{fixed_type}_distance_kilometers"])
 
+    logger.info(
+        "Finished calculating %s distances for %d persons",
+        fixed_type,
+        len(distances),
+    )
     return distances
 
 

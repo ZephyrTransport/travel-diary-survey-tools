@@ -577,7 +577,7 @@ ruff format src/some_module/
 Install pre-commit hooks to ensure code quality before committing. It basically runs the linters and formatters automatically when you try to commit code. You can also run it manually with:
 
 ```bash
-pre-commit run
+pre-commit run --all-files
 ```
 
 ## Contributing

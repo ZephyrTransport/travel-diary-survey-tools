@@ -82,7 +82,21 @@ class Purpose(LabeledEnum):
 
 
 class PurposeCategory(LabeledEnum):
-    """d_purpose_category value labels."""
+    """Broad trip purpose groupings, used to categorize origin and destination purposes.
+
+    A coarser classification than [`Purpose`][data_canon.codebook.trips.Purpose], grouping
+    detailed purpose codes into common categories for trip analysis and tour extraction.
+    See [`PurposeToCategoryMap`][data_canon.codebook.trips.PurposeToCategoryMap] for the
+    mapping from detailed purposes to these categories.
+
+    Used in:
+
+    - [`UnlinkedTripModel.o_purpose_category`][data_canon.models.survey.UnlinkedTripModel]
+      and [`UnlinkedTripModel.d_purpose_category`][data_canon.models.survey.UnlinkedTripModel]
+    - [`LinkedTripModel.o_purpose_category`][data_canon.models.survey.LinkedTripModel]
+      and [`LinkedTripModel.d_purpose_category`][data_canon.models.survey.LinkedTripModel]
+    - [`TourModel.tour_purpose`][data_canon.models.survey.TourModel]
+    """
 
     HOME = (1, "Home")
     WORK = (2, "Work")

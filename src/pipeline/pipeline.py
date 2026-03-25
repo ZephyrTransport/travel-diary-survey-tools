@@ -3,6 +3,8 @@
 import inspect
 import json
 import logging
+import shutil
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -29,6 +31,7 @@ class Pipeline:
         steps: list[Callable] | None = None,
         caching: bool | Path | str = False,
         data_models: dict[str, Any] | None = None,
+        log_file_mode: str = "a",
     ) -> None:
         """Initialize the Pipeline with configuration and custom steps.
 
@@ -40,6 +43,8 @@ class Pipeline:
                 If str or Path, use specified directory for caching.
             data_models: Optional dictionary of extra data models for validation.
                 These will be added to the default data models in CanonicalData object.
+            log_file_mode: File open mode for the log file. Use "a" to append
+                (default) or "w" to overwrite at the start of each run.
         """
         self.config_path = config_path
         self.config = self._load_config()
@@ -57,7 +62,7 @@ class Pipeline:
 
         # filename for file+console, or None for console only
         if log_filename:
-            setup_logging(log_file=log_filename)
+            setup_logging(log_file=log_filename, log_file_mode=log_file_mode)
             logger.info("Log file: %s", log_filename)
         else:
             # Console-only logging
@@ -295,8 +300,34 @@ class Pipeline:
 
         return {**data_kwargs, **config_kwargs}
 
+    def _log_git_version(self) -> None:
+        """Log the git version of the codebase, including diffs if dirty."""
+        git = shutil.which("git")
+        if git is None:
+            logger.warning("Could not determine git version (git not found on PATH)")
+            return
+        try:
+            version = subprocess.check_output(  # noqa: S603
+                [git, "describe", "--always", "--dirty", "--tags"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+            logger.info("Code version: %s", version)
+
+            if version.endswith("-dirty"):
+                diff = subprocess.check_output(  # noqa: S603
+                    [git, "diff"],
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                ).strip()
+                if diff:
+                    logger.debug("Uncommitted changes (git diff):\n%s", diff)
+        except subprocess.CalledProcessError:
+            logger.warning("Could not determine git version (not a git repo)")
+
     def run(self) -> CanonicalData:
         """Run a data processing pipeline based on a configuration file."""
+        self._log_git_version()
         n_steps = len(self.config["steps"])
         for i, step_cfg in enumerate(self.config["steps"], start=1):
             step_name = step_cfg["name"]
@@ -322,32 +353,44 @@ class Pipeline:
                 kwargs["pipeline_cache"] = self.cache
 
             # Execute step
-            step_obj(**kwargs)
+            try:
+                step_obj(**kwargs)
+            except BaseException:
+                logger.exception("Fatal error in step '%s' — pipeline aborted", step_name)
+                # Flush all handlers so the error is guaranteed on disk before propagating
+                for handler in logging.getLogger().handlers:
+                    handler.flush()
+                raise
 
         # Log cache statistics if caching was enabled
-        if self.cache:
-            stats = self.cache.get_stats()
-            if stats["total"] > 0:
-                parts = []
-                if stats["loaded"] > 0:
-                    parts.append(f"{stats['loaded']} loaded from cache")
-                if stats["missing"] > 0:
-                    parts.append(f"{stats['missing']} re-run (no cache)")
-                if stats["stale"] > 0:
-                    parts.append(f"{stats['stale']} re-run (stale/corrupted)")
-
-                summary = ", ".join(parts)
-                logger.info(
-                    "Cache summary: %s (%.1f%% cache hit rate)",
-                    summary,
-                    stats["load_rate"] * 100,
-                )
+        self._log_cache_stats()
 
         # Refresh cache status after run
         self._scan_cache()
 
         logger.info("Pipeline completed.")
         return self.data
+
+    def _log_cache_stats(self) -> None:
+        """Log cache hit/miss statistics after a run."""
+        if not self.cache:
+            return
+        stats = self.cache.get_stats()
+        if stats["total"] == 0:
+            return
+        parts = []
+        if stats["loaded"] > 0:
+            parts.append(f"{stats['loaded']} loaded from cache")
+        if stats["missing"] > 0:
+            parts.append(f"{stats['missing']} re-run (no cache)")
+        if stats["stale"] > 0:
+            parts.append(f"{stats['stale']} re-run (stale/corrupted)")
+        summary = ", ".join(parts)
+        logger.info(
+            "Cache summary: %s (%.1f%% cache hit rate)",
+            summary,
+            stats["load_rate"] * 100,
+        )
 
     def _get_available_tables(self) -> dict[str, list[str]]:
         """Get all available tables across cached steps.
