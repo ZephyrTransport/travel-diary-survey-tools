@@ -53,8 +53,8 @@ The usage pattern for the pipeline is a bit different than the typical numbered 
 There are three main components:
 
 * **Setup**
-  * This contains the point of entry defined in `project/run.py` and
-  * Pipeline configuration defined in `project/config.yaml`
+  * This contains the point of entry defined in `projects/run.py` and
+  * Pipeline configuration defined in `projects/config.yaml`
 * **Pipeline Execution**
   * The central `Pipeline` class defined in `src/processing/pipeline.py`
   * A set of modular processing steps defined in `src/processing/steps/`
@@ -76,12 +76,12 @@ flowchart LR
 
 subgraph Setup[**Setup**]
   direction TB
-  RunPy([project/run.py])
-  ConfigYAML([project/config.yaml])
+  RunPy([projects/run.py])
+  ConfigYAML([projects/config.yaml])
 end
 
-RunPy([project/run.py]) ----> Pipeline
-ConfigYAML([project/config.yaml]) ----> Pipeline
+RunPy([projects/run.py]) ----> Pipeline
+ConfigYAML([projects/config.yaml]) ----> Pipeline
 
 subgraph Pipeline[**Pipeline**]
   direction TB
@@ -182,9 +182,9 @@ The data processing pipeline consists of modular steps that transform raw survey
 
 1. **[Load Data](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/read_write/)** - Loads canonical survey tables from CSV, Parquet, or geospatial files into memory
 2. **[Cleaning](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/cleaning/)** - Project-specific data cleaning operations (e.g., fixing time/distance errors, adding missing records)
-3. **[Imputation](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/imputation/)** *(placeholder)* - Imputes missing values for key variables (e.g., mode, purpose, locations)
-4. **[Link Trips](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/link_trips/)** - Aggregates individual trip segments into complete journey records by detecting mode changes and transfers
-5. **[Detect Joint Trips](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/detect_joint_trips/)** - Identifies shared household trips using spatial-temporal similarity matching
+3. **[Imputation](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/imputation/)** - Imputes missing values for key variables (e.g., mode, purpose, locations)
+4. **[Detect Joint Trips](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/detect_joint_trips/)** - Identifies shared household trips using spatial-temporal similarity matching
+5. **[Link Trips](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/link_trips/)** - Aggregates individual trip segments into complete journey records by detecting mode changes and transfers
 6. **[Extract Tours](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/extract_tours/)** - Builds hierarchical tour structures (home-based tours and work-based subtours) from linked trips
 7. **[Weighting](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/weighting/)** *(placeholder)* - Calculates expansion weights to match survey sample to population targets
 8. **Format Output** - Transforms canonical data to model-specific formats (DaySim, ActivitySim, etc.)
@@ -323,7 +323,7 @@ You need a runner script to execute the pipeline, typically named `run.py`. This
 You can also inject custom pre-processing steps here. The goal is to **keep the core pipeline code generalized for maintainability, but allow for custom logic to be injected as needed**.
 
 ```python
-# project/run.py
+# projects/run.py
 from pathlib import Path
 import polars as pl
 
@@ -388,10 +388,10 @@ if __name__ == "__main__":
 To run, press the green arrow in your IDE, or run from command line:
 
 ```bash
-uv run python project/run.py
+uv run python projects/run.py
 
 # Clear cache before running
-uv run python project/run.py --clear-cache
+uv run python projects/run.py --clear-cache
 ```
 
 **Logging**: The pipeline automatically creates a log file in the output directory (e.g., `output/pipeline.log`) that contains all console output plus additional debugging information.
@@ -468,7 +468,7 @@ For more details, see:
   - [x] Implement joint trips detection algorithm processing step
   - [x] Implement tour extraction processing step
     - [x] enhanced tour extraction to handle joint tours/trips
-  - [ ] Implement imputation processing step
+  - [x] Implement imputation processing step (KNN and MICE methods)
   - [ ] Implement weighting processing step
   - [ ] Implement bespoke output formats
     - [x] Implement Daysim output format

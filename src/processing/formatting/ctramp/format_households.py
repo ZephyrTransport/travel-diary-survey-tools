@@ -23,7 +23,7 @@ import logging
 import polars as pl
 
 from data_canon.codebook.ctramp import JTFChoice
-from data_canon.codebook.households import IncomeDetailed, IncomeFollowup
+from data_canon.codebook.households import IncomeBroad
 from data_canon.codebook.persons import Employment
 from processing.formatting.ctramp.mappings import PURPOSECATEGORY_TO_JTF_GROUP
 from utils.helpers import get_income_midpoint
@@ -211,33 +211,21 @@ def format_households(
     # Join aggregates with households
     households_ctramp = households_canonical.join(household_aggregates, on="hh_id", how="left")
 
-    # Ensure income columns have proper nullable int type before any operations
-    households_ctramp = households_ctramp.with_columns(
-        pl.col("income_detailed").cast(pl.Int64),
-        pl.col("income_followup").cast(pl.Int64),
-    )
-
-    # Map income categories to midpoint values
-    income_detailed_map = {
-        income_cat.value: int(get_income_midpoint(income_cat))
-        for income_cat in IncomeDetailed
-        if "Prefer not to answer" not in income_cat.label and "Missing" not in income_cat.label
+    # Derive income: use pre-computed value if available, otherwise midpoint of income_bin
+    income_bin_map = {
+        bin_cat.value: int(get_income_midpoint(bin_cat))
+        for bin_cat in IncomeBroad
+        if "Prefer not to answer" not in bin_cat.label and "Missing" not in bin_cat.label
     }
-    income_followup_map = {
-        income_cat.value: int(get_income_midpoint(income_cat))
-        for income_cat in IncomeFollowup
-        if "Prefer not to answer" not in income_cat.label and "Missing" not in income_cat.label
-    }
-
-    households_ctramp = households_ctramp.with_columns(
-        pl.col("income_detailed").replace_strict(income_detailed_map, default=None),
-        pl.col("income_followup").replace_strict(income_followup_map, default=None),
+    income_bin_expr = (
+        pl.col("income_bin").cast(pl.Int64).replace_strict(income_bin_map, default=None)
     )
-
-    # Use income_detailed if available, otherwise income_followup
-    households_ctramp = households_ctramp.with_columns(
-        income=pl.coalesce(pl.col("income_detailed"), pl.col("income_followup"))
-    )
+    if "income" not in households_ctramp.columns:
+        households_ctramp = households_ctramp.with_columns(income=income_bin_expr)
+    else:
+        households_ctramp = households_ctramp.with_columns(
+            income=pl.coalesce(pl.col("income"), income_bin_expr)
+        )
 
     # Compute jtf_choice for all households
     if tours_canonical is None:

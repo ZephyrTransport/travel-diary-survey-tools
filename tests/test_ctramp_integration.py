@@ -13,7 +13,7 @@ import pytest
 from data_canon.codebook.ctramp import (
     CTRAMPPersonType,
 )
-from data_canon.codebook.households import IncomeDetailed
+from data_canon.codebook.households import IncomeBroad
 from data_canon.codebook.persons import (
     AgeCategory,
 )
@@ -512,8 +512,7 @@ class TestWeightsAndSampleRate:
                 "num_people": [1, 2],
                 "num_vehicles": [1, 1],
                 "num_workers": [1, 1],
-                "income_detailed": [IncomeDetailed.INCOME_75TO100.value] * 2,
-                "income_followup": [None, None],
+                "income_bin": [IncomeBroad.INCOME_75TO100.value] * 2,
                 "hh_weight": [None, 3.0],
                 "home_lat": [37.7, 37.8],
                 "home_lon": [-122.4, -122.5],
@@ -546,8 +545,7 @@ class TestWeightsAndSampleRate:
                 "num_people": [1],
                 "num_vehicles": [1],
                 "num_workers": [1],
-                "income_detailed": [IncomeDetailed.INCOME_75TO100.value],
-                "income_followup": [None],
+                "income_bin": [IncomeBroad.INCOME_75TO100.value],
                 "home_lat": [37.7],
                 "home_lon": [-122.4],
                 "home_maz": [None],

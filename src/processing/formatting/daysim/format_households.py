@@ -5,10 +5,10 @@ import logging
 import polars as pl
 
 from data_canon.codebook.daysim import DaysimPersonType
+from data_canon.codebook.households import IncomeBroad
+from utils.helpers import get_income_midpoint
 
 from .mappings import (
-    INCOME_DETAILED_TO_MIDPOINT,
-    INCOME_FOLLOWUP_TO_MIDPOINT,
     RENTOWN_MAP,
     RESTYPE_MAP,
 )
@@ -87,22 +87,26 @@ def format_households(
     if "hhexpfac" not in households_daysim.columns:
         households_daysim = households_daysim.with_columns(pl.lit(1.0).alias("hhexpfac"))
 
-    # Map income categories to midpoint values
-    # (fill null first to avoid type issues)
+    # Map non-income fields
     households_daysim = households_daysim.with_columns(
-        pl.col("income_detailed").fill_null(-1).replace(INCOME_DETAILED_TO_MIDPOINT),
-        pl.col("income_followup").fill_null(-1).replace(INCOME_FOLLOWUP_TO_MIDPOINT),
         pl.col("hhexpfac").fill_null(0),
         hownrent=pl.col("residence_rent_own").replace(RENTOWN_MAP),
         hrestype=pl.col("residence_type").replace(RESTYPE_MAP),
     )
 
-    # Use income_detailed if available, otherwise income_followup
-    households_daysim = households_daysim.with_columns(
-        hhincome=pl.when(pl.col("income_detailed") > 0)
-        .then(pl.col("income_detailed"))
-        .otherwise(pl.col("income_followup"))
-    )
+    # Derive hhincome: use pre-computed income if available, otherwise midpoint of income_bin
+    income_bin_map = {
+        bin_cat.value: int(get_income_midpoint(bin_cat))
+        for bin_cat in IncomeBroad
+        if "Prefer not to answer" not in bin_cat.label and "Missing" not in bin_cat.label
+    }
+    income_bin_expr = pl.col("income_bin").cast(pl.Int64).replace_strict(income_bin_map, default=-1)
+    if "income" in households_daysim.columns:
+        households_daysim = households_daysim.with_columns(
+            hhincome=pl.coalesce(pl.col("income"), income_bin_expr).fill_null(-1)
+        )
+    else:
+        households_daysim = households_daysim.with_columns(hhincome=income_bin_expr)
 
     # Join household composition and add default fields
     households_daysim = households_daysim.join(hh_composition, on="hhno", how="left").with_columns(

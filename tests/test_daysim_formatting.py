@@ -18,8 +18,7 @@ from data_canon.codebook.daysim import (
     DaysimPurpose,
 )
 from data_canon.codebook.households import (
-    IncomeDetailed,
-    IncomeFollowup,
+    IncomeBroad,
     ResidenceRentOwn,
     ResidenceType,
 )
@@ -652,7 +651,7 @@ class TestHouseholdFormatting:
                     home_taz=100,
                     home_maz=1000,
                     num_vehicles=1,
-                    income_detailed=IncomeDetailed.INCOME_75TO100,
+                    income_bin=IncomeBroad.INCOME_75TO100,
                     residence_rent_own=ResidenceRentOwn.OWN,
                     residence_type=ResidenceType.SFH,
                     num_workers=1,
@@ -751,15 +750,14 @@ class TestHouseholdFormatting:
         assert result["hhhsc"][0] == 1  # One high school student
         assert result["hh515"][0] == 1  # One child 5-15
 
-    def test_format_households_income_detailed(self):
-        """Test income mapping from detailed income field."""
+    def test_format_households_income_bin(self):
+        """Test hhincome is derived from income_bin midpoint."""
         households = pl.DataFrame(
             [
                 create_household(
                     hh_id=1,
                     home_maz=1000,
-                    income_detailed=IncomeDetailed.INCOME_50TO75,
-                    income_followup=None,
+                    income_bin=IncomeBroad.INCOME_50TO75,
                     residence_rent_own=ResidenceRentOwn.OWN,
                     residence_type=ResidenceType.SFH,
                 )
@@ -770,19 +768,19 @@ class TestHouseholdFormatting:
 
         result = format_households(households, persons_daysim)
 
-        # Should use income_detailed midpoint (approximately 62500)
+        # Midpoint of $50,000-$74,999
         assert result["hhincome"][0] > 50000
         assert result["hhincome"][0] < 75000
 
-    def test_format_households_income_followup(self):
-        """Test income mapping from followup income field."""
+    def test_format_households_income_passthrough(self):
+        """Test that a pre-computed income field takes precedence over income_bin."""
         households = pl.DataFrame(
             [
                 create_household(
                     hh_id=1,
                     home_maz=1000,
-                    income_detailed=None,
-                    income_followup=IncomeFollowup.INCOME_100TO200,
+                    income=99999,
+                    income_bin=IncomeBroad.INCOME_50TO75,
                     residence_rent_own=ResidenceRentOwn.OWN,
                     residence_type=ResidenceType.SFH,
                 )
@@ -793,8 +791,8 @@ class TestHouseholdFormatting:
 
         result = format_households(households, persons_daysim)
 
-        # Should use income_followup midpoint (150000 for INCOME_100TO200)
-        assert result["hhincome"][0] == 150000
+        # Pre-computed income should pass through directly, not be replaced by bin midpoint
+        assert result["hhincome"][0] == 99999
 
     def test_format_households_multiple_households(self):
         """Test formatting multiple households."""

@@ -5,6 +5,7 @@ import logging
 import polars as pl
 
 from data_canon.codebook.households import ResidenceRentOwn, ResidenceType
+from data_canon.codebook.persons import Ethnicity, Race
 from pipeline.decoration import step
 from utils.helpers import add_time_columns, expr_haversine
 
@@ -141,6 +142,7 @@ def clean_2023_bats(
     _days = days.clone()
     days = pl.concat([_days, dummy_days], how="diagonal")
 
+    # CLEANUP HOUSEHOLD ATTRIBUTES =================================
     # Move residence type and residence rent/own from persons to households
     # Extract household-level attributes from persons table
     # Only one person reports residence_rent_own and residence_type
@@ -162,6 +164,80 @@ def clean_2023_bats(
     )
     # Join to households
     households = households.join(hh_attributes, on="hh_id", how="left")
+
+    # Copy income_broad to canonical income
+    households = households.with_columns(
+        pl.col("income_broad").alias("income_bin"),
+    )
+
+    # CLEANUP PERSON ATTRIBUTES =================================
+    eth_cols = ["ethnicity_1", "ethnicity_2", "ethnicity_3", "ethnicity_4", "ethnicity_997"]
+    race_cols = ["race_1", "race_2", "race_3", "race_4", "race_5", "race_997"]
+
+    # Fill nulls and 995 with 0 for all race columns
+    for col in [*race_cols, *eth_cols, "race_999", "ethnicity_999"]:
+        if col in persons.columns:
+            persons = persons.with_columns(
+                pl.when(pl.col(col) == 995)  # noqa: PLR2004
+                .then(0)
+                .otherwise(pl.col(col))
+                .alias(col)
+            ).with_columns(pl.col(col).fill_null(0))
+
+    # Need to create a single "race" columns instead of the multiple binary columns
+    # race_1 - Race: African American or Black
+    # race_2 - Race: American Indian or Alaska Native
+    # race_3 - Race: Asian
+    # race_4 - Race: Native Hawaiian or other Pacific Islander
+    # race_5 - Race: White
+    # race_997 - Race: Other race
+    # race_999 - Race: Prefer not to answer
+    persons = persons.with_columns(
+        pl.when(pl.col("race_1") == 1)
+        .then(pl.lit(Race.AFAM.value))
+        .when(pl.col("race_2") == 1)
+        .then(pl.lit(Race.NATIVE.value))
+        .when(pl.col("race_3") == 1)
+        .then(pl.lit(Race.ASIAN.value))
+        .when(pl.col("race_4") == 1)
+        .then(pl.lit(Race.PACIFIC.value))
+        .when(pl.col("race_5") == 1)
+        .then(pl.lit(Race.WHITE.value))
+        .when(pl.col("race_997") == 1)
+        .then(pl.lit(Race.OTHER.value))
+        .when(pl.sum_horizontal(pl.col(race_cols)) > 1)
+        .then(pl.lit(Race.MULTI.value))
+        .when(pl.col("race_999") == 1)
+        .then(pl.lit(None))
+        .otherwise(None)
+        .alias("race")
+    )
+
+    # Need to create a single "ethnicity" column instead of the multiple binary columns
+    # ethnicity_1 - Ethnicity: Not of Hispanic, Latino, or Spanish origin
+    # ethnicity_2 - Ethnicity: Mexican, Mexican American, Chicano
+    # ethnicity_3 - Ethnicity: Puerto Rican
+    # ethnicity_4 - Ethnicity: Cuban
+    # ethnicity_997 - Ethnicity: Another Hispanic, Latino, or Spanish origin
+    # ethnicity_999 - Ethnicity: Prefer not to answer
+    persons = persons.with_columns(
+        pl.when(pl.col("ethnicity_1") == 1)
+        .then(pl.lit(Ethnicity.NOT_HISPANIC.value))
+        .when(pl.col("ethnicity_2") == 1)
+        .then(pl.lit(Ethnicity.MEXICAN.value))
+        .when(pl.col("ethnicity_3") == 1)
+        .then(pl.lit(Ethnicity.PUERTO_RICAN.value))
+        .when(pl.col("ethnicity_4") == 1)
+        .then(pl.lit(Ethnicity.CUBAN.value))
+        .when(pl.col("ethnicity_997") == 1)
+        .then(pl.lit(Ethnicity.OTHER.value))
+        .when(pl.sum_horizontal(pl.col(eth_cols)) > 1)
+        .then(pl.lit(Ethnicity.OTHER.value))
+        .when(pl.col("ethnicity_999") == 1)
+        .then(pl.lit(None))
+        .otherwise(None)
+        .alias("ethnicity")
+    )
 
     return {
         "households": households,

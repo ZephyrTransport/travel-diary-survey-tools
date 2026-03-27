@@ -8,7 +8,7 @@ from datetime import UTC, datetime, time
 
 import polars as pl
 
-from data_canon.codebook.households import IncomeDetailed
+from data_canon.codebook.households import IncomeBroad
 from data_canon.codebook.persons import (
     AgeCategory,
     Employment,
@@ -770,7 +770,7 @@ def create_single_adult_household():
         num_people=1,
         num_vehicles=1,
         num_workers=1,
-        income_detailed=IncomeDetailed.INCOME_75TO100,
+        income_bin=IncomeBroad.INCOME_75TO100,
     )
 
     person = create_person(
@@ -797,7 +797,7 @@ def create_family_household():
         num_people=4,
         num_vehicles=2,
         num_workers=2,
-        income_detailed=IncomeDetailed.INCOME_100TO150,
+        income_bin=IncomeBroad.INCOME_75TO100,
     )
 
     persons = [
@@ -859,7 +859,7 @@ def create_retired_household():
         num_people=2,
         num_vehicles=1,
         num_workers=0,
-        income_detailed=IncomeDetailed.INCOME_50TO75,
+        income_bin=IncomeBroad.INCOME_50TO75,
     )
 
     persons = [
@@ -897,7 +897,7 @@ def create_university_student_household():
         num_people=1,
         num_vehicles=1,
         num_workers=0,
-        income_detailed=IncomeDetailed.INCOME_35TO50,
+        income_bin=IncomeBroad.INCOME_25TO50,
     )
 
     person = create_person(

@@ -23,6 +23,7 @@ from processing import (
     extract_tours,
     format_ctramp,
     format_daysim,
+    imputation,
     link_trips,
     load_data,
     write_data,
@@ -86,6 +87,7 @@ processing_steps = [
     add_zone_ids,
     link_trips,
     detect_joint_trips,
+    imputation,
     extract_tours,
     format_ctramp,
     format_daysim,
@@ -124,7 +126,7 @@ if __name__ == "__main__":
 
     logger.info("Starting BATS 2023 DaySim Processing Pipeline")
 
-    cache_dir = Path(".cache_2023")
+    cache_dir = Path(".cache/2023")
     pipeline = Pipeline(
         config_path=CONFIG_PATH,
         steps=processing_steps,

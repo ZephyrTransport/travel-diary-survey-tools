@@ -19,7 +19,7 @@ def get_income_midpoint(income_enum: LabeledEnum) -> int:
     For "or more" categories, uses 1.25x multiplier to estimate upper bound.
 
     Args:
-        income_enum: Income category enum (IncomeDetailed or IncomeFollowup)
+        income_enum: Income category enum (IncomeBroad)
 
     Returns:
         Midpoint dollar value for the income bracket
@@ -28,8 +28,8 @@ def get_income_midpoint(income_enum: LabeledEnum) -> int:
         ValueError: If the label format cannot be parsed or is PNTA/Missing
 
     Example:
-        >>> from data_canon.codebook.households import IncomeDetailed
-        >>> midpoint = get_income_midpoint(IncomeDetailed.INCOME_50TO75)
+        >>> from data_canon.codebook.households import IncomeBroad
+        >>> midpoint = get_income_midpoint(IncomeBroad.INCOME_50TO75)
         >>> midpoint
         62500
     """

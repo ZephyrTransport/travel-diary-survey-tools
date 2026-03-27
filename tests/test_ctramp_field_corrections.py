@@ -19,7 +19,7 @@ from data_canon.codebook.ctramp import (
     build_alternatives,
     load_alternatives_from_csv,
 )
-from data_canon.codebook.households import IncomeDetailed
+from data_canon.codebook.households import IncomeBroad
 from data_canon.codebook.persons import (
     AgeCategory,
     Employment,
@@ -690,9 +690,8 @@ class TestIndividualTripFieldCorrections:
 
     def test_tour_purpose_string_not_int(self, standard_config):
         """Test that tour_purpose is string, not integer."""
-        households = pl.DataFrame(
-            [create_household(hh_id=1, income_detailed=IncomeDetailed.INCOME_50TO75)]
-        )
+        households = pl.DataFrame([create_household(hh_id=1, income_bin=IncomeBroad.INCOME_50TO75)])
+
         persons = pl.DataFrame([create_person(person_id=101, hh_id=1)])
         tours = pl.DataFrame(
             [
@@ -832,7 +831,7 @@ class TestIndividualTourFieldCorrections:
     def test_tour_purpose_not_all_othdisc(self, standard_config):
         """Test that tour_purpose correctly maps various purposes, not all to 'othdisc'."""
         households = pl.DataFrame(
-            [create_household(hh_id=1, income_detailed=IncomeDetailed.INCOME_100TO150)]
+            [create_household(hh_id=1, income_bin=IncomeBroad.INCOME_75TO100)]
         )
         persons = pl.DataFrame([create_person(person_id=101, hh_id=1)])
         tours = pl.DataFrame(

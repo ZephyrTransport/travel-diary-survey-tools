@@ -10,8 +10,7 @@ from datetime import UTC, date, datetime
 from data_canon.codebook.days import TravelDow
 from data_canon.codebook.generic import BooleanYesNo
 from data_canon.codebook.households import (
-    IncomeDetailed,
-    IncomeFollowup,
+    IncomeBroad,
     ResidenceRentOwn,
     ResidenceType,
 )
@@ -37,8 +36,8 @@ def create_household(
     num_people: int = 1,
     num_vehicles: int = 1,
     num_workers: int = 1,
-    income_detailed: IncomeDetailed | None = IncomeDetailed.INCOME_75TO100,
-    income_followup: IncomeFollowup | None = None,
+    income: int | None = None,
+    income_bin: IncomeBroad | None = IncomeBroad.INCOME_75TO100,
     residence_type: ResidenceType | None = ResidenceType.SFH,
     residence_rent_own: ResidenceRentOwn | None = ResidenceRentOwn.OWN,
     hh_weight: float = 1.0,
@@ -60,8 +59,8 @@ def create_household(
         num_people: Household size
         num_vehicles: Number of vehicles
         num_workers: Number of workers
-        income_detailed: Detailed income category enum
-        income_followup: Followup income category enum (if detailed is null)
+        income: Pre-computed household income in dollars (None = derive from income_bin)
+        income_bin: Broad income category enum (used when income is None)
         residence_type: Residence type enum (default SFH, for Daysim)
         residence_rent_own: Residence rent/own status enum (default OWN, for
             Daysim)
@@ -77,8 +76,8 @@ def create_household(
         "num_people": num_people,
         "num_vehicles": num_vehicles,
         "num_workers": num_workers,
-        "income_detailed": income_detailed.value if income_detailed else None,
-        "income_followup": income_followup.value if income_followup else None,
+        "income": income,
+        "income_bin": income_bin.value if income_bin else None,
         "hh_weight": hh_weight,
     }
 

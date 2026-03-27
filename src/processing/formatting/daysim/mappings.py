@@ -16,8 +16,6 @@ from data_canon.codebook.daysim import (
     DaysimStudentType,
 )
 from data_canon.codebook.households import (
-    IncomeDetailed,
-    IncomeFollowup,
     ResidenceRentOwn,
     ResidenceType,
 )
@@ -125,33 +123,6 @@ RESIDENCE_TYPE_TO_DAYSIM = {
     ResidenceType.GROUP_QUARTERS: DaysimResidenceType.DORM,
     ResidenceType.MISSING: DaysimResidenceType.MISSING,
     ResidenceType.BOAT_RV: DaysimResidenceType.OTHER,
-}
-
-# Income categories to midpoint values (detailed from survey)
-INCOME_DETAILED_TO_MIDPOINT = {
-    IncomeDetailed.INCOME_UNDER15.value: 7500,
-    IncomeDetailed.INCOME_15TO25.value: 20000,
-    IncomeDetailed.INCOME_25TO35.value: 30000,
-    IncomeDetailed.INCOME_35TO50.value: 42500,
-    IncomeDetailed.INCOME_50TO75.value: 62500,
-    IncomeDetailed.INCOME_75TO100.value: 87500,
-    IncomeDetailed.INCOME_100TO150.value: 125000,
-    IncomeDetailed.INCOME_150TO200.value: 175000,
-    IncomeDetailed.INCOME_200TO250.value: 225000,
-    IncomeDetailed.INCOME_250_OR_MORE.value: 350000,
-    IncomeDetailed.PNTA.value: -1,
-}
-
-# Income followup categories to midpoint values
-INCOME_FOLLOWUP_TO_MIDPOINT = {
-    IncomeFollowup.INCOME_UNDER25.value: 12500,
-    IncomeFollowup.INCOME_25TO50.value: 37500,
-    IncomeFollowup.INCOME_50TO75.value: 62500,
-    IncomeFollowup.INCOME_75TO100.value: 87500,
-    IncomeFollowup.INCOME_100TO200.value: 150000,
-    IncomeFollowup.INCOME_200_OR_MORE.value: 250000,
-    IncomeFollowup.MISSING.value: -1,
-    IncomeFollowup.PNTA.value: -1,
 }
 
 # Purpose category to DaySim purpose codes
