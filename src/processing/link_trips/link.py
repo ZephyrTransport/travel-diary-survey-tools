@@ -262,7 +262,9 @@ def aggregate_linked_trips(
     logger.info("Aggregating linked trips...")
 
     transit_mode_codes = resolve_enum_labels(
-        table_name="unlinked_trips", field_name="mode_type", enum_labels=transit_mode_enums
+        table_name="unlinked_trips",
+        field_name="mode_type",
+        enum_labels=transit_mode_enums,  # pyright: ignore[reportArgumentType]
     )
 
     # First, find the mode type from the longest duration trip segment
@@ -377,6 +379,10 @@ def aggregate_linked_trips(
     # Conditionally add linked_trip_weight if column exists
     if "unlinked_trip_weight" in unlinked_trips.columns:
         agg_exprs.append(pl.col("unlinked_trip_weight").mean().alias("linked_trip_weight"))
+
+    # Propagate complete: a linked trip is complete only if all segments are complete
+    if "complete" in unlinked_trips.columns:
+        agg_exprs.append(pl.all("complete").alias("complete"))
 
     # Add remaining aggregations
     agg_exprs.extend(

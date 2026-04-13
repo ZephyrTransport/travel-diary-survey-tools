@@ -335,7 +335,8 @@ def log_validation_results(metrics: dict[str, Any] | dict[str, dict[str, Any]]) 
     Args:
         metrics: Dictionary of metrics (single column or per-column dict)
     """
-    logger.info("\n%s", "=" * 60)
+    logger.info("")
+    logger.info("%s", "=" * 60)
     logger.info("Imputation Validation Results")
     logger.info("%s", "=" * 60)
 
@@ -351,7 +352,8 @@ def log_validation_results(metrics: dict[str, Any] | dict[str, dict[str, Any]]) 
         data_type = col_metrics.get("type", "unknown")
         n_samples = col_metrics.get("n_samples", 0)
 
-        logger.info("\nColumn: %s (%s, n=%s test samples)", col, data_type, n_samples)
+        logger.info("")
+        logger.info("Column: %s (%s, n=%s test samples)", col, data_type, n_samples)
 
         if data_type == "categorical":
             logger.info("  Accuracy:  %.3f", col_metrics["accuracy"])

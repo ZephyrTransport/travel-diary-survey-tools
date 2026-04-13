@@ -24,6 +24,20 @@ Pydantic data models for validation and processing:
 - Model-specific output formats (DaySim, CTRAMP)
 - Validation rules and constraints
 
+### [Pipeline Steps](pipeline_steps/index.md)
+Documentation for individual data processing steps, organized by pipeline stage.
+
+ - Load Data
+ - Link Trips
+ - Joint Trips Detection
+ - Extract Tours
+ - Add zone IDs
+ - Weighting
+ - Formatting
+    - DaySim
+    - CTRAMP
+    - ActivitySim [in development]
+
 ## Quick Links
 
 - [Project README](https://github.com/BATS/travel-diary-survey-tools/blob/main/README.md)

@@ -267,6 +267,7 @@ def _aggregate_and_classify_tours(
             pl.col("subtour_num").first().alias("_subtour_num"),
             pl.col("_o_is_home").first().alias("_o_is_home"),
             pl.col("_d_is_home").last().alias("_d_is_home"),
+            *([pl.all("complete")] if "complete" in linked_trips.columns else []),
         ]
     )
 

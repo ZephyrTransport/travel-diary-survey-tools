@@ -64,9 +64,31 @@ class CanonicalData:
         }
     )
 
+    # Canonical table names in hierarchy order
+    TABLE_NAMES: list[str] = field(
+        default_factory=lambda: [
+            "households",
+            "persons",
+            "days",
+            "unlinked_trips",
+            "linked_trips",
+            "joint_trips",
+            "tours",
+        ],
+        repr=False,
+    )
+
     def __post_init__(self) -> None:
         """Validate FK references point to unique fields."""
         validate_fk_references(self.models)
+
+    def as_dict(self) -> dict[str, pl.DataFrame | None]:
+        """Return all canonical tables as a dict (including None entries)."""
+        return {name: getattr(self, name) for name in self.TABLE_NAMES}
+
+    def as_dict_non_null(self) -> dict[str, pl.DataFrame]:
+        """Return only non-None canonical tables as a dict."""
+        return {name: df for name in self.TABLE_NAMES if (df := getattr(self, name)) is not None}
 
     def add_models(self, new_models: dict[str, type[BaseModel]]) -> None:
         """Add or override data models for validation.

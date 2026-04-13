@@ -1,5 +1,7 @@
 """Codebook enumerations for hh table."""
 
+from enum import nonmember
+
 from data_canon.core.labeled_enum import LabeledEnum
 
 
@@ -57,9 +59,9 @@ class IncomeFollowup(LabeledEnum):
 
 
 class IncomeBroad(LabeledEnum):
-    """income_broad value labels."""
+    """income_bin value labels."""
 
-    canonical_field_name = "income_broad"
+    canonical_field_name = "income_bin"
 
     INCOME_UNDER25 = (1, "Under $25,000")
     INCOME_25TO50 = (2, "$25,000-$49,999")
@@ -69,6 +71,8 @@ class IncomeBroad(LabeledEnum):
     INCOME_200_OR_MORE = (6, "$200,000 or more")
     MISSING = (995, "Missing Response")
     PNTA = (999, "Prefer not to answer")
+
+    BREAKPOINTS = nonmember([25_000, 50_000, 75_000, 100_000, 200_000])
 
 
 class ParticipationGroup(LabeledEnum):

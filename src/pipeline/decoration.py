@@ -173,8 +173,8 @@ def _try_load_from_cache(
     # Generate cache key
     cache_key = pipeline_cache.get_cache_key(
         func.__name__,
-        input_dfs if input_dfs else None,
-        params if params else None,
+        input_dfs or None,
+        params or None,
     )
 
     # Try to load from cache
@@ -228,8 +228,8 @@ def _save_to_cache(
     # Generate cache key
     cache_key = pipeline_cache.get_cache_key(
         func.__name__,
-        input_dfs if input_dfs else None,
-        params if params else None,
+        input_dfs or None,
+        params or None,
     )
 
     pipeline_cache.save(func.__name__, cache_key, result)

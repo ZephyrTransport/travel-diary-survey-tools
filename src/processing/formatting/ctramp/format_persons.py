@@ -455,7 +455,7 @@ def format_persons(
     persons_ctramp = persons_with_type.with_columns(
         pl.col("age")
         .map_elements(
-            lambda code: (get_age_midpoint(ac) if (ac := AgeCategory.from_value(code)) else code),
+            lambda code: get_age_midpoint(ac) if (ac := AgeCategory.from_value(code)) else code,
             return_dtype=pl.Int64,
         )
         .alias("age"),

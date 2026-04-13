@@ -21,9 +21,9 @@ and temporal patterns.
 
     - Sorts trips by person, day, and departure time
     - Identifies tour boundaries by detecting:
-      * Departures from home (o_is_home=True, d_is_home=False)
-      * Returns to home (o_is_home=False, d_is_home=True)
-      * Day boundaries (first trip of person-day)
+        * Departures from home (o_is_home=True, d_is_home=False)
+        * Returns to home (o_is_home=False, d_is_home=True)
+        * Day boundaries (first trip of person-day)
     - Assigns sequential tour IDs within each person-day
     - Format: tour_id = (day_id * 100) + tour_sequence_number
 
@@ -38,8 +38,8 @@ and temporal patterns.
     # 4. Anchor-Based Subtour Detection
 
     - Within expanded anchor periods, identifies subtours by detecting:
-      * Departures from anchor (o_at_anchor=True, d_at_anchor=False)
-      * Returns to anchor (o_at_anchor=False, d_at_anchor=True)
+        * Departures from anchor (o_at_anchor=True, d_at_anchor=False)
+        * Returns to anchor (o_at_anchor=False, d_at_anchor=True)
     - Assigns hierarchical subtour IDs
     - Format: subtour_id = (tour_id * 10) + subtour_sequence_number
     - Currently supports work-based subtours, extensible to school-based
@@ -75,7 +75,7 @@ and temporal patterns.
     - Corrects data quality issues (e.g., inconsistent timing, missing values)
     - Adds tour_id and joint_tour_id to unlinked_trips for reference
 
-    # Edge Case Handling is performed including:
+    # Edge Case Handling is performed including
 
     - Incomplete tours (no return home at end of day)
     - Multi-day tours (spanning survey boundaries)

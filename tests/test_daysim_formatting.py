@@ -72,7 +72,7 @@ class TestDayCompleteness:
                     person_num=1,
                     day_num=1,
                     travel_dow=TravelDow.MONDAY,
-                    is_complete=True,
+                    complete=True,
                 )
             ]
         )
@@ -99,7 +99,7 @@ class TestDayCompleteness:
                     person_num=1,
                     day_num=i,
                     travel_dow=TravelDow(i),
-                    is_complete=True,
+                    complete=True,
                 )
                 for i in range(1, 8)
             ]
@@ -127,7 +127,7 @@ class TestDayCompleteness:
                     person_num=1,
                     day_num=1,
                     travel_dow=TravelDow.TUESDAY,
-                    is_complete=True,
+                    complete=True,
                 ),
                 create_day(
                     day_id=2,
@@ -136,7 +136,7 @@ class TestDayCompleteness:
                     person_num=1,
                     day_num=2,
                     travel_dow=TravelDow.WEDNESDAY,
-                    is_complete=False,
+                    complete=False,
                 ),
                 create_day(
                     day_id=3,
@@ -145,7 +145,7 @@ class TestDayCompleteness:
                     person_num=1,
                     day_num=3,
                     travel_dow=TravelDow.THURSDAY,
-                    is_complete=True,
+                    complete=True,
                 ),
             ]
         )
@@ -168,7 +168,7 @@ class TestDayCompleteness:
                     hh_id=1,
                     person_num=1,
                     travel_dow=TravelDow.MONDAY,
-                    is_complete=True,
+                    complete=True,
                 ),
                 create_day(
                     day_id=2,
@@ -176,7 +176,7 @@ class TestDayCompleteness:
                     hh_id=1,
                     person_num=2,
                     travel_dow=TravelDow.MONDAY,
-                    is_complete=False,
+                    complete=False,
                 ),
             ]
         )
@@ -204,7 +204,7 @@ class TestPersonFormatting:
                     work_mode=Mode.HOUSEHOLD_VEHICLE_1,
                     work_taz=200,
                     work_maz=2000,
-                    days=[{"day_id": 1, "person_id": 101, "is_complete": True}],
+                    days=[{"day_id": 1, "person_id": 101, "complete": True}],
                 )
             ]
         )
@@ -218,7 +218,7 @@ class TestPersonFormatting:
                     person_num=1,
                     day_num=1,
                     travel_dow=TravelDow.MONDAY,
-                    is_complete=True,
+                    complete=True,
                 )
             ]
         )
@@ -263,7 +263,7 @@ class TestPersonFormatting:
                     person_num=1,
                     day_num=1,
                     travel_dow=TravelDow.TUESDAY,
-                    is_complete=True,
+                    complete=True,
                 )
             ]
         )
@@ -308,7 +308,7 @@ class TestPersonFormatting:
                     person_num=1,
                     day_num=1,
                     travel_dow=TravelDow.WEDNESDAY,
-                    is_complete=True,
+                    complete=True,
                 )
             ]
         )
@@ -355,7 +355,7 @@ class TestPersonFormatting:
                     person_num=1,
                     day_num=1,
                     travel_dow=TravelDow.THURSDAY,
-                    is_complete=True,
+                    complete=True,
                 )
             ]
         )
@@ -398,7 +398,7 @@ class TestPersonFormatting:
                     person_num=1,
                     day_num=1,
                     travel_dow=TravelDow.FRIDAY,
-                    is_complete=True,
+                    complete=True,
                 )
             ]
         )
@@ -418,7 +418,7 @@ class TestPersonFormatting:
                 person_num=1,
                 day_num=1,
                 travel_dow=TravelDow.SATURDAY,
-                is_complete=True,
+                complete=True,
             )
         ]
         persons = pl.DataFrame(
@@ -451,7 +451,7 @@ class TestPersonFormatting:
                 person_num=1,
                 day_num=1,
                 travel_dow=TravelDow.SUNDAY,
-                is_complete=True,
+                complete=True,
             )
         ]
         persons = pl.DataFrame(
@@ -485,7 +485,7 @@ class TestPersonFormatting:
                 person_num=1,
                 day_num=1,
                 travel_dow=TravelDow.MONDAY,
-                is_complete=True,
+                complete=True,
             )
         ]
         persons = pl.DataFrame(
@@ -519,7 +519,7 @@ class TestPersonFormatting:
                 person_num=1,
                 day_num=1,
                 travel_dow=TravelDow.MONDAY,
-                is_complete=True,
+                complete=True,
             ),
             create_day(
                 day_id=2,
@@ -528,7 +528,7 @@ class TestPersonFormatting:
                 person_num=1,
                 day_num=2,
                 travel_dow=TravelDow.TUESDAY,
-                is_complete=True,
+                complete=True,
             ),
             create_day(
                 day_id=3,
@@ -537,7 +537,7 @@ class TestPersonFormatting:
                 person_num=1,
                 day_num=3,
                 travel_dow=TravelDow.WEDNESDAY,
-                is_complete=True,
+                complete=True,
             ),
             create_day(
                 day_id=4,
@@ -546,7 +546,7 @@ class TestPersonFormatting:
                 person_num=1,
                 day_num=4,
                 travel_dow=TravelDow.THURSDAY,
-                is_complete=False,
+                complete=False,
             ),
             create_day(
                 day_id=5,
@@ -555,7 +555,7 @@ class TestPersonFormatting:
                 person_num=1,
                 day_num=5,
                 travel_dow=TravelDow.FRIDAY,
-                is_complete=False,
+                complete=False,
             ),
         ]
         persons = pl.DataFrame(
@@ -596,7 +596,7 @@ class TestPersonFormatting:
                 person_num=1,
                 day_num=1,
                 travel_dow=TravelDow.MONDAY,
-                is_complete=True,
+                complete=True,
             ),
             create_day(
                 day_id=2,
@@ -605,7 +605,7 @@ class TestPersonFormatting:
                 person_num=2,
                 day_num=1,
                 travel_dow=TravelDow.MONDAY,
-                is_complete=True,
+                complete=True,
             ),
         ]
         persons = pl.DataFrame(
@@ -668,7 +668,7 @@ class TestHouseholdFormatting:
                 person_num=1,
                 day_num=1,
                 travel_dow=TravelDow.MONDAY,
-                is_complete=True,
+                complete=True,
             )
         ]
         persons = pl.DataFrame(

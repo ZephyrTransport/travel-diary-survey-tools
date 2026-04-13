@@ -14,7 +14,7 @@ This matrix shows which columns are required in which pipeline steps.
 - **REQ_CHILD**: Parent record must have at least one child record
 - **≥ / ≤ / > / <**: Numeric range constraints
 
-| Table | Field | Type | Constraints | load_data | clean_2023_bats | imputation | link_trips | detect_joint_trips | extract_tours | add_zone_ids | add_existing_weights | format_ctramp | format_daysim | write_data |
+| Table | Field | Type | Constraints | load_data | clean_2023_bats | imputation | link_trips | detect_joint_trips | extract_tours | compute_weights | add_zone_ids | format_ctramp | format_daysim | write_data |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | **households** | `hh_id` | int | ≥ 1, UNIQUE |  |  |  |  |  | ✓ |  |  |  |  |  |
 |  | `home_lat` | float | ≥ -90, ≤ 90 |  |  |  |  |  | ✓ |  |  |  |  |  |
@@ -22,8 +22,10 @@ This matrix shows which columns are required in which pipeline steps.
 |  | `residence_rent_own` | ResidenceRentOwn |  |  |  |  |  |  |  |  |  |  | ✓ |  |
 |  | `residence_type` | ResidenceType |  |  |  |  |  |  |  |  |  |  | ✓ |  |
 |  | `income` | int or None | ≥ 0 |  |  |  |  |  |  |  |  |  |  |  |
-|  | `income_bin` | IncomeBroad |  |  |  | ✓ |  |  |  |  |  |  |  |  |
+|  | `income_bin` | IncomeBroad |  |  |  | ✓ |  |  |  | ✓ |  |  |  |  |
 |  | `hh_weight` | float or None | ≥ 0 |  |  |  |  |  |  |  |  |  |  |  |
+|  | `num_vehicles` | int | ≥ 0 |  |  |  |  |  |  | ✓ |  |  |  |  |
+|  | `complete` | bool |  |  |  |  |  |  |  | ✓ |  |  |  |  |
 | **persons** | `person_id` | int | ≥ 1, UNIQUE |  |  |  |  |  | ✓ |  |  |  |  |  |
 |  | `hh_id` | int | ≥ 1, FK → `households.hh_id`, REQ_CHILD |  |  |  |  |  |  |  |  |  |  |  |
 |  | `person_num` | int | ≥ 1 |  |  |  |  |  |  |  |  | ✓ | ✓ |  |
@@ -39,18 +41,22 @@ This matrix shows which columns are required in which pipeline steps.
 |  | `school_type` | data_canon.codebook.persons.SchoolType or None |  |  |  |  |  |  | ✓ |  |  |  |  |  |
 |  | `work_park` | data_canon.codebook.persons.WorkParking or None |  |  |  |  |  |  |  |  |  |  | ✓ |  |
 |  | `work_mode` | data_canon.codebook.trips.Mode or None |  |  |  |  |  |  |  |  |  |  | ✓ |  |
-|  | `race` | Race |  |  |  | ✓ |  |  |  |  |  |  |  |  |
-|  | `ethnicity` | Ethnicity |  |  |  | ✓ |  |  |  |  |  |  |  |  |
+|  | `race` | data_canon.codebook.persons.Race or None |  |  |  | ✓ |  |  |  |  |  |  |  |  |
+|  | `ethnicity` | data_canon.codebook.persons.Ethnicity or None |  |  |  | ✓ |  |  |  |  |  |  |  |  |
+|  | `telework_freq` | data_canon.codebook.persons.CommuteFreq or None |  |  |  |  |  |  |  |  |  |  |  |  |
+|  | `commute_freq` | data_canon.codebook.persons.CommuteFreq or None |  |  |  |  |  |  |  |  |  |  |  |  |
 |  | `commute_subsidy_use_3` | data_canon.codebook.generic.BooleanYesNo or None |  |  |  |  |  |  |  |  |  | ✓ |  |  |
 |  | `commute_subsidy_use_4` | data_canon.codebook.generic.BooleanYesNo or None |  |  |  |  |  |  |  |  |  | ✓ |  |  |
 |  | `is_proxy` | bool or None |  |  |  |  |  |  |  |  |  |  | ✓ |  |
 |  | `num_days_complete` | int | ≥ 0 |  |  |  |  |  |  |  |  |  |  |  |
+|  | `complete` | bool or None |  |  |  |  |  |  |  | ✓ |  |  |  |  |
 |  | `person_weight` | float or None | ≥ 0 |  |  |  |  |  |  |  |  |  |  |  |
 | **days** | `person_id` | int | ≥ 1, FK → `persons.person_id`, REQ_CHILD |  |  |  |  |  |  |  |  |  |  |  |
 |  | `day_id` | int | ≥ 1, UNIQUE |  |  |  |  |  |  |  |  |  |  |  |
 |  | `hh_id` | int | ≥ 1, FK → `households.hh_id` |  |  |  |  |  |  |  |  |  |  |  |
 |  | `travel_date` | datetime |  |  |  |  |  |  |  |  |  |  |  |  |
 |  | `travel_dow` | TravelDow |  |  |  |  |  |  |  |  |  |  | ✓ |  |
+|  | `complete` | bool or None |  |  |  |  |  |  |  | ✓ |  |  |  |  |
 |  | `day_weight` | float or None | ≥ 0 |  |  |  |  |  |  |  |  |  |  |  |
 | **unlinked_trips** | `unlinked_trip_id` | int | ≥ 1, UNIQUE |  |  |  |  |  |  |  |  |  |  |  |
 |  | `day_id` | int | ≥ 1, FK → `days.day_id` |  |  |  | ✓ |  | ✓ |  |  |  |  |  |
@@ -76,6 +82,7 @@ This matrix shows which columns are required in which pipeline steps.
 |  | `depart_time` | datetime.datetime or None |  |  |  |  | ✓ |  | ✓ |  |  |  |  |  |
 |  | `arrive_time` | datetime.datetime or None |  |  |  |  | ✓ |  | ✓ |  |  |  |  |  |
 |  | `num_travelers` | int | ≥ 1 |  |  |  |  |  |  |  |  |  |  |  |
+|  | `complete` | bool or None |  |  |  |  |  |  |  | ✓ |  |  |  |  |
 |  | `unlinked_trip_weight` | float or None | ≥ 0 |  |  |  |  |  |  |  |  |  |  |  |
 | **linked_trips** | `day_id` | int | ≥ 1, FK → `days.day_id` |  |  |  |  |  | ✓ |  |  |  |  |  |
 |  | `person_id` | int | ≥ 1, FK → `persons.person_id` |  |  |  |  |  |  |  |  |  |  |  |
@@ -102,6 +109,7 @@ This matrix shows which columns are required in which pipeline steps.
 |  | `depart_time` | datetime |  |  |  |  |  | ✓ |  |  |  |  |  |  |
 |  | `arrive_time` | datetime |  |  |  |  |  | ✓ |  |  |  |  |  |  |
 |  | `tour_direction` | TourDirection |  |  |  |  |  |  |  |  |  |  | ✓ |  |
+|  | `complete` | bool or None |  |  |  |  |  |  |  | ✓ |  |  |  |  |
 |  | `linked_trip_weight` | float or None | ≥ 0 |  |  |  |  |  |  |  |  |  |  |  |
 | **tours** | `tour_id` | int | ≥ 1, UNIQUE |  |  |  |  |  |  |  |  |  |  |  |
 |  | `hh_id` | int | ≥ 1, FK → `households.hh_id` |  |  |  |  |  |  |  |  |  |  |  |
@@ -130,6 +138,7 @@ This matrix shows which columns are required in which pipeline steps.
 |  | `outbound_mode` | data_canon.codebook.trips.ModeType or None |  |  |  |  |  |  |  |  |  |  |  |  |
 |  | `inbound_mode` | data_canon.codebook.trips.ModeType or None |  |  |  |  |  |  |  |  |  |  |  |  |
 |  | `num_travelers` | int | ≥ 1 |  |  |  |  |  |  |  |  | ✓ |  |  |
+|  | `complete` | bool or None |  |  |  |  |  |  |  | ✓ |  |  |  |  |
 |  | `tour_weight` | float or None | ≥ 0 |  |  |  |  |  |  |  |  |  |  |  |
 
 
@@ -335,7 +344,7 @@ This section shows the categorical values and labels for custom enum fields.
 
 ## IncomeBroad
 
-**Field name:** `income_broad`
+**Field name:** `income_bin`
 
 | Value | Label |
 | --- | --- |

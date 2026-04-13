@@ -6,7 +6,7 @@ canonical field names for pydantic model mapping.
 """
 
 from enum import Enum, EnumType
-from typing import Optional, overload
+from typing import Optional, Self, overload
 
 
 class LabeledEnumMeta(EnumType):
@@ -82,7 +82,7 @@ class LabeledEnum(Enum, metaclass=LabeledEnumMeta):
 
     _label_: str
 
-    def __new__(cls, value: int | str, label: str) -> "LabeledEnum":
+    def __new__(cls, value: int | str, label: str) -> Self:
         """Create a new enum member with value and label.
 
         Args:

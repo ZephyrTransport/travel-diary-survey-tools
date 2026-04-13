@@ -41,9 +41,9 @@ def impute_mice(
     1. Initialise missing values with simple imputation (mean/mode).
     2. For each column with missing values:
 
-       a. Treat it as the target variable.
-       b. Use the other columns as predictors in a regression model.
-       c. Predict and update missing values.
+        1. Treat it as the target variable.
+        2. Use the other columns as predictors in a regression model.
+        3. Predict and update missing values.
 
     3. Repeat iteratively until convergence (``max_iter`` rounds).
 

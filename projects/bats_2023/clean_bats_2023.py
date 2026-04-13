@@ -4,7 +4,7 @@ import logging
 
 import polars as pl
 
-from data_canon.codebook.households import ResidenceRentOwn, ResidenceType
+from data_canon.codebook.households import IncomeBroad, ResidenceRentOwn, ResidenceType
 from data_canon.codebook.persons import Ethnicity, Race
 from pipeline.decoration import step
 from utils.helpers import add_time_columns, expr_haversine
@@ -165,9 +165,22 @@ def clean_2023_bats(
     # Join to households
     households = households.join(hh_attributes, on="hh_id", how="left")
 
-    # Copy income_broad to canonical income
+    # RECODE INCOME =========================================
+    # Vendor column "income_broad" already uses IncomeBroad-compatible codes
+    # (1-6, 995, 999).  Rename to canonical "income_bin" and validate.
+    if "income_broad" in households.columns:
+        households = households.rename({"income_broad": "income_bin"})
+    elif "income_bin" not in households.columns:
+        logger.warning("No income column found — creating income_bin as MISSING")
+        households = households.with_columns(pl.lit(IncomeBroad.MISSING.value).alias("income_bin"))
+
+    # Clamp any unrecognised codes to MISSING
+    valid_codes = {m.value for m in IncomeBroad}
     households = households.with_columns(
-        pl.col("income_broad").alias("income_bin"),
+        pl.when(pl.col("income_bin").is_in(valid_codes))
+        .then(pl.col("income_bin"))
+        .otherwise(IncomeBroad.MISSING.value)
+        .alias("income_bin")
     )
 
     # CLEANUP PERSON ATTRIBUTES =================================
@@ -239,9 +252,28 @@ def clean_2023_bats(
         .alias("ethnicity")
     )
 
-    return {
+    # ASSIGN COMPLETION STATUS =========================================
+    # BATS 2023 has a "completion" field in the tables that just need to be renamed to canonical
+    results = {
         "households": households,
         "persons": persons,
-        "unlinked_trips": unlinked_trips,
         "days": days,
+        "unlinked_trips": unlinked_trips,
     }
+
+    # Rename completion columns and cast to boolean
+    column_mapping = {
+        "households": "is_complete",
+        "persons": "is_complete",
+        "days": "is_complete",
+        "unlinked_trips": "trip_survey_complete",
+    }
+
+    for key, old_col in column_mapping.items():
+        results[key] = (
+            results[key]
+            .rename({old_col: "complete"})
+            .with_columns(pl.col("complete").cast(pl.Boolean))
+        )
+
+    return results

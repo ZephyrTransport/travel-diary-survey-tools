@@ -15,20 +15,14 @@ class Purpose(LabeledEnum):
     ESCORT = (5, "Dropped off, picked up, or accompanied another person")
     SOCIAL_LEISURE = (7, "Social, leisure, religious, entertainment activity")
     PRIMARY_WORKPLACE = (10, "Went to primary workplace")
-    WORK_ACTIVITY = (
-        11,
-        "Went to work-related activity (e.g., meeting, delivery, worksite)",
-    )
+    WORK_ACTIVITY = (11, "Went to work-related activity (e.g., meeting, delivery, worksite)")
     WORK_TRAVEL = (12, "Traveling for work (e.g., business trip)")
     VOLUNTEERING = (13, "Volunteering")
     OTHER_WORK = (14, "Other work-related")
     K12_SCHOOL = (21, "Attend K-12 school")
     COLLEGE = (22, "Attend college/university")
     OTHER_CLASS = (23, "Attend other type of class (e.g., cooking class)")
-    OTHER_EDUCATION = (
-        24,
-        "Attend other education-related activity (e.g., field trip)",
-    )
+    OTHER_EDUCATION = (24, "Attend other education-related activity (e.g., field trip)")
     VOCATIONAL = (25, "Attend vocational education class")
     DAYCARE = (26, "Attend daycare or preschool")
     GROCERY = (30, "Grocery shopping")
@@ -42,10 +36,7 @@ class Purpose(LabeledEnum):
     ESCORT_SCHOOL = (41, "To/from K-12 school or college")
     ESCORT_WORK = (42, "To/from other person's work or volunteer activity")
     ESCORT_APT = (43, "To/from other person's scheduled activity (e.g., lesson, appointment)")
-    OTHER_ACTIVITY = (
-        44,
-        "Other activity only (e.g., attend meeting, pick-up or drop-off item)",
-    )
+    OTHER_ACTIVITY = (44, "Other activity only (e.g., attend meeting, pick-up or drop-off item)")
     PICK_UP = (45, "Pick someone up")
     DROP_OFF = (46, "Drop someone off")
     ACCOMPANY = (47, "Accompany someone only (e.g., go along for the ride)")
@@ -53,29 +44,17 @@ class Purpose(LabeledEnum):
     DINING = (50, "Dined out, got coffee, or take-out")
     EXERCISE = (51, "Exercise or recreation (e.g., gym, jog, bike, walk dog)")
     SOCIAL = (52, "Social activity (e.g., visit friends/relatives)")
-    ENTERTAINMENT = (
-        53,
-        "Leisure/entertainment/cultural (e.g., cinema, museum, park)",
-    )
+    ENTERTAINMENT = (53, "Leisure/entertainment/cultural (e.g., cinema, museum, park)")
     RELIGIOUS_CIVIC = (54, "Religious/civic/volunteer activity")
     VACATION = (55, "Vacation or leisure trip")
     FAMILY_ACTIVITY = (56, "Family activity (e.g., watch child's game)")
-    MODE_CHANGE = (
-        60,
-        "Changed or transferred mode (e.g., waited for bus or exited bus)",
-    )
+    MODE_CHANGE = (60, "Changed or transferred mode (e.g., waited for bus or exited bus)")
     OTHER_ERRAND = (61, "Other errand")
     OTHER_SOCIAL = (62, "Other social")
     OTHER = (99, "Other reason")
     SPLIT_LOOP = (101, "Split/loop trip")
-    OTHER_RESIDENCE = (
-        150,
-        "Went to another residence (e.g., someone else's home, second home)",
-    )
-    TEMP_LODGING = (
-        152,
-        "Went to temporary lodging (e.g., hotel, vacation rental)",
-    )
+    OTHER_RESIDENCE = (150, "Went to another residence (e.g., someone else's home, second home)")
+    TEMP_LODGING = (152, "Went to temporary lodging (e.g., hotel, vacation rental)")
     MISSING = (995, "Missing Response")
     PNTA = (999, "Prefer not to answer")
     NOT_IMPUTABLE = (996, "Not imputable")

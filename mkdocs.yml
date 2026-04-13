@@ -35,14 +35,14 @@ plugins:
             show_signature: true
             show_signature_annotations: true
             signature_crossrefs: true
-            separate_signature: false
+            separate_signature: true
             show_root_members_full_path: false
             heading_level: 2
             # Show class attributes for Pydantic models
             show_root_toc_entry: true
             show_category_heading: false
             annotations_path: source
-            line_length: 80
+            line_length: 68
             members: true
             extensions:
               - griffe_pydantic
@@ -62,13 +62,24 @@ nav:
           - CTRAMP: models/ctramp.md
   - Pipeline: pipeline.md
   - Pipeline Steps:
+      - pipeline_steps/index.md
       - Load Data: pipeline_steps/read_write.md
       - Cleaning: pipeline_steps/cleaning.md
       - Imputation: pipeline_steps/imputation.md
       - Link Trips: pipeline_steps/link_trips.md
       - Detect Joint Trips: pipeline_steps/detect_joint_trips.md
       - Extract Tours: pipeline_steps/extract_tours.md
-      - Weighting: pipeline_steps/weighting.md
+      - Weighting:
+          - Overview: pipeline_steps/weighting/index.md
+          - Compute Weights:
+              - Overview: pipeline_steps/weighting/compute_weights.md
+              - Crosswalk: pipeline_steps/weighting/crosswalk.md
+              - Data Preparation: pipeline_steps/weighting/data_preparation.md
+              - Balancing: pipeline_steps/weighting/balancing.md
+              - Controls: pipeline_steps/weighting/controls.md
+              - Diagnostics: pipeline_steps/weighting/diagnostics.md
+              - Validation: pipeline_steps/weighting/validation.md
+          - Existing Weights: pipeline_steps/weighting/existing_weights.md
       - Format Output:
           - DaySim Format: pipeline_steps/format_output/daysim.md
           - CT-RAMP Format: pipeline_steps/format_output/ctramp.md
@@ -83,4 +94,11 @@ markdown_extensions:
           class: mermaid
   - pymdownx.highlight
   - pymdownx.inlinehilite
+  - pymdownx.arithmatex:
+      generic: true
   - tables
+
+extra_javascript:
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+extra_css: []

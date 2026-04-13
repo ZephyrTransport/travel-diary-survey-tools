@@ -7,7 +7,8 @@ from typing import get_args
 
 import polars as pl
 
-from data_canon.codebook.persons import JobType
+from data_canon.codebook.households import IncomeBroad
+from data_canon.codebook.persons import Employment, Ethnicity, Gender, Race, Student
 from data_canon.codebook.trips import ModeType, Purpose, PurposeCategory
 from data_canon.models.survey import HouseholdModel, PersonDayModel, PersonModel, UnlinkedTripModel
 from pipeline.decoration import step
@@ -107,61 +108,6 @@ def swap_bad_times(
     return unlinked_trips
 
 
-def replace_with_code(
-    df: pl.DataFrame,
-    column: str,
-    to_replace: dict[int, int],
-) -> pl.DataFrame:
-    """Replace values in a column based on a mapping dictionary."""
-    for old_value, new_value in to_replace.items():
-        df = df.with_columns(
-            pl.when(pl.col(column) == old_value)
-            .then(new_value)
-            .otherwise(pl.col(column))
-            .alias(column)
-        )
-    return df
-
-
-def get_work_mode(
-    persons: pl.DataFrame,
-    unlinked_trips: pl.DataFrame,
-) -> pl.DataFrame:
-    """Get the primary work mode for persons with fixed work locations."""
-    logger.info("Determining primary work mode for persons with fixed work locations")
-    # Filter persons with single work location
-    single_work_location_persons = (
-        persons.filter(pl.col("job_type") == JobType.FIXED.value)
-        .select("person_id")
-        .unique()
-        .to_series()
-        .implode()
-    )
-
-    # Filter work trips
-    work_trips = unlinked_trips.filter(
-        (pl.col("d_purpose_category") == PurposeCategory.WORK.value)
-        & (pl.col("person_id").is_in(single_work_location_persons))
-    ).select("person_id", "mode_type", "d_lat", "d_lon")
-
-    # Find the most common mode for each person
-    work_mode = (
-        work_trips
-        # Start by getting count of each mode used by each person
-        .group_by(["person_id", "mode_type"])
-        .agg(pl.count().alias("mode_count"))
-        # Then select the mode with the highest count for each person
-        .sort(["person_id", "mode_count"], descending=[False, True])
-        .group_by("person_id")
-        .agg(pl.first("mode_type").alias("work_mode"))
-    )
-
-    # Join back to persons
-    persons = persons.join(work_mode, on="person_id", how="left")
-
-    return persons
-
-
 def clean_households(households: pl.DataFrame) -> pl.DataFrame:
     """Custom cleaning for households."""
     logger.info("Cleaning 2019 household data")
@@ -173,8 +119,83 @@ def clean_households(households: pl.DataFrame) -> pl.DataFrame:
     )
 
     # Replace -9998 with 995
-    households = replace_with_code(households, "residence_type", {-9998: 995})
-    households = replace_with_code(households, "residence_rent_own", {-9998: 995})
+    households = households.with_columns(
+        pl.when(pl.col(c) == -9998).then(995).otherwise(pl.col(c)).alias(c)  # noqa: PLR2004
+        for c in ["residence_type", "residence_rent_own"]
+    )
+
+    # CODEBOOK VALUES:
+    # INCOME DETAILED:
+    # 1	Under $15,000
+    # 2	$15,000-$24,999
+    # 3	$25,000-$34,999
+    # 4	$35,000-$49,999
+    # 5	$50,000-$74,999
+    # 6	$75,000-$99,999
+    # 7	$100,000-$149,999
+    # 8	$150,000-$199,999
+    # 9	$200,000-$249,999
+    # 10	$250,000 or more
+    # 999	Prefer not to answer
+
+    # INCOME FOLLOWUP:
+    # 1	Under $25,000
+    # 2	$25,000-$49,999
+    # 3	$50,000-$74,999
+    # 4	$75,000-$99,999
+    # 5	$100,000-$249,999
+    # 6	$250,000 or more
+    # 999	Prefer not to answer
+
+    # RECODE TO MATCH CANONICAL INCOME GROUPS:
+    # IncomeBroad enum values:
+    # INCOME_UNDER25 = 1, INCOME_25TO50 = 2, INCOME_50TO75 = 3,
+    # INCOME_75TO100 = 4, INCOME_100TO200 = 5, INCOME_200_OR_MORE = 6,
+    # MISSING = 995, PNTA = 999
+
+    # income_detailed (10 categories) → IncomeBroad
+    _DETAILED_TO_BROAD: dict[int, int] = {  # noqa: N806
+        1: IncomeBroad.INCOME_UNDER25.value,  # Under $15,000
+        2: IncomeBroad.INCOME_UNDER25.value,  # $15,000-$24,999
+        3: IncomeBroad.INCOME_25TO50.value,  # $25,000-$34,999
+        4: IncomeBroad.INCOME_25TO50.value,  # $35,000-$49,999
+        5: IncomeBroad.INCOME_50TO75.value,  # $50,000-$74,999
+        6: IncomeBroad.INCOME_75TO100.value,  # $75,000-$99,999
+        7: IncomeBroad.INCOME_100TO200.value,  # $100,000-$149,999
+        8: IncomeBroad.INCOME_100TO200.value,  # $150,000-$199,999
+        9: IncomeBroad.INCOME_200_OR_MORE.value,  # $200,000-$249,999
+        10: IncomeBroad.INCOME_200_OR_MORE.value,  # $250,000 or more
+        999: IncomeBroad.PNTA.value,
+    }
+
+    # income_followup (6 categories) → IncomeBroad
+    _FOLLOWUP_TO_BROAD: dict[int, int] = {  # noqa: N806
+        1: IncomeBroad.INCOME_UNDER25.value,  # Under $25,000
+        2: IncomeBroad.INCOME_25TO50.value,  # $25,000-$49,999
+        3: IncomeBroad.INCOME_50TO75.value,  # $50,000-$74,999
+        4: IncomeBroad.INCOME_75TO100.value,  # $75,000-$99,999
+        5: IncomeBroad.INCOME_100TO200.value,  # $100,000-$249,999 (followup lumps 100-249k)
+        6: IncomeBroad.INCOME_200_OR_MORE.value,  # $250,000 or more
+        999: IncomeBroad.PNTA.value,
+    }
+
+    # Prefer income_detailed; fall back to income_followup; else MISSING
+    detailed_expr = pl.col("income_detailed").replace_strict(_DETAILED_TO_BROAD, default=None)
+    followup_expr = pl.col("income_followup").replace_strict(_FOLLOWUP_TO_BROAD, default=None)
+    households = households.with_columns(
+        pl.coalesce(detailed_expr, followup_expr)
+        .fill_null(IncomeBroad.MISSING.value)
+        .alias("income_bin")
+    )
+
+    n_missing = households.filter(pl.col("income_bin") == IncomeBroad.MISSING.value).height
+    n_pnta = households.filter(pl.col("income_bin") == IncomeBroad.PNTA.value).height
+    logger.info(
+        "Income recode: %d MISSING, %d PNTA out of %d households",
+        n_missing,
+        n_pnta,
+        len(households),
+    )
 
     return households
 
@@ -190,11 +211,167 @@ def clean_persons(persons: pl.DataFrame, unlinked_trips: pl.DataFrame) -> pl.Dat
     ]
 
     # Replace -9998 with 995
-    for col in replace_cols:
-        persons = replace_with_code(persons, col, {-9998: 995})
+    persons = persons.with_columns(
+        pl.when(pl.col(c) == -9998).then(995).otherwise(pl.col(c)).alias(c)  # noqa: PLR2004
+        for c in replace_cols
+    )
 
-    # Get work mode for persons
-    persons = get_work_mode(persons, unlinked_trips)
+    # Recode gender
+    gender_map = {
+        1: Gender.MALE.value,
+        2: Gender.FEMALE.value,
+        995: Gender.MISSING.value,
+    }
+    persons = persons.with_columns(
+        pl.col("gender").replace_strict(gender_map, default=Gender.MISSING.value).alias("gender")
+    )
+
+    # Update "student" code to match canonical Student enum
+    student_map = {
+        0: Student.NONSTUDENT.value,
+        # We only have in-person instruction in 2019.
+        1: Student.FULLTIME_INPERSON.value,
+        2: Student.PARTTIME_INPERSON.value,
+        995: Student.MISSING.value,
+    }
+    persons = persons.with_columns(
+        pl.col("student").replace_strict(student_map, default=pl.col("student")).alias("student")
+    )
+
+    # Update employment codes to match canonical Employment enum
+    # 1	Employed full-time (paid)
+    # 2	Employed part-time (paid)
+    # 3	Primarily self-employed
+    # 6	Not currently employed
+    # 7	Unpaid volunteer or intern
+    employment_map = {
+        1: Employment.EMPLOYED_FULLTIME.value,
+        2: Employment.EMPLOYED_PARTTIME.value,
+        3: Employment.EMPLOYED_SELF.value,
+        6: Employment.UNEMPLOYED_NOT_LOOKING.value,
+        7: Employment.EMPLOYED_UNPAID.value,
+        995: Employment.MISSING.value,
+    }
+    persons = persons.with_columns(
+        pl.col("employment").replace_strict(employment_map, default=pl.col("employment"))
+    )
+
+    # Get work mode for persons --------------------------------------
+    # 2019 bats never had work_mode field! We must infer it from the data :(
+    logger.info("Determining primary work mode for persons with fixed work locations")
+
+    # Find persons that don't have a work mode but should
+    missing_work_mode = persons.filter(
+        pl.col("employment").is_in(
+            [
+                Employment.EMPLOYED_FULLTIME.value,
+                Employment.EMPLOYED_PARTTIME.value,
+                Employment.EMPLOYED_SELF.value,
+                Employment.EMPLOYED_UNPAID.value,
+            ]
+        )
+    )
+
+    # Find work trips for these people.
+    work_trips = unlinked_trips.filter(
+        (
+            pl.col("d_purpose_category").is_in(
+                [
+                    PurposeCategory.WORK.value,
+                    PurposeCategory.WORK_RELATED.value,
+                ]
+            )
+        )
+        & (pl.col("person_id").is_in(missing_work_mode["person_id"].to_list()))
+    ).select("person_id", "mode_type", "d_lat", "d_lon")
+
+    # Find the most common mode for each person
+    work_mode = (
+        work_trips
+        # Start by getting count of each mode used by each person
+        .group_by(["person_id", "mode_type"])
+        .agg(pl.count().alias("mode_count"))
+        # Then select the mode with the highest count for each person
+        .sort(["person_id", "mode_count"], descending=[False, True])
+        .group_by("person_id")
+        .agg(pl.first("mode_type").alias("work_mode"))
+    )
+
+    # Join back to the original persons table
+    persons = persons.join(work_mode, on="person_id", how="left")
+
+    # Report how many of these persons have no trips at all
+    n_missing_work_mode = missing_work_mode.height
+    n_no_trips = missing_work_mode.filter(
+        ~pl.col("person_id").is_in(unlinked_trips["person_id"].to_list())
+    ).height
+    n_imputed_work_mode = missing_work_mode.filter(
+        pl.col("person_id").is_in(work_mode["person_id"].to_list())
+    ).height
+    n_no_work_trips = n_missing_work_mode - n_no_trips - n_imputed_work_mode
+
+    logger.info(
+        "Work mode derivation:\n"
+        "%d persons with employment but no work mode\n"
+        "%d had work trips allowing imputation of work mode.\n"
+        "%d had no trips at all\n"
+        "%d had trips but no work trips\n"
+        "We were able to infer work mode for %d/%d (%.1f%%) of employed persons.",
+        n_missing_work_mode,
+        n_imputed_work_mode,
+        n_no_trips,
+        n_no_work_trips,
+        n_imputed_work_mode,
+        n_missing_work_mode,
+        n_imputed_work_mode / n_missing_work_mode * 100 if n_missing_work_mode > 0 else 0,
+    )
+
+    # Derive race from binary ethnicity_* columns
+    # 2019 used a single combined race/ethnicity question; race flags are under ethnicity_*
+    race_flag_cols = [
+        "ethnicity_af_am",
+        "ethnicity_aiak",
+        "ethnicity_asian",
+        "ethnicity_hapi",
+        "ethnicity_white",
+        "ethnicity_mideast",
+        "ethnicity_other",
+    ]
+    persons = persons.with_columns(
+        pl.when(pl.col("ethnicity_multi") == 1)
+        .then(pl.lit(Race.MULTI.value))
+        .when(pl.sum_horizontal([pl.col(c) for c in race_flag_cols]) > 1)
+        .then(pl.lit(Race.MULTI.value))
+        .when(pl.col("ethnicity_af_am") == 1)
+        .then(pl.lit(Race.AFAM.value))
+        .when(pl.col("ethnicity_aiak") == 1)
+        .then(pl.lit(Race.NATIVE.value))
+        .when(pl.col("ethnicity_asian") == 1)
+        .then(pl.lit(Race.ASIAN.value))
+        .when(pl.col("ethnicity_hapi") == 1)
+        .then(pl.lit(Race.PACIFIC.value))
+        .when(pl.col("ethnicity_white") == 1)
+        .then(pl.lit(Race.WHITE.value))
+        .when(pl.col("ethnicity_mideast") == 1)
+        .then(pl.lit(Race.OTHER.value))
+        .when(pl.col("ethnicity_other") == 1)
+        .then(pl.lit(Race.OTHER.value))
+        .when(pl.col("ethnicity_no_answer") == 1)
+        .then(pl.lit(None))
+        .otherwise(None)
+        .alias("race")
+    )
+
+    # Derive ethnicity from ethnicity_hisp flag
+    # 2019 does not distinguish Hispanic subtypes, so map to OTHER (Hispanic or Latino)
+    persons = persons.with_columns(
+        pl.when(pl.col("ethnicity_no_answer") == 1)
+        .then(pl.lit(None))
+        .when(pl.col("ethnicity_hisp") == 1)
+        .then(pl.lit(Ethnicity.OTHER.value))
+        .otherwise(pl.lit(Ethnicity.NOT_HISPANIC.value))
+        .alias("ethnicity")
+    )
 
     return persons
 
@@ -408,6 +585,7 @@ def clean_trips(unlinked_trips: pl.DataFrame) -> pl.DataFrame:
         "mode_3",
         "mode_4",
         "mode_type",
+        "mode_type_imputed",
     ]
 
     other_cols = [
@@ -415,20 +593,16 @@ def clean_trips(unlinked_trips: pl.DataFrame) -> pl.DataFrame:
     ]
 
     # Replace -9998 with 995 for mode and purpose columns
-    for col in purpose_cols + mode_cols + other_cols:
-        unlinked_trips = replace_with_code(
-            unlinked_trips,
-            col,
-            {-9998: 995},
-        )
+    unlinked_trips = unlinked_trips.with_columns(
+        pl.when(pl.col(c) == -9998).then(995).otherwise(pl.col(c)).alias(c)  # noqa: PLR2004
+        for c in purpose_cols + mode_cols + other_cols
+    )
 
     # Replace 997 with OTHER purpose
-    for col in purpose_cols:
-        unlinked_trips = replace_with_code(
-            unlinked_trips,
-            col,
-            {997: Purpose.OTHER.value},
-        )
+    unlinked_trips = unlinked_trips.with_columns(
+        pl.when(pl.col(c) == 997).then(Purpose.OTHER.value).otherwise(pl.col(c)).alias(c)  # noqa: PLR2004
+        for c in purpose_cols
+    )
 
     # Re-map mode_type
     # From M:\Data\HomeInterview\Bay Area Travel Study 2018-2019\Data\
@@ -462,11 +636,13 @@ def clean_trips(unlinked_trips: pl.DataFrame) -> pl.DataFrame:
         11: ModeType.BIKESHARE.value,
         12: ModeType.SCOOTERSHARE.value,
         13: ModeType.LONG_DISTANCE.value,
+        -9998: ModeType.MISSING.value,
     }
     unlinked_trips = unlinked_trips.with_columns(
-        pl.col("mode_type")
-        .replace_strict(mode_type_map, default=pl.col("mode_type"))
-        .alias("mode_type")
+        mode_type_original=pl.col("mode_type"),
+        mode_type=pl.col("mode_type_imputed").replace_strict(
+            mode_type_map, default=pl.col("mode_type_imputed")
+        ),
     )
 
     # Num_travelers: replace <0 with None
@@ -563,6 +739,91 @@ def clean_trips(unlinked_trips: pl.DataFrame) -> pl.DataFrame:
     return unlinked_trips
 
 
+def cascade_complete_flags(
+    households: pl.DataFrame,
+    persons: pl.DataFrame,
+    days: pl.DataFrame,
+    unlinked_trips: pl.DataFrame,
+) -> dict[str, pl.DataFrame]:
+    """Cascade complete flags from days to persons to households, and from days to unlinked trips.
+
+    Survey completion logic works like this:
+    - A person-day is complete if the survey was "completed" for that day (survey_complete_day == 1)
+    - A person is complete if they have at least one complete day
+    - A household-day is complete if ALL persons in the household have a complete day for that day
+    - A household is complete if the household has at least one complete household-day
+    - An unlinked trip is complete if the day it belongs to is complete
+
+    We start with the day complete field and work up to household.
+
+    Although trips are the smallest unit, the day is really the key unit of completion
+    since it is the basis for the survey design and weighting.
+    So we will cascade completion flags from days to trips,
+    and then separately cascade from days to persons to households.
+    """
+    # First determine if the day is complete based on survey_complete_day
+    # Add num_complete_trips column to help with debugging and weighting later
+    days = days.join(
+        unlinked_trips.select(["day_id", "survey_complete_trip"])
+        .group_by("day_id")
+        .agg(
+            pl.sum("survey_complete_trip").alias("num_complete_trips"),
+            pl.count("survey_complete_trip").alias("total_trips"),
+        ),
+        on="day_id",
+        how="left",
+    ).with_columns(
+        pl.col("num_complete_trips").fill_null(0),
+        pl.col("total_trips").fill_null(0),
+        pl.when(pl.col("survey_complete_day") == 1)
+        .then(pl.lit(value=True))
+        .otherwise(pl.lit(value=False))
+        .alias("complete"),
+    )
+
+    # Then cascade to persons: a person is complete if they have at least one complete day
+    # Add a num_complete_days column to help with debugging and weighting later
+    persons = persons.join(
+        days.select(["person_id", "complete"])
+        .group_by("person_id")
+        .agg(
+            pl.any("complete"),
+            pl.sum("complete").alias("num_complete_days"),
+            pl.count("complete").alias("total_days"),
+        ),
+        on="person_id",
+        how="left",
+    )
+
+    # Then cascade to households: household is complete if all persons in the household are complete
+    # Add a num_complete_persons and total_persons column to help with debugging and weighting later
+    households = households.join(
+        persons.select(["hh_id", "complete"])
+        .group_by("hh_id")
+        .agg(
+            pl.any("complete"),
+            pl.sum("complete").alias("num_complete_persons"),
+            pl.count("complete").alias("total_persons"),
+        ),
+        on="hh_id",
+        how="left",
+    )
+
+    # Then cascade to unlinked trips: unlinked trip is complete if the day it belongs to is complete
+    unlinked_trips = unlinked_trips.join(
+        days.select(["day_id", "complete"]).group_by("day_id").agg(pl.any("complete")),
+        on="day_id",
+        how="left",
+    )
+
+    return {
+        "households": households,
+        "persons": persons,
+        "days": days,
+        "unlinked_trips": unlinked_trips,
+    }
+
+
 @step()
 def clean_2019_bats(
     households: pl.DataFrame,
@@ -585,6 +846,9 @@ def clean_2019_bats(
     # CLEAN HOUSEHOLDS ==================================
     households = clean_households(households)
 
+    # CASCADE COMPLETE FLAGS ==================================
+    results = cascade_complete_flags(households, persons, days, unlinked_trips)
+
     # PREPARE WEIGHT COLUMNS ==================================
     # Weights are assumed not to be in the data and are appended/calculated after core processing
     # Thus, extract the weights from each table and save them as separate CSVs in the input dir
@@ -604,12 +868,6 @@ def clean_2019_bats(
         "persons": PersonModel,
         "days": PersonDayModel,
         "unlinked_trips": UnlinkedTripModel,
-    }
-    results = {
-        "households": households,
-        "persons": persons,
-        "days": days,
-        "unlinked_trips": unlinked_trips,
     }
     for df_name, (id_col, canon_weight_col) in weight_names.items():
         # Get the dataframe by name

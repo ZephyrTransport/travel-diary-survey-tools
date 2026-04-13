@@ -262,7 +262,7 @@ def detect_disjoint_cliques(
         [
             pl.col("linked_trip_id")
             .map_elements(
-                lambda x: trip_to_clique_id.get(x),
+                trip_to_clique_id.get,
                 return_dtype=pl.Int64,
             )
             .alias("clique_id")

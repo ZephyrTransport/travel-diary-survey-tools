@@ -1,5 +1,7 @@
 """Codebook enumerations for person table."""
 
+from enum import nonmember
+
 from data_canon.core.labeled_enum import LabeledEnum
 
 
@@ -19,6 +21,8 @@ class AgeCategory(LabeledEnum):
     AGE_65_TO_74 = (9, "65 to 74")
     AGE_75_TO_84 = (10, "75 to 84")
     AGE_85_AND_UP = (11, "85 and up")
+
+    BREAKPOINTS = nonmember([5, 16, 18, 25, 35, 45, 55, 65, 75, 85])
 
 
 class Education(LabeledEnum):
@@ -264,14 +268,8 @@ class Student(LabeledEnum):
 
     canonical_field_name = "student"
 
-    FULLTIME_INPERSON = (
-        0,
-        "Full-time student, currently attending some or all classes in-person",
-    )
-    PARTTIME_INPERSON = (
-        1,
-        "Part-time student, currently attending some or all classes in-person",
-    )
+    FULLTIME_INPERSON = (0, "Full-time student, currently attending some or all classes in-person")
+    PARTTIME_INPERSON = (1, "Part-time student, currently attending some or all classes in-person")
     NONSTUDENT = (2, "Not a student")
     PARTTIME_ONLINE = (3, "Part-time student, ONLY online classes")
     FULLTIME_ONLINE = (4, "Full-time student, ONLY online classes")

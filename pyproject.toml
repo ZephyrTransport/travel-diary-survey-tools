@@ -6,16 +6,24 @@ description = "Set of tools to process and analyze travel diary survey data."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "exactextract>=0.3.0",
     "geopandas>=1.1.1",
     "hypothesis>=6.151.5",
     "networkx>=3.6.1",
+    "numba>=0.64.0",
     "numpy>=2.3.4",
     "openpyxl>=3.1.0",
     "polars>=1.35.1",
     "pyarrow>=22.0.0",
     "pydantic>=2.12.4",
+    "pygris>=0.2.1",
+    "python-levenshtein>=0.27.3",
+    "rasterio>=1.4.4",
+    "requests>=2.28.0",
+    "samplics>=0.4.1",
     "scikit-learn>=1.8.0",
     "scipy>=1.16.3",
+    "tqdm>=4.60.0",
 ]
 
 [dependency-groups]
@@ -76,6 +84,11 @@ exclude = ["archive", "*.html", "uv.lock"]
 "scripts/**/*.py" = [
     "INP001",      # script not part of package
     "T201",        # allow print statements in scripts
+]
+"src/processing/weighting/core/controls.py" = [
+    "D101",   # subclass .description is the docstring
+    "D102",   # overrides inherit base-class method docs
+    "RUF012", # class-attr dicts are effectively constants
 ]
 "projects/**/*.py" = [
     "INP001",      # script not part of package

@@ -6,7 +6,8 @@
 # Define directory shorthands
 survey_dir: "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Full Weighted 2023 Dataset/WeightedDataset_02212025"
 weights_dir: "X:/survey_repos/ProjRoot_Mon-Thu20251201/WgtRoot_Mon-Thu20251201_nocommutemode/output/"
-output_dir: "E:/Box/Modeling and Surveys/Surveys/Travel Diary Survey/BATS_across_years/20260320"
+pums_dir: "M:/Data/Census/PUMS/2023_1yr"
+output_dir: "E:/Box/Modeling and Surveys/Surveys/Travel Diary Survey/BATS_across_years/20260327"
 TM1_shapefile_dir: "E:/GitHub/travel-model-one/utilities/geographies"
 TM2_shapefile_dir: "E:/GitHub/TM2/tm2py-utils/tm2py_utils/inputs/maz_taz/shapefiles"
 log_file: "{{ output_dir }}/pipeline_2023.log" # If not set, logs just to console, if not absolute saves to .cache directory
@@ -124,9 +125,191 @@ steps:
     validate_input: false
     cache: true
 
-  # - name: weighting
-  #   validate_input: true
-  #   cache: true
+  - name: compute_weights
+    validate_input: false
+    cache: true
+    params:
+      # -- PUMS 1-year microdata (California) ---------------------------
+      # (Optional) will download from Census if not provided
+      # pums_households: "{{ pums_dir }}/psam_h06.csv"
+      # pums_persons: "{{ pums_dir }}/psam_p06.csv"
+
+      state_fips: "06"
+      pums_year: 2023
+
+      # -- Sample Plan Path ------------------------------------------------
+      sample_plan: "{{ survey_dir }}/prepared_sample_plan.csv"
+
+      # -- Geography crosswalk ------------------------------------------
+      # Specify a polygon file for target zones.  The crosswalk module
+      # auto-discovers overlapping PUMAs and builds a population-weighted
+      # allocation table using Census blocks + rasterization.
+      geography:
+        target_zones:
+          file: "{{ TM1_shapefile_dir }}/region_county.shp"
+          id_field: "fipco"  # null -> single study-area boundary
+        resolution: 50         # meters (raster handles boundary fractions)
+        min_allocation: 0.01   # drop PUMA slivers below 1%
+        # -- Zone groups (optional) ------------------------------------
+        # Merge small zones for weighting.
+        # Keys are group names, values are lists of zones combined into a single balancing zone.
+        # Also useful for applying names to things.
+        zone_groups:
+          "Marin/Napa/Solano/Sonoma": ["041", "097", "095", "055"]
+          # "Contra Costa/Alameda": ["013", "001"]
+          "San Mateo/Santa Clara": ["085", "081"]
+          "Alameda": ["001"]
+          "Contra Costa": ["013"]
+          # "Marin": ["041"]
+          # "Sonoma": ["055"]
+          "San Francisco": ["075"]
+          # "Santa Clara": ["081"]
+          # "San Mateo": ["085"]
+          # "Solano": ["095"]
+          # "Napa": ["097"]
+
+      # -- Balancer settings -------------------------------------------
+      max_expansion_factor: 5.0    # upper bound = initial_weight × factor
+      min_expansion_factor: 0.01  # lower bound = initial_weight × factor, OK to be low since we still have absolute floor of 1
+      min_weight: 1                # absolute floor (no weight < 1)
+      # max_weight:                # absolute ceiling (null = no ceiling)
+      max_iterations: 10000
+      n_workers: 8                 # parallel zone balancing (numba releases GIL)
+      default_importance: 100      # baseline importance for controls without an explicit override
+      # Lower importance when MOE is higher, to allow more deviation from controls with high sampling variability
+      moe_based_importance: true  # derive per-control importance from PUMS replicate-weight MOE
+
+      # -- EF grid search (optional) -----------------------------------
+      # Re-run balancing across a grid of max_expansion_factor values and
+      # add a diagnostic chart showing fit vs weight quality tradeoffs.
+      expansion_factor_grid: [2, 3, 4, 5, 7, 10, 15, 20]
+
+      # -- Controls to balance against ---------------------------------
+      # Each name must match a key in the CONTROLS registry.
+      # Household-level: h_size, h_income, h_workers, h_vehicles, h_children
+      # Person-level:    p_gender, p_employment, p_commute_mode, p_student,
+      #                  p_education, p_race, p_ethnicity, p_age
+      # Optional: merge granular categories before balancing.
+      # We start with maximum granularity (e.g. 10 household size categories)
+      # and merge up to a coarser set as necessary to achieve convergence.
+      # The merge can be global (all zones) or zone-specific
+      # merge:
+      #   merged_label: [category1, category2, ...]      #
+      # For additional per-zone merges on top of the global merge, use
+      # zone_merges:
+      #   "06001":
+      #     further_merged: [category_a, already_merged_label]
+      #   "06075":
+      #     another_merged: [category_b, already_merged_label]
+      controls:
+        # Structural controls, set importance very high to ensure totals are matched exactly (if possible)
+        - name: h_total
+          importance: 200
+        - name: p_total
+          importance: 200
+
+        # Household level controls
+        - name: h_size
+          merge:
+            size_4_plus: [size_4, size_5, size_6, size_7, size_8, size_9, size_10_plus]
+
+        # Household income controls
+        - name: h_income
+          merge:
+            income_under_100:   [income_under25, income_25to50, income_50to75, income_75to100]
+
+        # Some places like SF have a hard time balancing on vehicles due to conflicting controls and sample-cell sparsity.
+        - name: h_vehicles
+          merge:
+            veh_2_plus: [veh_2, veh_3, veh_4, veh_5, veh_6_plus]
+          # zone_merges:
+          #   "San Francisco":
+          #     veh_1_plus: [veh_1, veh_2_plus]
+
+        # Turning these off because p_employment and p_age captures this already,
+        # just adds excess double constraints that make it hard to converge in places like SF.
+        # - name: h_workers
+        #   merge:
+        #     workers_2_plus: [workers_2, workers_3, workers_4, workers_5_plus]
+        #   zone_merges:
+        #     "San Francisco": # SF has very few households with 2+ workers. Note that p_employment still controls number of workers.
+        #       workers_1_plus: [workers_1, workers_2_plus]
+
+        # - name: h_children
+        #   merge:
+        #     children_2_plus: [children_2,children_3, children_4, children_5_plus]
+        #   zone_merges:
+        #     "San Francisco": # SF has very few households with 2+ children
+        #       children_1_plus: [children_1, children_2_plus]
+
+        # Person level controls (get's aggregated to household level, i.e., num age group per household)
+        - name: p_gender
+        - name: p_employment
+        - name: p_commute_mode
+          merge:
+            car: ["carpool", "drive_alone"]
+            walk_bike: ["walk", "bike"]
+
+        - name: p_student
+          # merge:
+          #   university: ["student_college"]
+          #   nonuniversity: ["student_k12", "not_student"]
+
+        - name: p_age
+          merge:
+            age_75_plus: [age_75_to_84, age_85_and_up]
+
+        # Just wait until we have imputation which handles this processing and more
+        # - name: p_race
+        #   merge:
+        #     "AAPI": [asian, pacific]
+        #     other:  [native, multi, other] # collapse small groups into "other"
+
+        # - name: p_ethnicity
+        #   merge:
+        #     hispanic: [mexican, puerto_rican, cuban, other]  # collapse Hispanic sub-groups
+
+        # Cross-tab controls, these help ensure the joint distribution of two or more variables is preserved
+        # - name: p_gender_x_ethnicity
+        #   dimensions: [p_gender, p_ethnicity]  # Uses FULL 2×5 = 10 cells from originals
+        #   # Cross-tab applies its own coarser merges
+        #   merges:
+        #     hispanic: [mexican, puerto_rican, cuban, other_hispanic]
+
+        # Result: 3x3 = 9 cells
+        # - name: h_size_by_income
+        #   dimensions: [h_size, h_income]
+        #   merges:
+        #     h_income:
+        #       income_under_100: [income_under25, income_25to50, income_50to75, income_75to100]
+        #     h_size:
+        #         size_3_plus: [size_3, size_4, size_5, size_6, size_7, size_8, size_9, size_10_plus]
+
+      # -- Diagnostics report ------------------------------------------
+      diagnostics:
+        output_path: "{{ output_dir }}/weighting_diagnostics_2023.html"
+
+
+  # -- Existing weights (alternative to computing new weights) ----------
+  # Uncomment this block and comment out the 'weighting' step above
+  # to use pre-computed weights from an external source.
+  # - name: add_existing_weights
+  #   validate_input: false
+  #   cache: false
+  #   params:
+  #     derive_missing_weights: true
+  #     weights:
+  #       household_weights:
+  #         weight_path: "{{ weights_dir }}/hh_weights.csv"
+  #       person_weights:
+  #         weight_path: "{{ weights_dir }}/person_weights.csv"
+  #       day_weights:
+  #         weight_path: "{{ weights_dir }}/day_weights.csv"
+  #       unlinked_trip_weights:
+  #         weight_id_col: "trip_id"  # Weight file uses 'trip_id' instead of canonical 'unlinked_trip_id'
+  #         weight_col: "trip_weight"  # Weight file uses 'trip_weight' instead of canonical 'unlinked_trip_weight'
+  #         weight_path: "{{ weights_dir }}/trip_weights.csv"
+  #         keep_name: false # Defaults to false, but you could keep original name if desired
 
   - name: add_zone_ids
     validate_input: false
@@ -143,24 +326,6 @@ steps:
         - zone_name: "TAZ1454"
           shapefile: "{{ TM1_shapefile_dir }}/bayarea_rtaz1454_rev1_WGS84.shp"
           zone_id_field: "TAZ1454"
-
-  - name: add_existing_weights
-    validate_input: false
-    cache: false
-    params:
-      derive_missing_weights: true
-      weights:
-        household_weights:
-          weight_path: "{{ weights_dir }}/hh_weights.csv"
-        person_weights:
-          weight_path: "{{ weights_dir }}/person_weights.csv"
-        day_weights:
-          weight_path: "{{ weights_dir }}/day_weights.csv"
-        unlinked_trip_weights:
-          weight_id_col: "trip_id"  # Weight file uses 'trip_id' instead of canonical 'unlinked_trip_id'
-          weight_col: "trip_weight"  # Weight file uses 'trip_weight' instead of canonical 'unlinked_trip_weight'
-          weight_path: "{{ weights_dir }}/trip_weights.csv"
-          keep_name: false # Defaults to false, but you could keep original name if desired
 
   # - name: final_check
   #   validate_input: true

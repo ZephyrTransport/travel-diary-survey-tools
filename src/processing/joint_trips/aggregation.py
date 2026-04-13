@@ -57,23 +57,27 @@ def build_joint_trips_table(
         )
 
     # Aggregate by joint_trip_id
-    joint_trips_table = joint_members.group_by("joint_trip_id").agg(
-        [
-            # Household and day (should be same within group)
-            pl.col("hh_id").first(),
-            pl.col("day_id").first(),
-            # Count of travelers
-            pl.col("linked_trip_id").n_unique().alias("num_joint_travelers"),
-            # Mean coordinates
-            pl.col("o_lat").mean().alias("o_lat_mean"),
-            pl.col("o_lon").mean().alias("o_lon_mean"),
-            pl.col("d_lat").mean().alias("d_lat_mean"),
-            pl.col("d_lon").mean().alias("d_lon_mean"),
-            # Mean time windows
-            pl.col("depart_time").mean().alias("depart_time_mean"),
-            pl.col("arrive_time").mean().alias("depart_arrive_mean"),
-        ]
-    )
+    agg_exprs = [
+        # Household and day (should be same within group)
+        pl.col("hh_id").first(),
+        pl.col("day_id").first(),
+        # Count of travelers
+        pl.col("linked_trip_id").n_unique().alias("num_joint_travelers"),
+        # Mean coordinates
+        pl.col("o_lat").mean().alias("o_lat_mean"),
+        pl.col("o_lon").mean().alias("o_lon_mean"),
+        pl.col("d_lat").mean().alias("d_lat_mean"),
+        pl.col("d_lon").mean().alias("d_lon_mean"),
+        # Mean time windows
+        pl.col("depart_time").mean().alias("depart_time_mean"),
+        pl.col("arrive_time").mean().alias("depart_arrive_mean"),
+    ]
+
+    # Propagate complete: a joint trip is complete only if all member trips are complete
+    if "complete" in joint_members.columns:
+        agg_exprs.append(pl.all("complete").alias("complete"))
+
+    joint_trips_table = joint_members.group_by("joint_trip_id").agg(agg_exprs)
 
     return joint_trips_table
 

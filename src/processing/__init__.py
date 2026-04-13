@@ -11,11 +11,12 @@ from .joint_trips import detect_joint_trips
 from .link_trips import link_trips
 from .read_write import load_data, write_data
 from .tours import extract_tours
-from .weighting import add_existing_weights
+from .weighting import add_existing_weights, compute_weights
 
 __all__ = [
     "add_existing_weights",
     "add_zone_ids",
+    "compute_weights",
     "detect_joint_trips",
     "extract_tours",
     "final_check",

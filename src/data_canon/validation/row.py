@@ -69,7 +69,6 @@ def validate_row_for_step(
     filtered_row = {k: v for k, v in row_dict.items() if v is not None or k in required_fields}
 
     # Validate all present fields in a single pass using model_validate
-    # This is much faster than validating each field individually
     try:
         model.model_validate(filtered_row, strict=False)
     except PydanticValidationError as e:

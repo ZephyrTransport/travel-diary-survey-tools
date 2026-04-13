@@ -328,7 +328,7 @@ def imputation(  # noqa: C901
     Handling Missing Values with Enum Labels:
         Survey data often uses special codes for missing values (e.g. 995 for
         "Missing Response", 999 for "Prefer not to answer").  Use **enum
-        member names** (labels) rather than raw numeric values in the config::
+        member names** (labels) rather than raw numeric values in the config:
 
             missing_values: [MISSING, PNTA]   # enum labels, not 995/999
 
@@ -344,7 +344,7 @@ def imputation(  # noqa: C901
 
         For MICE with multiple columns, ``missing_values`` can be a dict
         mapping each column to its own labels, or a single list applied to
-        all columns::
+        all columns:
 
             # Per-column
             missing_values:
@@ -354,7 +354,7 @@ def imputation(  # noqa: C901
             # Shared
             missing_values: [MISSING, PNTA]   # applied to all columns
 
-    Cross-Table Features (``join_tables``):
+    Cross-Table Features:
         By default only features from the same table are used.  Adding
         ``join_tables`` to a config block pulls columns from parent tables
         via left-join on known foreign keys, which can significantly improve
@@ -373,8 +373,7 @@ def imputation(  # noqa: C901
         4. After imputation all joined/aggregated columns are stripped;
            the output schema is unchanged.
 
-        Example::
-
+    Example:
             impute_columns:
               persons:
                 - method: knn
@@ -385,8 +384,9 @@ def imputation(  # noqa: C901
                   #                                       ^^^^^^^^^^  ^^^^^^^^^^^^^^
                   #                              columns from the households table
 
-    Child-to-Parent Aggregation (``aggregate_from``):
-        The reverse of ``join_tables``: aggregate child rows up to a parent
+    Child-to-Parent Aggregation:
+        Using the config, ``aggregate_from``, this is
+        the reverse of ``join_tables``: aggregate child rows up to a parent
         table.  Useful when imputing parent-level fields that depend on
         household composition (e.g. predicting household income from the
         employment/education mix of its members).
@@ -398,8 +398,7 @@ def imputation(  # noqa: C901
         ``numeric_features``.  After imputation, all generated columns are
         stripped.
 
-        Example::
-
+    Example:
             impute_columns:
               households:
                 - method: mice

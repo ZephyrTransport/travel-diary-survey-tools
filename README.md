@@ -522,7 +522,7 @@ The project uses [MkDocs](https://www.mkdocs.org/) with [Material theme](https:/
 uv run mkdocs build --strict
 
 # Preview with live reload
-uv run mkdocs serve
+uv run mkdocs serve --livereload --watch src
 # View at http://127.0.0.1:8000
 ```
 
