@@ -6,6 +6,7 @@ theme:
   name: material
   palette:
     primary: indigo
+  custom_dir: docs/overrides
   features:
     - navigation.sections
     - navigation.tabs
@@ -54,12 +55,6 @@ plugins:
 
 nav:
   - Home: index.md
-  - Codebook: codebook.md
-  - Data Models:
-      - Survey Data Models: models/index.md
-      - Travel Model-Formatted Data Models:
-          - DaySim: models/daysim.md
-          - CTRAMP: models/ctramp.md
   - Pipeline: pipeline.md
   - Pipeline Steps:
       - pipeline_steps/index.md
@@ -84,6 +79,18 @@ nav:
           - DaySim Format: pipeline_steps/format_output/daysim.md
           - CT-RAMP Format: pipeline_steps/format_output/ctramp.md
       - Final Check: pipeline_steps/final_check.md
+  - Data Models:
+      - Survey Data Models: models/index.md
+      - Travel Model-Formatted Data Models:
+          - DaySim: models/daysim.md
+          - CTRAMP: models/ctramp.md
+  - Codebook:
+      - Column Requirements: COLUMN_REQUIREMENTS.md
+      - Enum Reference: codebook.md
+      - Enums: codebook_enums.md
+
+extra_css:
+  - assets/stylesheets/column_matrix.css
 
 markdown_extensions:
   - admonition
@@ -94,11 +101,9 @@ markdown_extensions:
           class: mermaid
   - pymdownx.highlight
   - pymdownx.inlinehilite
-  - pymdownx.arithmatex:
-      generic: true
+  - pymdownx.tabbed:
+      alternate_style: true
   - tables
 
 extra_javascript:
   - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
-
-extra_css: []

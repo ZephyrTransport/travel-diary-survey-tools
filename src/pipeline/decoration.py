@@ -9,6 +9,7 @@ from typing import Any
 import polars as pl
 
 from data_canon.core.dataclass import CanonicalData
+from pipeline.step_registry import register_step
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,8 @@ def step(
     validate_input: bool = True,
     validate_output: bool = False,
     cache: bool = False,
+    requires: dict[str, set[str]] | None = None,
+    produces: dict[str, set[str]] | None = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """Decorator for pipeline steps with automatic validation and caching.
 
@@ -26,8 +29,12 @@ def step(
     that match canonical table names (households, persons, days,
     unlinked_trips, linked_trips, tours) are validated.
 
-    Validation is skipped for tables that have already been validated
-    if a CanonicalData instance is passed as 'canonical_data' parameter.
+    Steps can declare workflow contracts via ``requires`` and ``produces``:
+
+    - ``requires``: mapping of table name to set of field names that must
+      be present before the step executes.
+    - ``produces``: mapping of table name to set of field names that the
+      step is responsible for after execution (newly created or updated).
 
     When caching is enabled, the decorator will check for cached outputs
     before executing the step function. If valid cache exists, outputs are
@@ -42,9 +49,14 @@ def step(
         validate_input: Whether to validate inputs. Defaults to True.
         validate_output: Whether to validate outputs. Defaults to False.
         cache: Whether to enable caching for this step. Defaults to False.
+        requires: Mapping of table name to set of required input field names.
+        produces: Mapping of table name to set of produced output field names.
 
     Example:
-        >>> @step(validate_input=True)
+        >>> @step(
+        ...     requires={"unlinked_trips": {"day_id", "depart_time"}},
+        ...     produces={"linked_trips": {"linked_trip_id"}},
+        ... )
         ... def link_trips(
         ...     unlinked_trips: pl.DataFrame,
         ...     config: dict
@@ -53,7 +65,7 @@ def step(
         ...     linked_trips = ...
         ...     return {"linked_trips": linked_trips}
 
-        >>> @step(validate=False)
+        >>> @step(validate_input=False)
         ... def load_data(input_paths: dict) -> dict[str, pl.DataFrame]:
         ...     return {
         ...         "households": households_df,
@@ -66,6 +78,9 @@ def step(
     """
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        # Register workflow contract at decoration (import) time
+        register_step(func.__name__, requires=requires, produces=produces)
+
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:  # noqa: ANN401
             # Save a copy of original kwargs to restore after validation

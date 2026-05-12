@@ -39,7 +39,26 @@ as access or egress modes for transit journeys.
 
 
 # Trip Linker Functions --------------------------------------------------------
-@step()
+@step(
+    requires={
+        "unlinked_trips": {
+            "day_id",
+            "o_lon",
+            "o_lat",
+            "d_lon",
+            "d_lat",
+            "o_purpose_category",
+            "d_purpose_category",
+            "mode_type",
+            "depart_time",
+            "arrive_time",
+        },
+    },
+    produces={
+        "unlinked_trips": {"linked_trip_id"},
+        "linked_trips": {"linked_trip_id", "day_id", "person_id", "hh_id", "driver"},
+    },
+)
 def link_trips(
     unlinked_trips: pl.DataFrame,
     change_mode_enum: str,

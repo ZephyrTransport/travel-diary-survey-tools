@@ -12,6 +12,7 @@ from data_canon.codebook.persons import Employment, Ethnicity, Gender, Race, Stu
 from data_canon.codebook.trips import ModeType, Purpose, PurposeCategory
 from data_canon.models.survey import HouseholdModel, PersonDayModel, PersonModel, UnlinkedTripModel
 from pipeline.decoration import step
+from pipeline.step_registry import get_all_required_fields
 from utils.helpers import expr_haversine
 
 logger = logging.getLogger(__name__)
@@ -20,25 +21,22 @@ logger = logging.getLogger(__name__)
 NEW_DAY_TIME = 3  # 3 AM``
 
 
-def check_fields(df: pl.DataFrame, model: type) -> None:
+def check_fields(df: pl.DataFrame, table_name: str, model: type) -> None:
     """Check if all fields in the model are present in the dataframe.
 
     Args:
         df: Input DataFrame
+        table_name: Canonical table name (e.g. "unlinked_trips")
         model: Pydantic model to check against
     Raises:
         ValueError: If any fields are missing
     """
-    # Get required fields if not optional and has any required steps
+    all_required = get_all_required_fields(table_name)
+
+    # Keep only non-optional fields that some step actually needs
     required_fields = set()
-
-    for field_name, field_info in model.__fields__.items():
-        schema_extras = field_info.json_schema_extra or {}
-
-        if (
-            NoneType not in get_args(field_info.annotation)
-            and len(schema_extras.get("required_in_steps", [])) > 0
-        ):
+    for field_name, field_info in model.model_fields.items():
+        if NoneType not in get_args(field_info.annotation) and field_name in all_required:
             required_fields.add(field_name)
 
     # Check for missing
@@ -900,6 +898,6 @@ def clean_2019_bats(
         weights_df.filter(pl.col(canon_weight_col).is_null())
 
         # Final check
-        check_fields(results[df_name], models[df_name])
+        check_fields(results[df_name], df_name, models[df_name])
 
     return results

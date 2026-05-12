@@ -1,6 +1,6 @@
 """Generate column requirement matrix from data models.
 
-This script reads the step metadata from Pydantic models and generates
+This script reads the step metadata from the step registry and generates
 a documentation matrix showing which columns are required in which
 pipeline steps.
 """
@@ -22,8 +22,10 @@ import data_canon.codebook.households as households_module
 import data_canon.codebook.persons as persons_module
 import data_canon.codebook.trips as trips_module
 import data_canon.codebook.vehicles as vehicles_module
+
+# Import processing package to trigger step registration via @step() decorators
+import processing  # noqa: F401
 from data_canon.core.labeled_enum import LabeledEnum
-from data_canon.core.validators import get_step_validation_summary
 from data_canon.models.survey import (
     HouseholdModel,
     LinkedTripModel,
@@ -32,6 +34,7 @@ from data_canon.models.survey import (
     TourModel,
     UnlinkedTripModel,
 )
+from pipeline.step_registry import get_step_validation_summary
 
 
 def get_field_type_description(field_info: FieldInfo) -> str:
@@ -45,26 +48,24 @@ def get_field_type_description(field_info: FieldInfo) -> str:
     """
     annotation = field_info.annotation
 
-    # Handle Optional types (Union with None)
-    if annotation is not None and hasattr(annotation, "__origin__"):
-        origin = annotation.__origin__
-        # Check for Union type (includes | syntax)
-        if origin is types.UnionType or str(origin) == "typing.Union":
-            args = annotation.__args__
-            non_none = [arg for arg in args if arg is not type(None)]
-            if non_none and len(non_none) == 1:
-                return non_none[0].__name__
-            # Multiple non-None types
-            type_names = [arg.__name__ for arg in non_none]
-            return " or ".join(type_names)
+    # Resolve the core type, stripping Optional/Union wrappers
+    def _short_name(t: type) -> str:
+        return getattr(t, "__name__", str(t).rsplit(".", 1)[-1])
+
+    # Handle Union types (X | None, Optional[X], Union[X, Y])
+    if isinstance(annotation, types.UnionType) or (
+        hasattr(annotation, "__origin__") and str(annotation.__origin__) == "typing.Union"
+    ):
+        args = annotation.__args__
+        non_none = [arg for arg in args if arg is not type(None)]
+        names = [_short_name(a) for a in non_none]
+        result = " or ".join(names)
+        if type(None) in args:
+            return f"{result} or None"
+        return result
 
     # Simple type
-    if annotation is not None and hasattr(annotation, "__name__"):
-        return annotation.__name__
-
-    # Convert to string and replace pipe with "or" for markdown compatibility
-    # Replace " | " with " or " to avoid breaking markdown table delimiters
-    return str(annotation).replace(" | ", " or ")
+    return _short_name(annotation)
 
 
 def get_field_constraints(field_info: FieldInfo) -> str:
@@ -150,115 +151,99 @@ def check_steps_and_order(steps: set[str], config_path: Path) -> list[str]:
     return ordered_steps
 
 
-def generate_matrix_markdown(models: dict[str, type]) -> str:  # noqa: C901, PLR0912, PLR0915
-    """Generate markdown table showing column requirements per step.
+def generate_matrix_markdown(models: dict[str, type]) -> str:  # noqa: PLR0915
+    """Generate tabbed markdown showing column requirements per table.
+
+    Each canonical table gets its own tab with a compact matrix that only
+    includes pipeline steps relevant to that table.
 
     Args:
         models: Dictionary mapping table names to model classes
 
     Returns:
-        Markdown formatted table string
+        Markdown formatted string with pymdownx content tabs
     """
-    # Collect all unique steps across all models
-    required_steps = set()
-    model_summaries = {}
-    creation_info = {}
+    # Get registry data: {step_name: {table_name: [fields]}}
+    registry_summary = get_step_validation_summary()
+    required_steps = set(registry_summary.keys())
 
+    creation_info = {}
     for table_name, model in models.items():
-        summary = get_step_validation_summary(model)
-        model_summaries[table_name] = summary
         creation_info[table_name] = get_field_creation_info(model)
-        for step in summary:
-            if step != "ALL":
-                required_steps.add(step)
 
     # Read projects/config.yaml for preferred order if available
     example_path = Path(__file__).parent.parent / "projects" / "bats_2023" / "config.yaml"
-
     sorted_steps = check_steps_and_order(required_steps, example_path)
 
-    # Build markdown table
-    lines = []
+    lines: list[str] = []
+    # YAML frontmatter for MkDocs page metadata
+    lines.append("---")
+    lines.append("body_class: col-matrix")
+    lines.append("hide:")
+    lines.append("  - toc")
+    lines.append("---")
+    lines.append("")
     lines.append("# Column Requirement Matrix")
+    lines.append("")
     lines.append("Generated automatically by `scripts/generate_column_matrix.py`.")
     lines.append("")
     lines.append("***Do not edit this markdown file directly.***")
     lines.append("")
-    lines.append("This matrix shows which columns are required in which pipeline steps. ")
-    lines.append("- ✓ = required in step")
-    lines.append("- \\+ = created in step")
+    lines.append(
+        "Each tab shows the fields for one canonical table. "
+        "Only steps that reference the table are shown."
+    )
     lines.append("")
-    lines.append("## Constraint Legend")
+    lines.append("| Symbol | Meaning |")
+    lines.append("| :----: | ------- |")
+    lines.append("| ✓ | Required as input |")
+    lines.append("| + | Created / produced |")
     lines.append("")
-    lines.append("- **UNIQUE**: Field must have unique values across all records")
-    lines.append("- **FK → `table.column`**: Foreign key reference to parent table")
-    lines.append("- **REQ_CHILD**: Parent record must have at least one child record")
-    lines.append("- **≥ / ≤ / > / <**: Numeric range constraints")
-    lines.append("")
-
-    # Create table header
-    header = ["Table", "Field", "Type", "Constraints", *sorted_steps]
-    lines.append("| " + " | ".join(header) + " |")
-    lines.append("| " + " | ".join(["---"] * len(header)) + " |")
 
     for table_name, model in models.items():
-        summary = model_summaries[table_name]
-        all_steps_fields = set(summary.get("ALL", []))
-        field_creation = creation_info[table_name]
+        # Determine which steps are relevant to this table
+        table_steps = [s for s in sorted_steps if table_name in registry_summary.get(s, {})]
 
-        # Get all fields from model
+        field_creation = creation_info[table_name]
         all_fields = list(model.model_fields.keys())
 
-        # Create rows for each field
-        for i, field_name in enumerate(all_fields):
-            field_info = model.model_fields[field_name]
-            field_type = get_field_type_description(field_info)
-            constraints = get_field_constraints(field_info)
+        # Tab header (pymdownx tabbed alternate style)
+        lines.append(f'=== "{table_name}"')
+        lines.append("")
 
-            # Add table name only in first row for this table
-            if i == 0:
-                row = [
-                    f"**{table_name}**",
-                    f"`{field_name}`",
-                    field_type,
-                    constraints,
-                ]
-            else:
-                # Other rows - leave table name blank
-                row = ["", f"`{field_name}`", field_type, constraints]
+        if table_steps:
+            # Build compact header
+            header = ["Field", "Type", "Constraints", *table_steps]
+            lines.append("    | " + " | ".join(header) + " |")
+            lines.append("    | " + " | ".join(["---"] * len(header)) + " |")
 
-            # Check if field is required in ALL steps
-            if field_name in all_steps_fields:
-                # Check if created in any step
-                for step in sorted_steps:
-                    created_in = field_creation.get(field_name)
-                    if created_in == step:
-                        row.append("+")
-                    else:
-                        row.append("✓")
-            else:
-                # Check each step
-                for step in sorted_steps:
-                    step_fields = summary.get(step, [])
+            for field_name in all_fields:
+                field_info = model.model_fields[field_name]
+                field_type = get_field_type_description(field_info)
+                constraints = get_field_constraints(field_info)
+                row = [f"`{field_name}`", field_type, constraints]
+
+                for step in table_steps:
+                    step_fields = registry_summary.get(step, {}).get(table_name, [])
                     created_in = field_creation.get(field_name)
 
                     if created_in == step:
-                        # Field is created in this step
                         row.append("+")
                     elif field_name in step_fields:
-                        # Field is required in this step
                         row.append("✓")
                     else:
                         row.append("")
 
-            lines.append("| " + " | ".join(row) + " |")
+                lines.append("    | " + " | ".join(row) + " |")
+        else:
+            lines.append("    No step-specific field requirements registered.")
 
-    lines.append("")
+        lines.append("")
 
     return "\n".join(lines)
 
 
-def generate_matrix_csv(models: dict[str, type]) -> str:  # noqa: C901, PLR0912
+def generate_matrix_csv(models: dict[str, type]) -> str:
     """Generate CSV showing column requirements per step.
 
     Args:
@@ -267,18 +252,13 @@ def generate_matrix_csv(models: dict[str, type]) -> str:  # noqa: C901, PLR0912
     Returns:
         CSV formatted string
     """
-    # Collect all unique steps across all models
-    required_steps = set()
-    model_summaries = {}
-    creation_info = {}
+    # Get registry data: {step_name: {table_name: [fields]}}
+    registry_summary = get_step_validation_summary()
+    required_steps = set(registry_summary.keys())
 
+    creation_info = {}
     for table_name, model in models.items():
-        summary = get_step_validation_summary(model)
-        model_summaries[table_name] = summary
         creation_info[table_name] = get_field_creation_info(model)
-        for step in summary:
-            if step != "ALL":
-                required_steps.add(step)
 
     # Sort steps for consistent ordering
     example_path = Path(__file__).parent.parent / "projects" / "bats_2023" / "config.yaml"
@@ -290,8 +270,6 @@ def generate_matrix_csv(models: dict[str, type]) -> str:  # noqa: C901, PLR0912
     lines.append(",".join(header))
 
     for table_name, model in models.items():
-        summary = model_summaries[table_name]
-        all_steps_fields = set(summary.get("ALL", []))
         field_creation = creation_info[table_name]
 
         # Get all fields from model
@@ -304,29 +282,18 @@ def generate_matrix_csv(models: dict[str, type]) -> str:  # noqa: C901, PLR0912
 
             row = [table_name, field_name, field_type, constraints]
 
-            # Check if field is required in ALL steps
-            if field_name in all_steps_fields:
-                # Check if any are creation steps
-                for step in sorted_steps:
-                    created_in = field_creation.get(field_name)
-                    if created_in == step:
-                        row.append("+")
-                    else:
-                        row.append("x")
-            else:
-                # Check each step
-                for step in sorted_steps:
-                    step_fields = summary.get(step, [])
-                    created_in = field_creation.get(field_name)
+            # Check each step
+            for step in sorted_steps:
+                step_tables = registry_summary.get(step, {})
+                step_fields = step_tables.get(table_name, [])
+                created_in = field_creation.get(field_name)
 
-                    if created_in == step:
-                        # Field is created in this step
-                        row.append("+")
-                    elif field_name in step_fields:
-                        # Field is required in this step
-                        row.append("x")
-                    else:
-                        row.append("")
+                if created_in == step:
+                    row.append("+")
+                elif field_name in step_fields:
+                    row.append("x")
+                else:
+                    row.append("")
 
             lines.append(",".join(row))
 
@@ -372,9 +339,9 @@ def generate_enum_codebook_markdown(enums: dict[str, type]) -> str:
         Markdown formatted table string
     """
     lines = []
-    lines.append("# Codebook Enum Values")
+    lines.append("# Enums")
     lines.append("")
-    lines.append("This section shows the categorical values and labels for custom enum fields.")
+    lines.append("Quick lookup of categorical values and labels for codebook enum fields.")
     lines.append("")
 
     # Sort enums by name for consistent ordering
@@ -427,22 +394,25 @@ def main() -> None:
     # Collect enum classes
     enums = collect_labeled_enums()
 
-    # Generate markdown in repo root
+    # Generate column matrix page (wide, no TOC)
     markdown = generate_matrix_markdown(models)
-
-    # Add enum codebook section
-    enum_markdown = generate_enum_codebook_markdown(enums)
-    markdown += "\n\n" + enum_markdown
 
     output_dir = Path(__file__).parent.parent / "docs"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     output_path = output_dir / "COLUMN_REQUIREMENTS.md"
-    # Remove trailing whitespace and ensure single trailing newline
     markdown_lines = [line.rstrip() for line in markdown.splitlines()]
     markdown_formatted = "\n".join(markdown_lines) + "\n"
     output_path.write_text(markdown_formatted, encoding="utf-8")
     print(f"Generated: {output_path}")
+
+    # Generate enum codebook page (separate, with TOC)
+    enum_markdown = generate_enum_codebook_markdown(enums)
+    enum_path = output_dir / "codebook_enums.md"
+    enum_lines = [line.rstrip() for line in enum_markdown.splitlines()]
+    enum_formatted = "\n".join(enum_lines) + "\n"
+    enum_path.write_text(enum_formatted, encoding="utf-8")
+    print(f"Generated: {enum_path}")
 
     # Generate CSV in scripts folder
     csv = generate_matrix_csv(models)

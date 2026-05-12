@@ -57,7 +57,22 @@ from .format_trips import format_linked_trips
 logger = logging.getLogger(__name__)
 
 
-@step()
+@step(
+    requires={
+        "households": {"residence_rent_own", "residence_type"},
+        "persons": {"person_num", "work_park", "work_mode", "is_proxy"},
+        "days": {"travel_dow"},
+        "unlinked_trips": {"tour_id"},
+        "linked_trips": {
+            "tour_id",
+            "tour_direction",
+            "driver",
+            "access_mode",
+            "egress_mode",
+        },
+        "tours": {"origin_linked_trip_id", "dest_linked_trip_id"},
+    },
+)
 def format_daysim(
     persons: pl.DataFrame,
     households: pl.DataFrame,

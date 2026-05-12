@@ -181,7 +181,22 @@ def _assign_joint_trip_ids(
     ).drop("clique_id")
 
 
-@step()
+@step(
+    requires={
+        "linked_trips": {
+            "o_lat",
+            "o_lon",
+            "d_lat",
+            "d_lon",
+            "depart_time",
+            "arrive_time",
+        },
+    },
+    produces={
+        "linked_trips": {"joint_trip_id"},
+        "joint_trips": {"joint_trip_id", "hh_id", "day_id"},
+    },
+)
 def detect_joint_trips(
     linked_trips: pl.DataFrame,
     households: pl.DataFrame,

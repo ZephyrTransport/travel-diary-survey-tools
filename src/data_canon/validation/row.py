@@ -17,9 +17,7 @@ from pydantic import BaseModel
 from pydantic import ValidationError as PydanticValidationError
 
 from data_canon.core.exceptions import DataValidationError
-from data_canon.core.validators import (
-    get_required_fields_for_step,
-)
+from pipeline.step_registry import get_required_fields as get_required_fields_for_step
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +29,7 @@ logger = logging.getLogger(__name__)
 def validate_row_for_step(
     row_dict: dict[str, Any],
     model: type[BaseModel],
+    table_name: str,
     step_name: str | None = None,
 ) -> None:
     """Validate a single row for a specific pipeline step.
@@ -42,6 +41,7 @@ def validate_row_for_step(
     Args:
         row_dict: Dictionary representing a single row
         model: Pydantic model class to validate against
+        table_name: Canonical table name (e.g. "unlinked_trips")
         step_name: Name of the pipeline step. If None, validates all fields.
 
     Raises:
@@ -54,7 +54,7 @@ def validate_row_for_step(
         return
 
     # Get fields required for this step
-    required_fields = get_required_fields_for_step(model, step_name)
+    required_fields = get_required_fields_for_step(table_name, step_name)
 
     # Check for missing required fields
     missing_fields = [field_name for field_name in required_fields if field_name not in row_dict]
@@ -131,7 +131,7 @@ def validate_dataframe_rows(
         for i, row in enumerate(batch):
             row_idx = batch_start + i
             try:
-                validate_row_for_step(row, model, step)
+                validate_row_for_step(row, model, table_name, step)
             except (PydanticValidationError, ValueError) as e:
                 # Group errors by message
                 msg = str(e)

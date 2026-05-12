@@ -37,126 +37,111 @@ from data_canon.codebook.trips import (
     Purpose,
     PurposeCategory,
 )
-from data_canon.core.step_field import step_field
+from data_canon.core.schema_field import schema_field
 
 
 # Data Models ------------------------------------------------------------------
 class HouseholdModel(BaseModel):
     """Household attributes (minimal for tour building)."""
 
-    hh_id: int = step_field(ge=1, unique=True, required_in_steps=["extract_tours"])
-    home_lat: float = step_field(ge=-90, le=90, required_in_steps=["extract_tours"])
-    home_lon: float = step_field(ge=-180, le=180, required_in_steps=["extract_tours"])
-    residence_rent_own: ResidenceRentOwn = step_field(required_in_steps=["format_daysim"])
-    residence_type: ResidenceType = step_field(required_in_steps=["format_daysim"])
-    income: int | None = step_field(ge=0, required_in_steps=[], default=None)
-    income_bin: IncomeBroad = step_field(required_in_steps=["imputation", "compute_weights"])
-    hh_weight: float | None = step_field(ge=0, required_in_steps=[])
-    num_vehicles: int = step_field(ge=0, required_in_steps=["compute_weights"])
-    complete: bool = step_field(required_in_steps=["compute_weights"])
+    hh_id: int = schema_field(ge=1, unique=True)
+    home_lat: float = schema_field(ge=-90, le=90)
+    home_lon: float = schema_field(ge=-180, le=180)
+    residence_rent_own: ResidenceRentOwn = schema_field()
+    residence_type: ResidenceType = schema_field()
+    income: int | None = schema_field(ge=0, default=None)
+    income_bin: IncomeBroad = schema_field()
+    hh_weight: float | None = schema_field(ge=0)
+    num_vehicles: int = schema_field(ge=0)
+    complete: bool = schema_field()
 
 
 class PersonModel(BaseModel):
     """Person attributes for tour building."""
 
-    person_id: int = step_field(ge=1, unique=True, required_in_steps=["extract_tours"])
-    hh_id: int = step_field(
+    person_id: int = schema_field(ge=1, unique=True)
+    hh_id: int = schema_field(
         ge=1,
         fk_to="households.hh_id",
         required_child=True,
     )
-    person_num: int = step_field(ge=1, required_in_steps=["format_ctramp", "format_daysim"])
-    age: AgeCategory = step_field(required_in_steps=["extract_tours", "imputation"])
-    gender: Gender = step_field(required_in_steps=["format_ctramp"])
+    person_num: int = schema_field(ge=1)
+    age: AgeCategory = schema_field()
+    gender: Gender = schema_field()
     # These fields can be None if person is not employed or in school
-    work_lat: float | None = step_field(ge=-90, le=90, required_in_steps=["extract_tours"])
-    work_lon: float | None = step_field(ge=-180, le=180, required_in_steps=["extract_tours"])
-    school_lat: float | None = step_field(ge=-90, le=90, required_in_steps=["extract_tours"])
-    school_lon: float | None = step_field(ge=-180, le=180, required_in_steps=["extract_tours"])
-    job_type: JobType | None = step_field(required_in_steps=["format_ctramp"], default=None)
-    employment: Employment = step_field(required_in_steps=["extract_tours"])
-    student: Student = step_field(required_in_steps=["extract_tours"])
-    school_type: SchoolType | None = step_field(required_in_steps=["extract_tours"])
-    work_park: WorkParking | None = step_field(required_in_steps=["format_daysim"])
-    work_mode: Mode | None = step_field(required_in_steps=["format_daysim"])
-    race: Race | None = step_field(default=None, required_in_steps=["imputation"])
-    ethnicity: Ethnicity | None = step_field(default=None, required_in_steps=["imputation"])
-    telework_freq: CommuteFreq | None = step_field(default=None, required_in_steps=[])
-    commute_freq: CommuteFreq | None = step_field(default=None, required_in_steps=[])
+    work_lat: float | None = schema_field(ge=-90, le=90)
+    work_lon: float | None = schema_field(ge=-180, le=180)
+    school_lat: float | None = schema_field(ge=-90, le=90)
+    school_lon: float | None = schema_field(ge=-180, le=180)
+    job_type: JobType | None = schema_field(default=None)
+    employment: Employment = schema_field()
+    student: Student = schema_field()
+    school_type: SchoolType | None = schema_field()
+    work_park: WorkParking | None = schema_field()
+    work_mode: Mode | None = schema_field()
+    race: Race = schema_field()
+    ethnicity: Ethnicity = schema_field()
+    telework_freq: CommuteFreq | None = schema_field(default=None)
+    commute_freq: CommuteFreq | None = schema_field(default=None)
     # NOTE: These commute subsidy fields are only used in CTRAMP format
     # But might be useful elsewhere, consider standardizing to be less vague
     # and/or moved into a data model extension.
-    commute_subsidy_use_3: BooleanYesNo | None = step_field(
-        default=None, required_in_steps=["format_ctramp"]
-    )
-    commute_subsidy_use_4: BooleanYesNo | None = step_field(
-        default=None, required_in_steps=["format_ctramp"]
-    )
+    commute_subsidy_use_3: BooleanYesNo | None = schema_field(default=None)
+    commute_subsidy_use_4: BooleanYesNo | None = schema_field(default=None)
     # NOTE: is proxy is vague.
     # Better and more flexible would be to have proxy_person_id on the proxied person
     # This allows for multiple proxy reporters and is more explicit.
-    is_proxy: bool | None = step_field(default=None, required_in_steps=["format_daysim"])
-    num_days_complete: int = step_field(ge=0, default=0)
-    complete: bool | None = step_field(default=None, required_in_steps=["compute_weights"])
-    person_weight: float | None = step_field(default=None, ge=0, required_in_steps=[])
+    is_proxy: bool | None = schema_field(default=None)
+    num_days_complete: int = schema_field(ge=0, default=0)
+    complete: bool | None = schema_field(default=None)
+    person_weight: float | None = schema_field(default=None, ge=0)
 
 
 class PersonDayModel(BaseModel):
     """Daily activity pattern summary with clear purpose-specific counts."""
 
-    person_id: int = step_field(
+    person_id: int = schema_field(
         ge=1,
         fk_to="persons.person_id",
         required_child=True,
     )
-    day_id: int = step_field(ge=1, unique=True)
-    hh_id: int = step_field(ge=1, fk_to="households.hh_id")
-    travel_date: datetime = step_field(required_in_steps=[])
-    travel_dow: TravelDow = step_field(required_in_steps=["format_daysim"])
-    complete: bool | None = step_field(default=False, required_in_steps=["compute_weights"])
-    day_weight: float | None = step_field(default=None, ge=0, required_in_steps=[])
+    day_id: int = schema_field(ge=1, unique=True)
+    hh_id: int = schema_field(ge=1, fk_to="households.hh_id")
+    travel_date: datetime = schema_field()
+    travel_dow: TravelDow = schema_field()
+    complete: bool | None = schema_field(default=False)
+    day_weight: float | None = schema_field(default=None, ge=0)
 
 
 class UnlinkedTripModel(BaseModel):
     """Trip data model for validation."""
 
-    unlinked_trip_id: int = step_field(ge=1, unique=True)
-    day_id: int = step_field(
-        ge=1, fk_to="days.day_id", required_in_steps=["link_trips", "extract_tours"]
-    )
-    person_id: int = step_field(ge=1, fk_to="persons.person_id")
-    hh_id: int = step_field(ge=1, fk_to="households.hh_id")
-    linked_trip_id: int = step_field(
-        ge=1,
-        fk_to="linked_trips.linked_trip_id",
-        required_in_steps=["extract_tours"],
-    )
-    tour_id: int | None = step_field(
-        ge=1,
-        fk_to="tours.tour_id",
-        required_in_steps=["format_daysim"],
-    )
-    o_lon: float = step_field(ge=-180, le=180, required_in_steps=["link_trips"])
-    o_lat: float = step_field(ge=-90, le=90, required_in_steps=["link_trips"])
-    d_lon: float = step_field(ge=-180, le=180, required_in_steps=["link_trips"])
-    d_lat: float = step_field(ge=-90, le=90, required_in_steps=["link_trips"])
+    unlinked_trip_id: int = schema_field(ge=1, unique=True)
+    day_id: int = schema_field(ge=1, fk_to="days.day_id")
+    person_id: int = schema_field(ge=1, fk_to="persons.person_id")
+    hh_id: int = schema_field(ge=1, fk_to="households.hh_id")
+    linked_trip_id: int = schema_field(ge=1, fk_to="linked_trips.linked_trip_id")
+    tour_id: int | None = schema_field(ge=1, fk_to="tours.tour_id")
+    o_lon: float = schema_field(ge=-180, le=180)
+    o_lat: float = schema_field(ge=-90, le=90)
+    d_lon: float = schema_field(ge=-180, le=180)
+    d_lat: float = schema_field(ge=-90, le=90)
     o_purpose: Purpose
     d_purpose: Purpose
-    o_purpose_category: PurposeCategory = step_field(required_in_steps=["link_trips"])
-    d_purpose_category: PurposeCategory = step_field(required_in_steps=["link_trips"])
-    mode_type: ModeType = step_field(required_in_steps=["link_trips"])
+    o_purpose_category: PurposeCategory = schema_field()
+    d_purpose_category: PurposeCategory = schema_field()
+    mode_type: ModeType = schema_field()
     mode_1: Mode | None
     mode_2: Mode | None
     mode_3: Mode | None
     mode_4: Mode | None
-    duration_minutes: float = step_field(ge=0)
-    distance_meters: float = step_field(ge=0)
-
-    depart_time: datetime | None = step_field(required_in_steps=["link_trips", "extract_tours"])
-    arrive_time: datetime | None = step_field(required_in_steps=["link_trips", "extract_tours"])
-    num_travelers: int = step_field(ge=1)
-    complete: bool | None = step_field(default=None, required_in_steps=["compute_weights"])
-    unlinked_trip_weight: float | None = step_field(default=None, ge=0, required_in_steps=[])
+    duration_minutes: float = schema_field(ge=0)
+    distance_meters: float = schema_field(ge=0)
+    depart_time: datetime | None = schema_field()
+    arrive_time: datetime | None = schema_field()
+    num_travelers: int = schema_field(ge=1)
+    complete: bool | None = schema_field(default=None)
+    unlinked_trip_weight: float | None = schema_field(default=None, ge=0)
 
     # You can add custom row-level validators here
     # Don't confuse with the constom DataFrame-level validators elsewhere
@@ -183,96 +168,89 @@ class UnlinkedTripModel(BaseModel):
 class LinkedTripModel(BaseModel):
     """Linked Trip data model for validation."""
 
-    day_id: int = step_field(ge=1, fk_to="days.day_id", required_in_steps=["extract_tours"])
-    person_id: int = step_field(ge=1, fk_to="persons.person_id")
-    hh_id: int = step_field(ge=1, fk_to="households.hh_id")
+    day_id: int = schema_field(ge=1, fk_to="days.day_id")
+    person_id: int = schema_field(ge=1, fk_to="persons.person_id")
+    hh_id: int = schema_field(ge=1, fk_to="households.hh_id")
 
-    linked_trip_id: int = step_field(ge=1, unique=True)
-    joint_trip_id: int | None = step_field(
+    linked_trip_id: int = schema_field(ge=1, unique=True)
+    joint_trip_id: int | None = schema_field(
         ge=1,
         fk_to="joint_trips.joint_trip_id",
-        required_in_steps=["extract_tours"],
         default=None,
     )
-    tour_id: int = step_field(ge=1, fk_to="tours.tour_id", required_in_steps=["format_daysim"])
-    travel_dow: TravelDow = step_field(required_in_steps=["extract_tours"])
-    o_purpose: Purpose = step_field(required_in_steps=["format_ctramp"])
-    o_purpose_category: PurposeCategory = step_field()
-    o_lat: float = step_field(ge=-90, le=90, required_in_steps=["detect_joint_trips"])
-    o_lon: float = step_field(ge=-180, le=180, required_in_steps=["detect_joint_trips"])
-    d_purpose: Purpose = step_field(required_in_steps=["format_ctramp"])
-    d_purpose_category: PurposeCategory = step_field(required_in_steps=["extract_tours"])
-    d_lat: float = step_field(ge=-90, le=90, required_in_steps=["detect_joint_trips"])
-    d_lon: float = step_field(ge=-180, le=180, required_in_steps=["detect_joint_trips"])
-    mode_type: ModeType = step_field(required_in_steps=["extract_tours"])
-    driver: Driver = step_field(required_in_steps=["link_trips", "format_daysim"])
-    num_travelers: int = step_field(ge=1)
-    access_mode: AccessEgressMode | None = step_field(
-        required_in_steps=["format_daysim", "format_ctramp"], default=None
-    )
-    egress_mode: AccessEgressMode | None = step_field(
-        required_in_steps=["format_daysim", "format_ctramp"], default=None
-    )
 
-    duration_minutes: float = step_field(ge=0)
-    distance_meters: float = step_field(ge=0)
-    depart_time: datetime = step_field(required_in_steps=["detect_joint_trips"])
-    arrive_time: datetime = step_field(required_in_steps=["detect_joint_trips"])
-    tour_direction: TourDirection = step_field(required_in_steps=["format_daysim"])
-    complete: bool | None = step_field(default=None, required_in_steps=["compute_weights"])
-    linked_trip_weight: float | None = step_field(default=None, ge=0, required_in_steps=[])
+    tour_id: int = schema_field(ge=1, fk_to="tours.tour_id")
+    travel_dow: TravelDow = schema_field()
+    o_purpose: Purpose = schema_field()
+    o_purpose_category: PurposeCategory = schema_field()
+    o_lat: float = schema_field(ge=-90, le=90)
+    o_lon: float = schema_field(ge=-180, le=180)
+    d_purpose: Purpose = schema_field()
+    d_purpose_category: PurposeCategory = schema_field()
+    d_lat: float = schema_field(ge=-90, le=90)
+    d_lon: float = schema_field(ge=-180, le=180)
+    mode_type: ModeType = schema_field()
+    driver: Driver = schema_field()
+    num_travelers: int = schema_field(ge=1)
+    access_mode: AccessEgressMode | None = schema_field(default=None)
+    egress_mode: AccessEgressMode | None = schema_field(default=None)
+    duration_minutes: float = schema_field(ge=0)
+    distance_meters: float = schema_field(ge=0)
+    depart_time: datetime = schema_field()
+    arrive_time: datetime = schema_field()
+    tour_direction: TourDirection = schema_field()
+    complete: bool | None = schema_field(default=None)
+    linked_trip_weight: float | None = schema_field(default=None, ge=0)
 
 
 class TourModel(BaseModel):
-    """Tour-level records with clear, descriptive step_field names."""
+    """Tour-level records with clear, descriptive schema_field names."""
 
-    tour_id: int = step_field(ge=1, unique=True)
-    hh_id: int = step_field(ge=1, fk_to="households.hh_id")
-    person_id: int = step_field(ge=1, fk_to="persons.person_id")
-    day_id: int = step_field(ge=1, fk_to="days.day_id")
-    tour_num: int = step_field(ge=1)
-    subtour_num: int = step_field(ge=0)
-    parent_tour_id: int = step_field(ge=1, fk_to="tours.tour_id")
-    joint_tour_id: int | None = step_field(ge=1, default=None)
+    tour_id: int = schema_field(ge=1, unique=True)
+    hh_id: int = schema_field(ge=1, fk_to="households.hh_id")
+    person_id: int = schema_field(ge=1, fk_to="persons.person_id")
+    day_id: int = schema_field(ge=1, fk_to="days.day_id")
+    tour_num: int = schema_field(ge=1)
+    subtour_num: int = schema_field(ge=0)
+    parent_tour_id: int = schema_field(ge=1, fk_to="tours.tour_id")
+    joint_tour_id: int | None = schema_field(ge=1, default=None)
 
-    tour_purpose: PurposeCategory | None = step_field(default=None)
-    tour_category: TourCategory = step_field()
-    single_trip_tour: bool = step_field(default=False)
+    tour_purpose: PurposeCategory | None = schema_field(default=None)
+    tour_category: TourCategory = schema_field()
+    single_trip_tour: bool = schema_field(default=False)
 
     # Timing
-    origin_depart_time: datetime = step_field()
-    origin_arrive_time: datetime = step_field()
-    dest_arrive_time: datetime | None = step_field(default=None)
-    dest_depart_time: datetime | None = step_field(default=None)
+    origin_depart_time: datetime = schema_field()
+    origin_arrive_time: datetime = schema_field()
+    dest_arrive_time: datetime | None = schema_field(default=None)
+    dest_depart_time: datetime | None = schema_field(default=None)
 
     # Helpful foreign keys to linked trips
-    origin_linked_trip_id: int = step_field(
+    origin_linked_trip_id: int = schema_field(
         ge=1,
         fk_to="linked_trips.linked_trip_id",
-        required_in_steps=["format_daysim"],
     )
-    dest_linked_trip_id: int | None = step_field(
+    dest_linked_trip_id: int | None = schema_field(
         ge=1,
         fk_to="linked_trips.linked_trip_id",
-        required_in_steps=["format_daysim"],
         default=None,
     )
 
     # Locations
-    o_lat: float = step_field(ge=-90, le=90)
-    o_lon: float = step_field(ge=-180, le=180)
-    d_lat: float = step_field(ge=-90, le=90)
-    d_lon: float = step_field(ge=-180, le=180)
-    o_location_type: LocationType = step_field()
-    d_location_type: LocationType = step_field()
+    o_lat: float = schema_field(ge=-90, le=90)
+    o_lon: float = schema_field(ge=-180, le=180)
+    d_lat: float = schema_field(ge=-90, le=90)
+    d_lon: float = schema_field(ge=-180, le=180)
+    o_location_type: LocationType = schema_field()
+    d_location_type: LocationType = schema_field()
 
     # Mode hierarchical
-    tour_mode: ModeType = step_field()
-    outbound_mode: ModeType | None = step_field()
-    inbound_mode: ModeType | None = step_field()
-    num_travelers: int = step_field(ge=1, required_in_steps=["format_ctramp"], default=1)
-    complete: bool | None = step_field(default=None, required_in_steps=["compute_weights"])
-    tour_weight: float | None = step_field(default=None, ge=0)
+    tour_mode: ModeType = schema_field()
+    outbound_mode: ModeType | None = schema_field()
+    inbound_mode: ModeType | None = schema_field()
+    num_travelers: int = schema_field(ge=1, default=1)
+    complete: bool | None = schema_field(default=None)
+    tour_weight: float | None = schema_field(default=None, ge=0)
 
     @model_validator(mode="after")
     def validate_complete_tours(self) -> "TourModel":
@@ -308,29 +286,29 @@ class JointTripModel(BaseModel):
     attributes from its member trips.
     """
 
-    joint_trip_id: int = step_field(ge=1, unique=True)
-    hh_id: int = step_field(ge=1, fk_to="households.hh_id")
-    day_id: int = step_field(ge=1, fk_to="days.day_id")
-    num_joint_travelers: int = step_field(
+    joint_trip_id: int = schema_field(ge=1, unique=True)
+    hh_id: int = schema_field(ge=1, fk_to="households.hh_id")
+    day_id: int = schema_field(ge=1, fk_to="days.day_id")
+    num_joint_travelers: int = schema_field(
         ge=2, description="Number of travelers in this joint trip"
     )
-    o_lat_mean: float = step_field(
+    o_lat_mean: float = schema_field(
         ge=-90, le=90, description="Mean origin latitude across member trips"
     )
-    o_lon_mean: float = step_field(
+    o_lon_mean: float = schema_field(
         ge=-180, le=180, description="Mean origin longitude across member trips"
     )
-    d_lat_mean: float = step_field(
+    d_lat_mean: float = schema_field(
         ge=-90,
         le=90,
         description="Mean destination latitude across member trips",
     )
-    d_lon_mean: float = step_field(
+    d_lon_mean: float = schema_field(
         ge=-180,
         le=180,
         description="Mean destination longitude across member trips",
     )
-    depart_time_mean: datetime = step_field(description="Mean departure time across member trips")
-    depart_arrive_mean: datetime = step_field(description="Mean arrival time across member trips")
-    complete: bool | None = step_field(default=None, required_in_steps=["compute_weights"])
-    joint_trip_weight: float | None = step_field(default=None, ge=0, required_in_steps=[])
+    depart_time_mean: datetime = schema_field(description="Mean departure time across member trips")
+    depart_arrive_mean: datetime = schema_field(description="Mean arrival time across member trips")
+    complete: bool | None = schema_field(default=None)
+    joint_trip_weight: float | None = schema_field(default=None, ge=0)

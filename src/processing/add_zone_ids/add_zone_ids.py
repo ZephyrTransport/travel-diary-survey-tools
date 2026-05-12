@@ -56,7 +56,15 @@ def add_zone_to_dataframe(
     return df_joined
 
 
-@step()
+@step(
+    requires={
+        "households": {"hh_id", "home_lon", "home_lat"},
+        "persons": {"person_id", "work_lon", "work_lat", "school_lon", "school_lat"},
+        "unlinked_trips": {"unlinked_trip_id", "o_lon", "o_lat", "d_lon", "d_lat"},
+        "linked_trips": {"linked_trip_id", "o_lon", "o_lat", "d_lon", "d_lat"},
+        "tours": {"tour_id", "o_lon", "o_lat", "d_lon", "d_lat"},
+    },
+)
 def add_zone_ids(
     zone_geographies: list[dict],
     households: pl.DataFrame | None = None,

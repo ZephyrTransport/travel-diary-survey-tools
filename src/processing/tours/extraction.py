@@ -114,7 +114,35 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-@step()
+@step(
+    requires={
+        "households": {"hh_id", "home_lat", "home_lon"},
+        "persons": {
+            "person_id",
+            "age",
+            "employment",
+            "student",
+            "school_type",
+            "work_lat",
+            "work_lon",
+            "school_lat",
+            "school_lon",
+        },
+        "unlinked_trips": {"day_id", "linked_trip_id", "depart_time", "arrive_time"},
+        "linked_trips": {
+            "day_id",
+            "joint_trip_id",
+            "travel_dow",
+            "d_purpose_category",
+            "mode_type",
+        },
+    },
+    produces={
+        "unlinked_trips": {"tour_id"},
+        "linked_trips": {"tour_id"},
+        "tours": {"tour_id"},
+    },
+)
 def extract_tours(
     persons: pl.DataFrame,
     households: pl.DataFrame,

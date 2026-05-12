@@ -1,4 +1,4 @@
-# Codebook
+# Enum Reference
 
 The codebook modules define enumerated value labels and standardized coding schemes used throughout the survey processing pipeline.
 

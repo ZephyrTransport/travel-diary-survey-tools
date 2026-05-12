@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block htmltitle %}
+{{ super() }}
+{% endblock %}
+{% block content %}
+{% if page.meta.body_class %}
+<div class="{{ page.meta.body_class }}">
+{{ super() }}
+</div>
+{% else %}
+{{ super() }}
+{% endif %}
+{% endblock %}

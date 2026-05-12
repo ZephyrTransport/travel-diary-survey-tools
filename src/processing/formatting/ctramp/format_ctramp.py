@@ -389,7 +389,24 @@ def _drop_excess_fields(
     return df.drop(cols_to_drop)
 
 
-@step()
+@step(
+    requires={
+        "persons": {
+            "person_num",
+            "gender",
+            "job_type",
+            "commute_subsidy_use_3",
+            "commute_subsidy_use_4",
+        },
+        "linked_trips": {
+            "o_purpose",
+            "d_purpose",
+            "access_mode",
+            "egress_mode",
+        },
+        "tours": {"num_travelers"},
+    },
+)
 def format_ctramp(
     persons: pl.DataFrame,
     households: pl.DataFrame,

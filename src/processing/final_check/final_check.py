@@ -53,7 +53,7 @@ import logging
 
 import polars as pl
 
-from pipeline import step
+from pipeline.decoration import step
 
 logger = logging.getLogger(__name__)
 

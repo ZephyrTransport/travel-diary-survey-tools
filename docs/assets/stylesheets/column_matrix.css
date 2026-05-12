@@ -1,0 +1,15 @@
+/* Column requirement matrix: wider content, compact table rows */
+.col-matrix .md-content {
+  max-width: 100%;
+}
+.col-matrix .md-sidebar--secondary {
+  display: none;
+}
+.col-matrix table {
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+.col-matrix table td,
+.col-matrix table th {
+  padding: 0.3em 0.6em;
+}
