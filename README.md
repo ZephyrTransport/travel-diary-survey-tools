@@ -589,4 +589,5 @@ pre-commit run --all-files
 
 ## License
 
-[Add license information here] :P
+This project is licensed under the GNU General Public License, version 3 or any later version.
+See [LICENSE](LICENSE) for the full license text.
