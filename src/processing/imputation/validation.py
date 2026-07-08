@@ -304,6 +304,7 @@ def validate_rf_imputation(
             random_state,
             numeric_features,
             categorical_features,
+            verbose=False,
         )
         return result
 

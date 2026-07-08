@@ -5,8 +5,9 @@ import polars as pl
 import pytest
 
 from processing.imputation.comparison import compare_imputation_methods
-from processing.imputation.flags import create_flag_column, create_flag_columns
+from processing.imputation.flags import stash_preimputed_column, stash_preimputed_columns
 from processing.imputation.impute_utils import (
+    build_feature_matrix,
     decode_dense_to_integer,
     encode_integer_categoricals,
     is_categorical,
@@ -319,12 +320,49 @@ class TestRandomForestImputation:
         with pytest.raises(ValueError, match="Column 'missing' not found"):
             impute_random_forest(df, "missing", numeric_features=["a"])
 
+    def test_rf_returns_feature_importance(self):
+        """RF stats should include feature_importance dict."""
+        rng = np.random.default_rng(42)
+        n = 50
+        df = pl.DataFrame(
+            {
+                "age": rng.normal(40, 10, size=n).tolist(),
+                "gender": rng.choice([1, 2], size=n).tolist(),
+                "income": pl.Series(
+                    "income",
+                    [*rng.choice([1, 2, 3], size=n - 3).tolist(), None, None, None],
+                    dtype=pl.Int64,
+                ),
+            }
+        )
 
-class TestFlagColumns:
-    """Tests for imputation flag columns."""
+        _, stats = impute_random_forest(
+            df,
+            "income",
+            n_estimators=50,
+            random_state=42,
+            numeric_features=["age"],
+            categorical_features=["gender"],
+        )
 
-    def test_create_single_flag_column(self):
-        """Should create flag column for imputed values."""
+        assert "feature_importance" in stats
+        fi = stats["feature_importance"]
+        assert isinstance(fi, dict)
+        # Should have age + gender (one-hot aggregated back)
+        assert "age" in fi
+        assert "gender" in fi
+        # Importances should sum to ~1.0
+        assert pytest.approx(sum(fi.values()), abs=0.01) == 1.0
+        # Should be sorted descending
+        values = list(fi.values())
+        assert values == sorted(values, reverse=True)
+
+
+class TestPreimputedStash:
+    """Tests for pre-imputation value stashing."""
+
+    def test_stash_single_column(self):
+        """Should stash original values including nulls."""
         original_df = pl.DataFrame(
             {
                 "id": [1, 2, 3],
@@ -339,13 +377,13 @@ class TestFlagColumns:
             }
         )
 
-        result_df = create_flag_column(imputed_df, original_df, "value")
+        result_df = stash_preimputed_column(imputed_df, original_df, "value")
 
-        assert "value_imputed" in result_df.columns
-        assert result_df["value_imputed"].to_list() == [False, True, False]
+        assert "value_preimputed" in result_df.columns
+        assert result_df["value_preimputed"].to_list() == [1.0, None, 3.0]
 
-    def test_create_multiple_flag_columns(self):
-        """Should create flag columns for multiple imputed columns."""
+    def test_stash_multiple_columns(self):
+        """Should stash original values for multiple columns."""
         original_df = pl.DataFrame(
             {
                 "col1": [1.0, None, 3.0],
@@ -360,12 +398,55 @@ class TestFlagColumns:
             }
         )
 
-        result_df = create_flag_columns(imputed_df, original_df, ["col1", "col2"])
+        result_df = stash_preimputed_columns(imputed_df, original_df, ["col1", "col2"])
 
-        assert "col1_imputed" in result_df.columns
-        assert "col2_imputed" in result_df.columns
-        assert result_df["col1_imputed"].to_list() == [False, True, False]
-        assert result_df["col2_imputed"].to_list() == [False, False, True]
+        assert "col1_preimputed" in result_df.columns
+        assert "col2_preimputed" in result_df.columns
+        assert result_df["col1_preimputed"].to_list() == [1.0, None, 3.0]
+        assert result_df["col2_preimputed"].to_list() == [10.0, 20.0, None]
+
+    def test_preimputed_recovers_boolean_flag(self):
+        """Boolean imputed flag should be derivable from preimputed column."""
+        original_df = pl.DataFrame(
+            {
+                "value": [1.0, None, 3.0, None],
+            }
+        )
+
+        imputed_df = pl.DataFrame(
+            {
+                "value": [1.0, 2.0, 3.0, 4.0],
+            }
+        )
+
+        result_df = stash_preimputed_column(imputed_df, original_df, "value")
+
+        # Derive the old boolean flag from the preimputed column
+        was_imputed = result_df["value_preimputed"].is_null() & result_df["value"].is_not_null()
+        assert was_imputed.to_list() == [False, True, False, True]
+
+    def test_preimputed_preserves_pnta_vs_null(self):
+        """Should distinguish PNTA (999) from genuine null."""
+        original_df = pl.DataFrame(
+            {
+                "income": [1, 999, None, 3, 995],
+            }
+        )
+
+        imputed_df = pl.DataFrame(
+            {
+                "income": [1, 2, 2, 3, 2],
+            }
+        )
+
+        result_df = stash_preimputed_column(imputed_df, original_df, "income")
+
+        stashed = result_df["income_preimputed"].to_list()
+        assert stashed[0] == 1  # unchanged
+        assert stashed[1] == 999  # PNTA preserved
+        assert stashed[2] is None  # genuine null preserved
+        assert stashed[3] == 3  # unchanged
+        assert stashed[4] == 995  # MISSING preserved
 
 
 class TestValidation:
@@ -633,6 +714,46 @@ class TestDenseIntegerEncoding:
         # ALL imputed values must be one of the valid original codes
         imputed_vals = set(result["cat"].to_list())
         assert imputed_vals.issubset({10, 20, 30})
+
+
+class TestBuildFeatureMatrix:
+    """Tests for build_feature_matrix feature name tracking."""
+
+    def test_returns_feature_names(self):
+        """Feature names should include continuous and one-hot encoded columns."""
+        df = pl.DataFrame(
+            {
+                "target": [1.0, 2.0, 3.0, 4.0],
+                "num_feat": [10.0, 20.0, 30.0, 40.0],
+                "cat_feat": [1, 2, 1, 2],
+            }
+        )
+
+        matrix, _indices, names = build_feature_matrix(
+            df,
+            target_columns=["target"],
+            numeric_features=["num_feat"],
+            categorical_features=["cat_feat"],
+        )
+
+        assert "num_feat" in names
+        assert "target" in names
+        assert "cat_feat=1" in names
+        assert "cat_feat=2" in names
+        assert len(names) == matrix.shape[1]
+
+    def test_feature_names_empty_categoricals(self):
+        """Should work with only numeric features."""
+        df = pl.DataFrame(
+            {
+                "target": [1.0, None, 3.0],
+                "feat": [10.0, 20.0, 30.0],
+            }
+        )
+
+        _, _, names = build_feature_matrix(df, ["target"], ["feat"], [])
+
+        assert names == ["feat", "target"]
 
 
 class TestMethodComparison:

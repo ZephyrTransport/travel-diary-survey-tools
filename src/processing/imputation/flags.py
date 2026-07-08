@@ -1,64 +1,67 @@
-"""Diagnostic flag columns for tracking imputed values.
+"""Stash pre-imputation values for auditing and downstream analysis.
 
-When ``create_flags=True`` (the default), the imputation step creates a
-boolean column for every imputed field::
+When ``stash_preimputed=True`` (the default), the imputation step copies the
+original column value *before* any transforms (missing-value replacement,
+imputation) into a companion column::
 
-    {column}_imputed   - True if the value was filled in, False otherwise
+    {column}_preimputed   - original value (null, PNTA 999, MISSING 995, etc.)
 
-Examples: ``mode_imputed``, ``distance_imputed``, ``age_imputed``.
+Examples: ``mode_preimputed``, ``income_broad_preimputed``, ``gender_preimputed``.
 
-Use cases:
+This preserves the full original value so downstream consumers can distinguish
+between genuinely missing data (null), "Prefer Not To Answer" (e.g. 999),
+"Missing Response" (e.g. 995), or any other substantive value that was
+overwritten during imputation.
 
-* **Quality control**: identify records that contain imputed values.
-* **Sensitivity analysis**: compare results with vs. without imputed records.
-* **Downstream modelling**: include imputation status as a feature.
+To recover the old boolean "was this imputed?" flag::
+
+    was_imputed = df[col + "_preimputed"].is_null() & df[col].is_not_null()
 """
 
 import polars as pl
 
 
-def create_flag_column(
+def stash_preimputed_column(
     df: pl.DataFrame,
     original_df: pl.DataFrame,
     column: str,
 ) -> pl.DataFrame:
-    """Create a boolean flag column indicating which values were imputed.
+    """Copy the pre-imputation value of *column* from *original_df* onto *df*.
+
+    The stashed column is named ``{column}_preimputed`` and has the same
+    dtype as the original.  It captures the value **before**
+    ``prepare_column_for_imputation`` converted sentinel codes to null,
+    so PNTA / MISSING codes are preserved.
 
     Args:
-        df: DataFrame with imputed values
-        original_df: Original DataFrame before imputation
-        column: Name of the column that was imputed
+        df: DataFrame with imputed values.
+        original_df: Original DataFrame before imputation.
+        column: Name of the column that was imputed.
 
     Returns:
-        DataFrame with added flag column named '{column}_imputed'
+        DataFrame with added ``{column}_preimputed`` column.
     """
-    flag_name = f"{column}_imputed"
-
-    # Check if column was null in original and is not null in imputed
-    was_null = original_df[column].is_null()
-    is_not_null = df[column].is_not_null()
-    imputed_flag = was_null & is_not_null
-
-    return df.with_columns(imputed_flag.alias(flag_name))
+    stash_name = f"{column}_preimputed"
+    return df.with_columns(original_df[column].alias(stash_name))
 
 
-def create_flag_columns(
+def stash_preimputed_columns(
     df: pl.DataFrame,
     original_df: pl.DataFrame,
     columns: list[str],
 ) -> pl.DataFrame:
-    """Create boolean flag columns for multiple imputed columns.
+    """Stash pre-imputation values for multiple columns.
 
     Args:
-        df: DataFrame with imputed values
-        original_df: Original DataFrame before imputation
-        columns: List of column names that were imputed
+        df: DataFrame with imputed values.
+        original_df: Original DataFrame before imputation.
+        columns: List of column names that were imputed.
 
     Returns:
-        DataFrame with added flag columns named '{column}_imputed'
+        DataFrame with added ``{column}_preimputed`` columns.
     """
     result_df = df
     for col in columns:
         if col in df.columns and col in original_df.columns:
-            result_df = create_flag_column(result_df, original_df, col)
+            result_df = stash_preimputed_column(result_df, original_df, col)
     return result_df

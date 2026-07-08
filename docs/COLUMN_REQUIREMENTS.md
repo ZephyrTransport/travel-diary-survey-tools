@@ -51,8 +51,8 @@ Each tab shows the fields for one canonical table. Only steps that reference the
     | `school_type` | SchoolType or None |  | ✓ |  |  |  |
     | `work_park` | WorkParking or None |  |  |  |  | ✓ |
     | `work_mode` | Mode or None |  |  |  |  | ✓ |
-    | `race` | Race |  |  |  |  |  |
-    | `ethnicity` | Ethnicity |  |  |  |  |  |
+    | `race` | Race or None |  |  |  |  |  |
+    | `ethnicity` | Ethnicity or None |  |  |  |  |  |
     | `telework_freq` | CommuteFreq or None |  |  |  |  |  |
     | `commute_freq` | CommuteFreq or None |  |  |  |  |  |
     | `commute_subsidy_use_3` | BooleanYesNo or None |  |  |  | ✓ |  |

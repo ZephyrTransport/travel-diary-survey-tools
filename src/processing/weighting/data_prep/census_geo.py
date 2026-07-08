@@ -11,8 +11,10 @@ Processed GeoDataFrames are cached as GeoParquet under
 """
 
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Any
 
 import geopandas as gpd
 import pygris
@@ -20,6 +22,8 @@ import requests
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
+
+_KEY_SIGNUP_URL = "https://api.census.gov/data/key_signup.html"
 
 # Explicit column mappings per decennial vintage.
 _PUMA_ID = {2020: "PUMACE20", 2010: "PUMACE10"}
@@ -55,6 +59,61 @@ def puma_vintage_for_pums_year(pums_year: int) -> int:
 # ---------------------------------------------------------------------------
 
 
+def _census_api_key() -> str:
+    """Return the Census data-API key from the environment.
+
+    The Census data API requires a key on every request; a keyless request
+    is redirected to an HTML "Missing Key" page (HTTP 200), which is not
+    valid JSON.  Sign up (free, instant) at ``_KEY_SIGNUP_URL`` and set
+    ``CENSUS_KEY`` (or ``CENSUS_API_KEY``) in the environment or a ``.env``
+    file loaded by the runner script.
+    """
+    key = os.environ.get("CENSUS_KEY") or os.environ.get("CENSUS_API_KEY")
+    if not key:
+        msg = (
+            "Census API key not found. The Census data API requires a key for "
+            "every request.\n"
+            f"  1. Sign up (free, instant): {_KEY_SIGNUP_URL}\n"
+            "  2. Set CENSUS_KEY in your environment or .env file "
+            "(the runner scripts call load_dotenv())."
+        )
+        raise RuntimeError(msg)
+    return key
+
+
+def _census_json(resp: requests.Response) -> Any:  # noqa: ANN401
+    """Return parsed JSON from a Census API response, or a clear error.
+
+    A missing/invalid key makes the Census API return an HTML "Missing Key"
+    page with HTTP 200, so ``raise_for_status()`` passes but ``resp.json()``
+    fails with an opaque ``JSONDecodeError``.  This helper detects that case
+    (and any other non-JSON body) and raises an actionable ``RuntimeError``.
+    """
+    resp.raise_for_status()
+    content_type = resp.headers.get("Content-Type", "")
+    if "missing_key" in resp.url or "json" not in content_type.lower():
+        reason = (
+            "invalid or missing API key"
+            if "missing_key" in resp.url
+            else f"non-JSON response ({content_type or 'unknown content-type'})"
+        )
+        msg = (
+            f"Census API request failed: {reason}.\n"
+            f"  URL: {resp.url}\n"
+            f"  Ensure CENSUS_KEY is set to a valid key (sign up: {_KEY_SIGNUP_URL})."
+        )
+        raise RuntimeError(msg)
+    try:
+        return resp.json()
+    except ValueError as e:  # requests raises a JSONDecodeError subclass of ValueError
+        msg = (
+            f"Census API returned a body that could not be parsed as JSON.\n"
+            f"  URL: {resp.url}\n"
+            f"  Parse error: {e}"
+        )
+        raise RuntimeError(msg) from e
+
+
 def _parse_block_response(data: list[list[str]], pop_var: str) -> dict[str, int]:
     """Parse a Census API JSON response into ``{geoid: population}``."""
     header, *rows = data
@@ -68,6 +127,7 @@ def _fetch_county_blocks(
     pop_var: str,
     state_fips: str,
     county: str,
+    key: str,
 ) -> dict[str, int]:
     """Fetch block population for a single county."""
     r = requests.get(
@@ -76,11 +136,11 @@ def _fetch_county_blocks(
             "get": pop_var,
             "for": "block:*",
             "in": f"state:{state_fips} county:{county}",
+            "key": key,
         },
         timeout=120,
     )
-    r.raise_for_status()
-    return _parse_block_response(r.json(), pop_var)
+    return _parse_block_response(_census_json(r), pop_var)
 
 
 def _fetch_block_population(state_fips: str, vintage: int) -> dict[str, int]:
@@ -93,6 +153,7 @@ def _fetch_block_population(state_fips: str, vintage: int) -> dict[str, int]:
     Returns ``{geoid: population}`` for every block in *state_fips*.
     """
     url, pop_var = _BLOCK_POP_API[vintage]
+    key = _census_api_key()
     logger.info(
         "Fetching %d decennial block population for state %s from Census API",
         vintage,
@@ -107,30 +168,30 @@ def _fetch_block_population(state_fips: str, vintage: int) -> dict[str, int]:
                 "get": pop_var,
                 "for": "block:*",
                 "in": f"state:{state_fips} county:* tract:*",
+                "key": key,
             },
             timeout=300,
         )
-        resp.raise_for_status()
-        result = _parse_block_response(resp.json(), pop_var)
+        result = _parse_block_response(_census_json(resp), pop_var)
         logger.info("Fetched population for %d blocks", len(result))
         return result
 
     # 2010 SF1 requires county-by-county iteration.
     resp = requests.get(
         url,
-        params={"get": "NAME", "for": "county:*", "in": f"state:{state_fips}"},
+        params={"get": "NAME", "for": "county:*", "in": f"state:{state_fips}", "key": key},
         timeout=60,
     )
-    resp.raise_for_status()
-    co_i = resp.json()[0].index("county")
-    counties = [r[co_i] for r in resp.json()[1:]]
+    county_data = _census_json(resp)
+    co_i = county_data[0].index("county")
+    counties = [r[co_i] for r in county_data[1:]]
     logger.info("Fetching blocks for %d counties in state %s", len(counties), state_fips)
 
     result: dict[str, int] = {}
     block_count = 0
     with ThreadPoolExecutor(max_workers=8) as pool:
         futures = {
-            pool.submit(_fetch_county_blocks, url, pop_var, state_fips, c): c for c in counties
+            pool.submit(_fetch_county_blocks, url, pop_var, state_fips, c, key): c for c in counties
         }
         with tqdm(total=len(counties), unit="county") as pbar:
             for future in as_completed(futures):

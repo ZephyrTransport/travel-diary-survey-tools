@@ -79,8 +79,8 @@ class PersonModel(BaseModel):
     school_type: SchoolType | None = schema_field()
     work_park: WorkParking | None = schema_field()
     work_mode: Mode | None = schema_field()
-    race: Race = schema_field()
-    ethnicity: Ethnicity = schema_field()
+    race: Race | None = schema_field(default=None)
+    ethnicity: Ethnicity | None = schema_field(default=None)
     telework_freq: CommuteFreq | None = schema_field(default=None)
     commute_freq: CommuteFreq | None = schema_field(default=None)
     # NOTE: These commute subsidy fields are only used in CTRAMP format

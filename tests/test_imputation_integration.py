@@ -2,7 +2,7 @@
 
 import polars as pl
 
-from processing.imputation.flags import create_flag_columns
+from processing.imputation.flags import stash_preimputed_columns
 from processing.imputation.knn import impute_knn
 from processing.imputation.mice import impute_mice
 from processing.imputation.validation import validate_knn_imputation, validate_mice_imputation
@@ -34,10 +34,11 @@ def test_imputation_step_knn_no_validation():
     assert result_df["mode"].null_count() == 0
     assert stats["n_imputed"] == 2
 
-    # Create flags
-    result_df = create_flag_columns(result_df, original_df, ["mode"])
-    assert "mode_imputed" in result_df.columns
-    assert result_df["mode_imputed"].sum() == 2
+    # Stash pre-imputation values
+    result_df = stash_preimputed_columns(result_df, original_df, ["mode"])
+    assert "mode_preimputed" in result_df.columns
+    # Original had 2 nulls — those should be None in the stashed column
+    assert result_df["mode_preimputed"].null_count() == 2
 
 
 def test_imputation_step_mice_no_validation():
@@ -67,10 +68,10 @@ def test_imputation_step_mice_no_validation():
     assert stats["col1"]["n_imputed"] == 2
     assert stats["col2"]["n_imputed"] == 1
 
-    # Create flags
-    result_df = create_flag_columns(result_df, original_df, ["col1", "col2"])
-    assert "col1_imputed" in result_df.columns
-    assert "col2_imputed" in result_df.columns
+    # Stash pre-imputation values
+    result_df = stash_preimputed_columns(result_df, original_df, ["col1", "col2"])
+    assert "col1_preimputed" in result_df.columns
+    assert "col2_preimputed" in result_df.columns
 
 
 def test_knn_with_validation_quality():

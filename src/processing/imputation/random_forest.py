@@ -18,7 +18,7 @@ from .impute_utils import (
 logger = logging.getLogger(__name__)
 
 
-def impute_random_forest(
+def impute_random_forest(  # noqa: PLR0915
     df: pl.DataFrame,
     column: str,
     n_estimators: int = 100,
@@ -26,6 +26,7 @@ def impute_random_forest(
     random_state: int | None = None,
     numeric_features: list[str] | None = None,
     categorical_features: list[str] | None = None,
+    verbose: bool = True,
 ) -> tuple[pl.DataFrame, dict[str, Any]]:
     """Impute missing values in a single column using Random Forest.
 
@@ -64,10 +65,15 @@ def impute_random_forest(
         random_state: Random seed for reproducibility.
         numeric_features: Numeric/continuous feature columns.
         categorical_features: Categorical feature columns (one-hot encoded).
+        verbose: If True, logs top features by importance.
 
     Returns:
         Tuple of (imputed DataFrame, stats dict).  The stats dict contains
-        ``n_missing``, ``n_imputed``, and ``pct_imputed``.
+        ``n_missing``, ``n_imputed``, ``pct_imputed``, and
+        ``feature_importance`` (a ``dict[str, float]`` mapping each input
+        feature to its Mean Decrease in Impurity score, sorted descending).
+        See the *Feature Importance* section in ``docs/pipeline_steps/imputation.md``
+        for interpretation guidance.
     """
     if column not in df.columns:
         msg = f"Column '{column}' not found in DataFrame"
@@ -93,7 +99,7 @@ def impute_random_forest(
     df_work, int_encodings = encode_integer_categoricals(df, [column])
 
     # Build feature matrix (shared helper)
-    feature_matrix, column_indices = build_feature_matrix(
+    feature_matrix, column_indices, feature_names = build_feature_matrix(
         df_work, [column], numeric_features or [], categorical_features or []
     )
     target_idx = column_indices[column]
@@ -105,6 +111,7 @@ def impute_random_forest(
 
     # Build X (all columns except target) and y (target) for training
     feature_cols = [i for i in range(feature_matrix.shape[1]) if i != target_idx]
+    x_feature_names = [feature_names[i] for i in feature_cols]
     x_all = feature_matrix[:, feature_cols]
 
     # Replace NaN in features with column medians (RF can't handle NaN)
@@ -137,6 +144,23 @@ def impute_random_forest(
     model.fit(x_train, y_train)
     predicted = model.predict(x_predict)
 
+    # Extract feature importance (MDI) and aggregate one-hot columns
+    raw_importances = dict(zip(x_feature_names, model.feature_importances_, strict=False))
+    aggregated: dict[str, float] = {}
+    for fname, imp in raw_importances.items():
+        parent = fname.split("=", 1)[0] if "=" in fname else fname
+        aggregated[parent] = aggregated.get(parent, 0.0) + imp
+    feature_importance = dict(sorted(aggregated.items(), key=lambda x: x[1], reverse=True))
+
+    if feature_importance and verbose:
+        top = list(feature_importance.items())[:5]
+        lines = [f"  {i}. {name:<20s} {imp:.3f}" for i, (name, imp) in enumerate(top, 1)]
+        logger.info(
+            "Column '%s' (RF): Top features by importance\n%s",
+            column,
+            "\n".join(lines),
+        )
+
     # Reconstruct full column: keep originals, fill predictions
     full_values = target_values.copy()
     full_values[missing_mask] = predicted
@@ -154,4 +178,5 @@ def impute_random_forest(
         "n_missing": n_missing,
         "n_imputed": n_missing,
         "pct_imputed": pct_imputed,
+        "feature_importance": feature_importance,
     }

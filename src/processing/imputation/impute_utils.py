@@ -348,7 +348,7 @@ def build_feature_matrix(
     target_columns: list[str],
     numeric_features: list[str],
     categorical_features: list[str],
-) -> tuple[np.ndarray, dict[str, int]]:
+) -> tuple[np.ndarray, dict[str, int], list[str]]:
     """Build a numpy feature matrix for imputation algorithms.
 
     Constructs a matrix from:
@@ -368,10 +368,13 @@ def build_feature_matrix(
         categorical_features: Categorical feature column names (one-hot encoded)
 
     Returns:
-        ``(matrix, column_indices)`` where *column_indices* maps each target
-        column name to its column offset in *matrix*.
+        ``(matrix, column_indices, feature_names)`` where *column_indices*
+        maps each target column name to its column offset in *matrix*, and
+        *feature_names* lists all column names in matrix order.  One-hot
+        encoded columns are named ``{cat_col}={value}``.
     """
     matrices: list[np.ndarray] = []
+    feature_names: list[str] = []
 
     # Continuous features (deduped, order-preserving)
     continuous = list(
@@ -385,6 +388,7 @@ def build_feature_matrix(
 
     if continuous:
         matrices.append(df.select(continuous).to_numpy())
+        feature_names.extend(continuous)
 
     column_indices = {col: continuous.index(col) for col in target_columns if col in continuous}
 
@@ -397,16 +401,17 @@ def build_feature_matrix(
 
     for cat_col in categorical:
         unique_vals = df[cat_col].drop_nulls().unique().sort().to_list()
-        matrices.extend(
-            (df[cat_col] == val).cast(pl.Float64).to_numpy().reshape(-1, 1) for val in unique_vals
-        )
+        for val in unique_vals:
+            matrices.append((df[cat_col] == val).cast(pl.Float64).to_numpy().reshape(-1, 1))
+            feature_names.append(f"{cat_col}={val}")
 
     if not matrices:
-        return np.empty((len(df), 0)), column_indices
+        return np.empty((len(df), 0)), column_indices, feature_names
 
     return (
         np.hstack(matrices) if len(matrices) > 1 else matrices[0],
         column_indices,
+        feature_names,
     )
 
 
@@ -597,7 +602,7 @@ def aggregate_from_children(
     one column per unique value counting occurrences within each parent group.
 
     For example, ``pivot_count: [employment]`` on persons grouped by ``hh_id``
-    creates ``persons_count_employment_1``, ``persons_count_employment_2``, etc.
+    creates ``persons_count_employment=1``, ``persons_count_employment=2``, etc.
     The sum across a field's pivoted columns equals the household size, so a
     separate ``count`` option is unnecessary.
 
@@ -658,7 +663,7 @@ def aggregate_from_children(
             pivot_exprs = []
             pivot_col_names = []
             for val in unique_vals:
-                col_name = f"{child_name}_count_{field}_{val}"
+                col_name = f"{child_name}_count_{field}={val}"
                 pivot_exprs.append((pl.col(field) == val).sum().alias(col_name))
                 pivot_col_names.append(col_name)
 

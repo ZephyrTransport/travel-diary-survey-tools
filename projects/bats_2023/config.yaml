@@ -30,7 +30,7 @@ steps:
 
   - name: imputation
     validate_input: false
-    cache: true
+    cache: false
     params:
       impute_columns:
         # KNN/RF: impute single columns using similar records
@@ -80,7 +80,7 @@ steps:
           #   max_iter: 10
 
       # Optional: create diagnostic flags (default: true)
-      create_flags: true
+      stash_preimputed: true
       random_state: 42     # For reproducibility
 
       # Optional: k-fold validation to assess quality

@@ -323,25 +323,25 @@ class TestAggregateFromChildren:
         result, added = aggregate_from_children(hh, "households", tables, config)
 
         # employment has values 1, 2, 3 → 3 columns
-        assert "persons_count_employment_1" in added
-        assert "persons_count_employment_2" in added
-        assert "persons_count_employment_3" in added
+        assert "persons_count_employment=1" in added
+        assert "persons_count_employment=2" in added
+        assert "persons_count_employment=3" in added
         assert len(added) == 3
 
         # hh 1 has persons 10 (emp=1) and 11 (emp=1) → count_1=2, count_2=0, count_3=0
         row_hh1 = result.filter(pl.col("hh_id") == 1)
-        assert row_hh1["persons_count_employment_1"][0] == 2
-        assert row_hh1["persons_count_employment_2"][0] == 0
-        assert row_hh1["persons_count_employment_3"][0] == 0
+        assert row_hh1["persons_count_employment=1"][0] == 2
+        assert row_hh1["persons_count_employment=2"][0] == 0
+        assert row_hh1["persons_count_employment=3"][0] == 0
 
         # hh 2 has person 20 (emp=2) → count_1=0, count_2=1, count_3=0
         row_hh2 = result.filter(pl.col("hh_id") == 2)
-        assert row_hh2["persons_count_employment_1"][0] == 0
-        assert row_hh2["persons_count_employment_2"][0] == 1
+        assert row_hh2["persons_count_employment=1"][0] == 0
+        assert row_hh2["persons_count_employment=2"][0] == 1
 
         # hh 3 has person 30 (emp=3) → count_3=1
         row_hh3 = result.filter(pl.col("hh_id") == 3)
-        assert row_hh3["persons_count_employment_3"][0] == 1
+        assert row_hh3["persons_count_employment=3"][0] == 1
 
     def test_pivot_count_sum_equals_household_size(self):
         """Sum of pivot counts should equal the number of persons in household."""

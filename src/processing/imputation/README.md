@@ -8,11 +8,11 @@ rendered at the project's documentation site under **Pipeline Steps → Imputati
 For quick navigation:
 
 - **Package overview**: see `__init__.py`
-- **Pipeline step configuration**: see `generic_impute.imputation()`
+- **Pipeline step configuration**: see `impute.imputation()`
 - **KNN method**: see `knn.impute_knn()`
 - **Random Forest method**: see `random_forest.impute_random_forest()`
 - **MICE method**: see `mice.impute_mice()`
-- **Diagnostic flags**: see `flags.py`
+- **Pre-imputation stash**: see `flags.py`
 - **Quality validation**: see `validation.py`
 - **Technical utilities**: see `impute_utils.py`
 - **Method comparison**: see `comparison.compare_imputation_methods()`

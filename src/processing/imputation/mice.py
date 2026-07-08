@@ -103,7 +103,7 @@ def impute_mice(
     df_work, int_encodings = encode_integer_categoricals(df_work, columns, verbose=verbose)
 
     # Build feature matrix (shared helper)
-    feature_matrix, column_indices = build_feature_matrix(
+    feature_matrix, column_indices, _feature_names = build_feature_matrix(
         df_work, columns, numeric_features or [], categorical_features or []
     )
 

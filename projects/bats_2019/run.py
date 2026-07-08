@@ -7,6 +7,7 @@ from pathlib import Path
 
 import polars as pl
 from clean_bats_2019 import clean_2019_bats
+from dotenv import load_dotenv
 
 from pipeline.decoration import step
 from pipeline.pipeline import Pipeline
@@ -21,6 +22,12 @@ from processing import (
     load_data,
     write_data,
 )
+
+# Load environment variables from .env file
+# Useful for CENSUS API keys or other sensitive information
+# that should not be committed to version control.
+# Make sure to create a .env file in the project root with the necessary variables.
+load_dotenv()
 
 # ---------------------------------------------------------------------
 # Configuration

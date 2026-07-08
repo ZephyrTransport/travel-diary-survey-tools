@@ -90,7 +90,7 @@ def impute_knn(
     df_work, int_encodings = encode_integer_categoricals(df, [column])
 
     # Build feature matrix (shared helper)
-    feature_matrix, column_indices = build_feature_matrix(
+    feature_matrix, column_indices, _feature_names = build_feature_matrix(
         df_work, [column], numeric_features or [], categorical_features or []
     )
     target_idx = column_indices[column]

@@ -30,6 +30,7 @@ from tqdm import tqdm
 
 from processing.weighting.controls.base import ControlLevel
 from processing.weighting.controls.registry import pums_variables
+from processing.weighting.data_prep.census_geo import _KEY_SIGNUP_URL, _census_api_key
 from processing.weighting.specs import PUMSSource
 
 logger = logging.getLogger(__name__)
@@ -421,9 +422,20 @@ def _census_get(
         "get": ",".join(cols),
         "for": f"public use microdata area:{puma_geo}",
         "in": f"state:{state_fips}",
+        "key": _census_api_key(),
     }
     resp = requests.get(base_url, params=params, timeout=120, stream=True)
     resp.raise_for_status()
+
+    # A missing/invalid key redirects (HTTP 200) to an HTML "Missing Key" page,
+    # so raise_for_status() passes but the body is not JSON.  Fail clearly.
+    if "missing_key" in resp.url:
+        msg = (
+            "Census API request failed: invalid or missing API key.\n"
+            f"  URL: {resp.url}\n"
+            f"  Ensure CENSUS_KEY is set to a valid key (sign up: {_KEY_SIGNUP_URL})."
+        )
+        raise RuntimeError(msg)
 
     total = int(resp.headers.get("content-length", 0))
     chunks: list[bytes] = []
@@ -438,7 +450,18 @@ def _census_get(
             chunks.append(chunk)
             bar.update(len(chunk))
 
-    data = json.loads(b"".join(chunks))
+    body = b"".join(chunks)
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError as e:
+        msg = (
+            "Census API returned a body that could not be parsed as JSON "
+            f"(likely an error page).\n"
+            f"  URL: {resp.url}\n"
+            f"  First bytes: {body[:200]!r}\n"
+            f"  Ensure CENSUS_KEY is set to a valid key (sign up: {_KEY_SIGNUP_URL})."
+        )
+        raise RuntimeError(msg) from e
     if isinstance(data, dict) and "error" in data:
         msg = f"Census API error: {data['error']}"
         raise RuntimeError(msg)
