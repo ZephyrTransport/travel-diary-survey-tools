@@ -461,19 +461,19 @@ For more details, see:
   - [x] Core pipeline orchestration
   - [x] Basic pipeline to match existing legacy pipeline functionality. See [Daysim Comparison Analysis - Key Findings](projects/bats_2023/compare/comparison_findings.qmd) for a detailed comparison of the new pipeline versus the legacy pipeline, including methodology, key differences, and validation results.
 - **Align and iterate** data models with upstream/downstream needs
-  - [ ] Engage with downstream stakeholders to identify needs and requirements
-  - [ ] Engage with upstream data providers to set expectations and requirements
+  - [x] Engage with downstream stakeholders to identify needs and requirements
+  - [x] Engage with upstream data providers to set expectations and requirements
 - **Extend Functionality**
   - [x] Implement trip linking algorithm as processing step
   - [x] Implement joint trips detection algorithm processing step
   - [x] Implement tour extraction processing step
     - [x] enhanced tour extraction to handle joint tours/trips
   - [x] Implement imputation processing step (KNN and MICE methods)
-  - [ ] Implement weighting processing step
+  - [x] Implement weighting processing step
   - [ ] Implement bespoke output formats
     - [x] Implement Daysim output format
     - [ ] Implement ActivitySim output format
-    - [ ] Implement CT-RAMP format
+    - [x] Implement CT-RAMP format
 
 **The primary goal is to establish a solid foundation with the core data models, validation, and basic pipeline functionality, then build upon that iteratively based on stakeholder feedback and evolving needs.**
 

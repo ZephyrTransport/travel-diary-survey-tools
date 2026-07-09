@@ -87,6 +87,19 @@ exclude = ["archive", "*.html", "uv.lock"]
     "SLF001",    # allow access to private members in tests
     "DTZ001",    # allow naive datetime in tests
 ]
+"tests/e2e/**/*.py" = [
+    # E2E integration harness: trivial test classes/methods and fixtures, a
+    # deliberately long hand-authored scenario data builder, and a conftest that
+    # imports the pipeline lazily inside fixtures.
+    "D101",      # docstrings optional on trivial integration-test classes
+    "D102",      # ...and their methods
+    "D103",      # ...and pytest fixtures
+    "D104",      # package __init__ needs no docstring
+    "PT018",     # `df is not None and df.height > 0` reads fine as one assert
+    "PLC0415",   # conftest imports the pipeline lazily inside fixtures by design
+    "C901",      # scenario data builder is intentionally long and linear
+    "PLR0915",   # ...with many statements (one block per synthetic household)
+]
 "scripts/**/*.py" = [
     "INP001",      # script not part of package
     "T201",        # allow print statements in scripts
@@ -106,3 +119,7 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "--cov=src --cov-report=term-missing"
+markers = [
+    "e2e: hermetic end-to-end pipeline tests on synthetic data (run alone with: pytest -m e2e)",
+    "slow: tests that take more than 5 seconds",
+]
