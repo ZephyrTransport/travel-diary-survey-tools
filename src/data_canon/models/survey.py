@@ -200,7 +200,21 @@ class LinkedTripModel(BaseModel):
     distance_meters: float = schema_field(ge=0)
     depart_time: datetime = schema_field()
     arrive_time: datetime = schema_field()
+    d_activity_duration: int = schema_field(
+        description=(
+            "Whole minutes spent at the trip destination before the next departure "
+            "(activity duration at the destination). Sentinel values: -1 when the "
+            "destination is home; -2 for the last trip of a person-day (no "
+            "subsequent departure)."
+        ),
+    )
     tour_direction: TourDirection = schema_field()
+    o_location_type: LocationType = schema_field(
+        description="Classified location type of the trip origin (Home/Work/School/Other)."
+    )
+    d_location_type: LocationType = schema_field(
+        description="Classified location type of the trip destination (Home/Work/School/Other)."
+    )
     complete: bool | None = schema_field(default=None)
     linked_trip_weight: float | None = schema_field(default=None, ge=0)
 

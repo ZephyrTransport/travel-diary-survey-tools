@@ -134,7 +134,10 @@ Each tab shows the fields for one canonical table. Only steps that reference the
     | `distance_meters` | float | ≥ 0 |  |  |  |  |  |
     | `depart_time` | datetime |  | ✓ |  |  |  |  |
     | `arrive_time` | datetime |  | ✓ |  |  |  |  |
+    | `d_activity_duration` | int |  |  |  |  |  |  |
     | `tour_direction` | TourDirection |  |  |  |  |  | ✓ |
+    | `o_location_type` | LocationType |  |  |  |  |  |  |
+    | `d_location_type` | LocationType |  |  |  |  |  |  |
     | `complete` | bool or None |  |  |  |  |  |  |
     | `linked_trip_weight` | float or None | ≥ 0 |  |  |  |  |  |
 

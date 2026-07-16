@@ -234,7 +234,7 @@ def _add_location_types(df: pl.DataFrame) -> pl.DataFrame:
 
     return df.with_columns(
         [
-            build_location_expr("_o").alias("_o_location_type"),
-            build_location_expr("_d").alias("_d_location_type"),
+            build_location_expr("_o").alias("o_location_type"),
+            build_location_expr("_d").alias("d_location_type"),
         ]
     )

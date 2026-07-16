@@ -619,6 +619,7 @@ class TestAggregateLinkedTrips:
         assert row["travel_duration_minutes"] == 35.0
         # Dwell duration: 45 - 35 = 10 min
         assert row["dwell_duration_minutes"] == 10.0
+        assert row["d_activity_duration"] == -1
 
     def test_multiple_linked_trips(self):
         """Should aggregate multiple separate linked trips."""

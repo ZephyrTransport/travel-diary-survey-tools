@@ -4,7 +4,7 @@ import logging
 
 import polars as pl
 
-from data_canon.codebook.trips import AccessEgressMode, Driver, ModeType
+from data_canon.codebook.trips import AccessEgressMode, Driver, ModeType, PurposeCategory
 from pipeline.decoration import step
 from utils.create_ids import create_linked_trip_id
 from utils.enum_helpers import resolve_enum_labels
@@ -453,6 +453,27 @@ def aggregate_linked_trips(
         unlinked_trips.select(["linked_trip_id", "day_id"]).unique(),
         on="linked_trip_id",
         how="left",
+    )
+
+    # Compute d_activity_duration: whole minutes spent at the destination before the next
+    # departure (i.e. the activity duration at the trip destination). Ordered
+    # within each person-day. Sentinels: -1 when the destination is home; -2 for
+    # the last trip of a person-day (no subsequent departure).
+    linked_trips = (
+        linked_trips.sort(["person_id", "day_id", "depart_time", "arrive_time"])
+        .with_columns(
+            pl.col("depart_time").shift(-1).over(["person_id", "day_id"]).alias("_next_depart_time")
+        )
+        .with_columns(
+            pl.when(pl.col("d_purpose_category") == PurposeCategory.HOME.value)
+            .then(pl.lit(-1))
+            .when(pl.col("_next_depart_time").is_null())
+            .then(pl.lit(-2))
+            .otherwise((pl.col("_next_depart_time") - pl.col("arrive_time")).dt.total_minutes())
+            .cast(pl.Int64)
+            .alias("d_activity_duration")
+        )
+        .drop("_next_depart_time")
     )
 
     return linked_trips

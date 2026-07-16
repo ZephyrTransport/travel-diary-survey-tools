@@ -86,7 +86,7 @@ def _calculate_tour_purp_and_dest(
             pl.col("d_purpose_category").first().alias("tour_purpose"),
             pl.col("d_lat").first().alias("_primary_d_lat"),
             pl.col("d_lon").first().alias("_primary_d_lon"),
-            pl.col("_d_location_type").first().alias("_primary_d_type"),
+            pl.col("d_location_type").first().alias("_primary_d_type"),
         ]
     )
 
@@ -258,8 +258,8 @@ def _aggregate_and_classify_tours(
             pl.col("o_lon").first(),
             pl.col("d_lat").last(),
             pl.col("d_lon").last(),
-            pl.col("_o_location_type").first().alias("o_location_type"),
-            pl.col("_d_location_type").last().alias("d_location_type"),
+            pl.col("o_location_type").first().alias("o_location_type"),
+            pl.col("d_location_type").last().alias("d_location_type"),
             # Counts
             pl.col("linked_trip_id").count().alias("trip_count"),
             (pl.col("linked_trip_id").count() - 1).alias("stop_count"),
