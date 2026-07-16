@@ -315,6 +315,8 @@ steps:
     validate_input: false
     cache: true
     params:
+      projected_crs: "EPSG:26910"  # UTM Zone 10N (Bay Area metric CRS for nearest-zone fallback)
+      max_snap_distance: 500  # metres; points farther from all zone boundaries remain null (out-of-region)
       zone_geographies:
         - zone_name: "taz"  # Primary TAZ for DaySim (TM1)
           shapefile: "{{ TM2_shapefile_dir }}/tazs_TM2_2_5.shp"
