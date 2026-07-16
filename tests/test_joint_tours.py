@@ -25,6 +25,7 @@ from data_canon.codebook.trips import Driver, ModeType, Purpose, PurposeCategory
 from processing import link_trips
 from processing.joint_trips import detect_joint_trips
 from processing.tours.extraction import extract_tours
+from processing.tours.joint_tour_helpers import identify_joint_tours
 
 
 @pytest.fixture
@@ -559,6 +560,98 @@ class TestPartialDropoff:
             assert child_joint["joint_tour_id"][0] != parent_joint_ids[0], (
                 "Child should not share parents' joint_tour_id"
             )
+
+
+HH_ID = 23000075
+P1 = 23000075001
+P2 = 23000075002
+
+
+def _build_joint_tour_frames(
+    trips: list[tuple[int, int, int, int | None]],
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Build minimal linked_trips/tours frames for identify_joint_tours.
+
+    Args:
+        trips: (linked_trip_id, person_id, tour_id, joint_trip_id) rows.
+
+    Returns:
+        Tuple of (linked_trips, tours).
+    """
+    linked_trips = pl.DataFrame(
+        {
+            "linked_trip_id": [t[0] for t in trips],
+            "person_id": [t[1] for t in trips],
+            "tour_id": [t[2] for t in trips],
+            "joint_trip_id": [t[3] for t in trips],
+            "hh_id": [HH_ID] * len(trips),
+        },
+        schema_overrides={"joint_trip_id": pl.Int64},
+    )
+    tours = pl.DataFrame({"tour_id": sorted({t[2] for t in trips})})
+    return linked_trips, tours
+
+
+class TestJointTourOccasions:
+    """Test that joint_tour_id distinguishes occasions, not participant groups."""
+
+    def test_same_pair_two_occasions_get_different_ids(self):
+        """The same pair travelling twice should get one joint_tour_id per occasion.
+
+        joint_tour_id is keyed on the set of joint_trip_ids (the occasion), so the
+        same stable group on a second outing is a distinct joint tour rather than a
+        continuation of the first.
+        """
+        # Occasion 1 = joint trips 1001/1002; occasion 2 = joint trips 1003/1004.
+        linked_trips, tours = _build_joint_tour_frames(
+            [
+                (1, P1, 101, 1001),
+                (2, P1, 101, 1002),
+                (3, P2, 201, 1001),
+                (4, P2, 201, 1002),
+                (5, P1, 102, 1003),
+                (6, P1, 102, 1004),
+                (7, P2, 202, 1003),
+                (8, P2, 202, 1004),
+            ]
+        )
+
+        _, tours_out = identify_joint_tours(linked_trips, tours)
+
+        ids = dict(zip(tours_out["tour_id"], tours_out["joint_tour_id"], strict=True))
+        assert all(v is not None for v in ids.values()), "All four tours should be joint"
+
+        # Partners on the same occasion share an id...
+        assert ids[101] == ids[201], "Occasion 1 partners should share a joint_tour_id"
+        assert ids[102] == ids[202], "Occasion 2 partners should share a joint_tour_id"
+
+        # ...but the two occasions are distinct joint tours.
+        assert ids[101] != ids[102], (
+            "The same pair on a second occasion should get a different joint_tour_id"
+        )
+
+    def test_singleton_joint_tour_id_is_nulled(self):
+        """A joint_tour_id surviving for only one person is reset to null.
+
+        P2's tour has a non-joint trip, so it fails the all-trips-joint filter. That
+        leaves P1's tour as the only member of the occasion; a joint tour needs 2+
+        participants, so the id is dropped rather than left as a singleton.
+        """
+        linked_trips, tours = _build_joint_tour_frames(
+            [
+                (1, P1, 101, 1001),
+                (2, P1, 101, 1002),
+                (3, P2, 201, 1001),
+                (4, P2, 201, 1002),
+                (5, P2, 201, None),  # non-joint trip disqualifies P2's tour
+            ]
+        )
+
+        _, tours_out = identify_joint_tours(linked_trips, tours)
+
+        assert tours_out["joint_tour_id"].null_count() == len(tours_out), (
+            "A joint_tour_id held by a single person should be nulled"
+        )
 
 
 class TestNoJointTours:

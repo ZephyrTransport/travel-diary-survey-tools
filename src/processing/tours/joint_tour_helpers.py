@@ -7,11 +7,16 @@ records in the canonical data model.
 
 Algorithm:
 ----------
-1. For each person's tour, collect all joint_trip_ids and extract participants
-2. Check if a stable group of 2+ people exists for ALL trips in the tour
-3. If so, assign joint_tour_id linking those individual tours together
-4. Handle partial dropoffs: if 3 people start but 1 drops off, remaining 2
-   can still form a joint tour if they stay together for the entire tour
+1. Find eligible tours: every trip in the tour is joint, and there are 2+ trips
+2. Count the tour's stable group: participants present on ALL of its joint trips
+3. Keep tours whose stable group has 2+ people
+4. Assign joint_tour_id per occasion: tours sharing the same set of
+   joint_trip_ids are the same outing and get the same id
+5. Drop singletons: an id held by only one person is not a joint tour
+
+Every step works off ``linked_trips``' existing (person_id, tour_id,
+joint_trip_id) relation, so participation stays a row-per-fact join rather than
+being collapsed into list columns.
 
 Example:
 --------
@@ -24,6 +29,9 @@ Person A, B, C depart, C drops off:
   - Trip 1: A,B,C -> school (joint_trip_id=1001)
   - Trip 2: A,B -> home (joint_trip_id=1002)
   Result: A and B get joint_tour_id (stable pair), C gets NULL
+
+The same pair on two separate outings get two different joint_tour_ids, because
+the outings have different joint_trip_ids.
 """
 
 import logging
@@ -33,6 +41,11 @@ import polars as pl
 from utils.create_ids import create_concatenated_id
 
 logger = logging.getLogger(__name__)
+
+# A tour needs at least this many trips to establish a pattern of travelling together
+MIN_TRIPS_FOR_JOINT_TOUR = 2
+# A joint tour needs at least this many participants, by definition
+MIN_JOINT_TOUR_PARTICIPANTS = 2
 
 
 def identify_joint_tours(
@@ -54,81 +67,44 @@ def identify_joint_tours(
     """
     logger.info("Identifying joint tours from joint trips...")
 
-    # Filter to only trips that are part of tours
     trips_with_tours = linked_trips.filter(pl.col("tour_id").is_not_null())
-
-    # Count total trips per (person_id, tour_id)
-    total_trips_per_tour = trips_with_tours.group_by(["person_id", "tour_id"]).agg(
-        [pl.col("linked_trip_id").count().alias("total_num_trips")]
-    )
-
-    # Filter to only trips that are joint
     joint_trip_members = trips_with_tours.filter(pl.col("joint_trip_id").is_not_null())
 
-    if len(joint_trip_members) == 0:
+    if joint_trip_members.is_empty():
         logger.info("No joint trips found, skipping joint tour identification")
-        # Add null joint_tour_id columns
-        linked_trips = linked_trips.with_columns(
-            pl.lit(None, dtype=pl.Int64).alias("joint_tour_id")
-        )
-        tours = tours.with_columns(pl.lit(None, dtype=pl.Int64).alias("joint_tour_id"))
-        return linked_trips, tours
+        return _without_joint_tours(linked_trips, tours)
 
-    # For each (person_id, tour_id), collect all joint_trip_ids
-    tour_joint_trips = joint_trip_members.group_by(["person_id", "tour_id"]).agg(
-        [
-            pl.col("hh_id").first(),
-            pl.col("joint_trip_id").unique().alias("joint_trip_ids"),
-            pl.col("linked_trip_id").count().alias("num_joint_trips"),
-        ]
-    )
+    eligible_tours = _find_eligible_tours(trips_with_tours, joint_trip_members)
 
-    # Join with total trip counts to filter tours where ALL trips are joint
-    tour_joint_trips_before_filter = tour_joint_trips.join(
-        total_trips_per_tour, on=["person_id", "tour_id"], how="left"
-    )
-
-    tour_joint_trips = tour_joint_trips_before_filter.filter(
-        # Only keep tours where all trips are joint
-        pl.col("num_joint_trips") == pl.col("total_num_trips")
-    )
-
-    # Also filter out single-trip tours - they can't form meaningful joint tours
-    # a tour needs at least 2 trips to establish a pattern of traveling together
-    tour_joint_trips = tour_joint_trips.filter(
-        pl.col("total_num_trips") >= 2  # noqa: PLR2004
-    )
-
-    if len(tour_joint_trips) == 0:
+    if eligible_tours.is_empty():
         logger.info("No tours where all trips are joint, skipping joint tour identification")
-        linked_trips = linked_trips.with_columns(
-            pl.lit(None, dtype=pl.Int64).alias("joint_tour_id")
-        )
-        tours = tours.with_columns(pl.lit(None, dtype=pl.Int64).alias("joint_tour_id"))
-        return linked_trips, tours
+        return _without_joint_tours(linked_trips, tours)
 
-    # Get participants for each joint_trip_id from the joint_trips table
-    # We need to extract who was on each joint trip
-    joint_trip_participants = _extract_joint_trip_participants(joint_trip_members)
-
-    # For each tour, check if there's a stable group throughout
-    tour_stable_groups = _find_stable_groups_per_tour(tour_joint_trips, joint_trip_participants)
-
-    # Filter to tours with stable groups of 2+ people
-    valid_joint_tours = tour_stable_groups.filter(
-        pl.col("stable_group_size") >= 2  # noqa: PLR2004
+    # One row per (tour, joint_trip_id). This is the relation linked_trips
+    # already holds; keep it long rather than collapsing to a list per tour.
+    tour_joint_trips = (
+        joint_trip_members.join(eligible_tours, on=["person_id", "tour_id"], how="inner")
+        .select(["person_id", "tour_id", "hh_id", "joint_trip_id"])
+        .unique()
     )
 
-    if len(valid_joint_tours) == 0:
-        logger.info("No stable joint tour groups found")
-        linked_trips = linked_trips.with_columns(
-            pl.lit(None, dtype=pl.Int64).alias("joint_tour_id")
-        )
-        tours = tours.with_columns(pl.lit(None, dtype=pl.Int64).alias("joint_tour_id"))
-        return linked_trips, tours
+    stable_groups = _count_stable_participants(tour_joint_trips, joint_trip_members)
+    valid_joint_tours = stable_groups.filter(
+        pl.col("stable_group_size") >= MIN_JOINT_TOUR_PARTICIPANTS
+    )
 
-    # Assign joint_tour_id to tours sharing the same stable group
-    tours_with_joint_id = _assign_joint_tour_ids(valid_joint_tours)
+    if valid_joint_tours.is_empty():
+        logger.info("No stable joint tour groups found")
+        return _without_joint_tours(linked_trips, tours)
+
+    tours_with_joint_id = _assign_joint_tour_ids(
+        tour_joint_trips.join(
+            valid_joint_tours.select(["person_id", "tour_id"]),
+            on=["person_id", "tour_id"],
+            how="inner",
+        )
+    )
+    tours_with_joint_id = _drop_singleton_joint_tours(tours_with_joint_id)
 
     # Join joint_tour_id back to original tables
     linked_trips = linked_trips.join(
@@ -143,138 +119,136 @@ def identify_joint_tours(
         how="left",
     )
 
-    num_joint_tours = len(tours.filter(pl.col("joint_tour_id").is_not_null()))
-    num_unique_joint_tour_ids = (
-        tours.filter(pl.col("joint_tour_id").is_not_null()).select("joint_tour_id").n_unique()
-    )
+    joint_tours = tours.filter(pl.col("joint_tour_id").is_not_null())
     logger.info(
         "Identified %d individual tours as joint (%d unique joint tour groups)",
-        num_joint_tours,
-        num_unique_joint_tour_ids,
+        len(joint_tours),
+        joint_tours.select("joint_tour_id").n_unique(),
     )
 
     return linked_trips, tours
 
 
-def _extract_joint_trip_participants(
+def _without_joint_tours(
+    linked_trips: pl.DataFrame,
+    tours: pl.DataFrame,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Add a null joint_tour_id column to both tables.
+
+    Args:
+        linked_trips: Trip data
+        tours: Tour-level records
+
+    Returns:
+        Tuple of (linked_trips, tours) each with a null joint_tour_id column
+    """
+    null_id = pl.lit(None, dtype=pl.Int64).alias("joint_tour_id")
+    return linked_trips.with_columns(null_id), tours.with_columns(null_id)
+
+
+def _find_eligible_tours(
+    trips_with_tours: pl.DataFrame,
     joint_trip_members: pl.DataFrame,
 ) -> pl.DataFrame:
-    """Extract participant list for each joint_trip_id.
+    """Find tours where every trip is joint and there are enough trips.
+
+    A tour only counts if all of its trips are joint - a tour with a solo leg is
+    not a joint tour. Single-trip tours are excluded because one trip cannot
+    establish a pattern of travelling together.
 
     Args:
-        joint_trip_members: Trips with joint_trip_id
+        trips_with_tours: All trips that belong to a tour
+        joint_trip_members: The subset of those trips that are joint
 
     Returns:
-        DataFrame with joint_trip_id and sorted participant person_ids
+        DataFrame of eligible (person_id, tour_id)
     """
-    # Get all person_ids for each joint_trip_id
-    participants = joint_trip_members.group_by("joint_trip_id").agg(
-        [
-            pl.col("person_id").unique().sort().alias("participants"),
-        ]
+    total_trips = trips_with_tours.group_by(["person_id", "tour_id"]).agg(
+        pl.col("linked_trip_id").count().alias("_total_trips")
+    )
+    joint_trips = joint_trip_members.group_by(["person_id", "tour_id"]).agg(
+        pl.col("linked_trip_id").count().alias("_joint_trips")
     )
 
-    return participants
+    return (
+        joint_trips.join(total_trips, on=["person_id", "tour_id"], how="left")
+        .filter(
+            (pl.col("_joint_trips") == pl.col("_total_trips"))
+            & (pl.col("_total_trips") >= MIN_TRIPS_FOR_JOINT_TOUR)
+        )
+        .select(["person_id", "tour_id"])
+    )
 
 
-def _find_stable_groups_per_tour(
+def _count_stable_participants(
     tour_joint_trips: pl.DataFrame,
-    joint_trip_participants: pl.DataFrame,
+    joint_trip_members: pl.DataFrame,
 ) -> pl.DataFrame:
-    """Find stable participant groups for each person's tour.
+    """Count the people present on ALL of a tour's joint trips.
 
-    A stable group exists if the same set of 2+ people participate in
-    ALL joint trips throughout the tour.
+    The stable group is the intersection of participants across the tour's joint
+    trips. Expressed relationally, a person is in it when the number of the
+    tour's joint trips they appear on equals the tour's joint trip count - so
+    someone who drops off partway is excluded.
 
     Args:
-        tour_joint_trips: Tours with their joint_trip_ids
-        joint_trip_participants: Participants for each joint_trip_id
+        tour_joint_trips: One row per (person_id, tour_id, hh_id, joint_trip_id)
+        joint_trip_members: Joint trips, used to resolve who was on each one
 
     Returns:
-        DataFrame with person_id, tour_id, stable_group (sorted list),
-        stable_group_size
+        DataFrame with person_id, tour_id, hh_id, stable_group_size
     """
-    # Explode joint_trip_ids to one row per (tour, joint_trip_id)
-    tour_trips_exploded = tour_joint_trips.explode("joint_trip_ids")
+    # Who was on each joint trip - the inverse of linked_trips.joint_trip_id
+    participants = joint_trip_members.select(
+        "joint_trip_id",
+        pl.col("person_id").alias("_participant"),
+    ).unique()
 
-    # Join participants for each joint_trip
-    tour_trips_with_participants = tour_trips_exploded.join(
-        joint_trip_participants,
-        left_on="joint_trip_ids",
-        right_on="joint_trip_id",
-        how="left",
+    trips_per_tour = tour_joint_trips.group_by(["person_id", "tour_id"]).agg(
+        pl.col("joint_trip_id").n_unique().alias("_n_trips")
     )
 
-    # For each tour, find intersection of participants across all trips
-    # This gives us the stable group (people present in ALL trips)
-    stable_groups = (
-        tour_trips_with_participants.group_by(["person_id", "tour_id", "hh_id"])
-        .agg(
-            [
-                # Collect all participant lists
-                pl.col("participants").alias("all_trip_participants"),
-            ]
-        )
-        .with_columns(
-            [
-                # Find intersection: people present in ALL trips
-                pl.col("all_trip_participants")
-                .map_elements(
-                    lambda lists: sorted(
-                        set.intersection(*[set(lst) for lst in lists]) if len(lists) > 0 else set()
-                    ),
-                    return_dtype=pl.List(pl.Int64),
-                )
-                .alias("stable_group"),
-            ]
-        )
-        .with_columns(
-            [
-                pl.col("stable_group").list.len().alias("stable_group_size"),
-            ]
-        )
+    return (
+        tour_joint_trips.join(participants, on="joint_trip_id", how="left")
+        .group_by(["person_id", "tour_id", "hh_id", "_participant"])
+        .agg(pl.col("joint_trip_id").n_unique().alias("_n_present"))
+        .join(trips_per_tour, on=["person_id", "tour_id"], how="left")
+        .filter(pl.col("_n_present") == pl.col("_n_trips"))
+        .group_by(["person_id", "tour_id", "hh_id"])
+        .agg(pl.col("_participant").n_unique().alias("stable_group_size"))
     )
-
-    return stable_groups
 
 
 def _assign_joint_tour_ids(
-    valid_joint_tours: pl.DataFrame,
+    tour_joint_trips: pl.DataFrame,
 ) -> pl.DataFrame:
-    """Assign joint_tour_id to tours sharing the same stable group.
+    """Assign joint_tour_id to tours sharing the same joint trip occasion.
 
-    Tours with identical stable groups (same people) get the same
-    joint_tour_id. IDs follow pattern: <hh_id><2-digit-sequence>
+    Tours that share the exact same set of joint_trip_ids are the same occasion
+    and get the same joint_tour_id. The same stable group on a different
+    occasion has different joint_trip_ids and so a different joint_tour_id.
+    IDs follow the pattern ``<hh_id><2-digit-sequence>``.
+
+    The occasion key is the tour's sorted joint_trip_ids joined into a string,
+    which is unique per set because the ids are sorted and delimited.
 
     Args:
-        valid_joint_tours: Tours with stable groups of 2+ people
+        tour_joint_trips: One row per (person_id, tour_id, hh_id, joint_trip_id)
 
     Returns:
         DataFrame with person_id, tour_id, joint_tour_id
     """
-    # Create a canonical group identifier (sorted participant list as string)
-    # This lets us group tours with identical participants
-    tours_with_group_key = valid_joint_tours.with_columns(
-        [
-            pl.col("stable_group")
-            .map_elements(
-                lambda x: "_".join(map(str, sorted(x))),
-                return_dtype=pl.String,
-            )
-            .alias("group_key"),
-        ]
+    tours_with_group_key = tour_joint_trips.group_by(["person_id", "tour_id", "hh_id"]).agg(
+        pl.col("joint_trip_id").unique().sort().cast(pl.String).str.join("_").alias("group_key")
     )
 
-    # Assign sequential ID to each unique group within household
+    # Assign a sequential id to each unique occasion within the household
     unique_groups = (
         tours_with_group_key.select(["hh_id", "group_key"]).unique().sort(["hh_id", "group_key"])
     )
-
     unique_groups = unique_groups.with_columns(
         pl.col("group_key").rank(method="dense").over("hh_id").alias("joint_tour_num")
     )
-
-    # Create standardized joint_tour_id: <hh_id> + <2 digit enumerator>
     unique_groups = create_concatenated_id(
         unique_groups,
         output_col="joint_tour_id",
@@ -283,11 +257,42 @@ def _assign_joint_tour_ids(
         sequence_padding=2,
     )
 
-    # Join back to tours
-    tours_with_joint_id = tours_with_group_key.join(
+    return tours_with_group_key.join(
         unique_groups.select(["hh_id", "group_key", "joint_tour_id"]),
         on=["hh_id", "group_key"],
         how="left",
+    ).select(["person_id", "tour_id", "joint_tour_id"])
+
+
+def _drop_singleton_joint_tours(
+    tours_with_joint_id: pl.DataFrame,
+) -> pl.DataFrame:
+    """Null out any joint_tour_id shared by fewer than two persons.
+
+    In edge cases only one person's tour survives the eligibility filters for a
+    given occasion, which would leave a joint tour with a single participant.
+
+    Args:
+        tours_with_joint_id: DataFrame with person_id, tour_id, joint_tour_id
+
+    Returns:
+        The same frame with singleton joint_tour_ids set to null
+    """
+    shared_ids = (
+        tours_with_joint_id.group_by("joint_tour_id")
+        .agg(pl.col("person_id").n_unique().alias("_n_persons"))
+        .filter(pl.col("_n_persons") >= MIN_JOINT_TOUR_PARTICIPANTS)
+        .select("joint_tour_id")
+        .with_columns(pl.lit(value=True).alias("_shared"))
     )
 
-    return tours_with_joint_id.select(["person_id", "tour_id", "joint_tour_id"])
+    return (
+        tours_with_joint_id.join(shared_ids, on="joint_tour_id", how="left")
+        .with_columns(
+            pl.when(pl.col("_shared").fill_null(value=False))
+            .then(pl.col("joint_tour_id"))
+            .otherwise(pl.lit(None, dtype=pl.Int64))
+            .alias("joint_tour_id")
+        )
+        .drop("_shared")
+    )
