@@ -45,6 +45,7 @@ Each tab shows the fields for one canonical table. Only steps that reference the
     | `work_lon` | float or None | ≥ -180, ≤ 180 | ✓ | ✓ |  |  |
     | `school_lat` | float or None | ≥ -90, ≤ 90 | ✓ | ✓ |  |  |
     | `school_lon` | float or None | ≥ -180, ≤ 180 | ✓ | ✓ |  |  |
+    | `industry` | Industry or None |  |  |  |  |  |
     | `job_type` | JobType or None |  |  |  | ✓ |  |
     | `employment` | Employment |  | ✓ |  |  |  |
     | `student` | Student |  | ✓ |  |  |  |

@@ -264,7 +264,7 @@ Quick lookup of categorical values and labels for codebook enum fields.
 | 10 | Finance and Insurance |
 | 11 | Real Estate and Rental and Leasing |
 | 12 | Professional, Scientific, and Technical Services |
-| 13 | Management of Companies and Enteprises |
+| 13 | Management of Companies and Enterprises |
 | 14 | Administrative and Support and Waste Management and Remediation Services |
 | 15 | Educational Services |
 | 16 | Health Care and Social Assistance |

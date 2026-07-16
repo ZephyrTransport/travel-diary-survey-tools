@@ -22,6 +22,7 @@ from data_canon.codebook.persons import (
     Employment,
     Ethnicity,
     Gender,
+    Industry,
     JobType,
     Race,
     SchoolType,
@@ -73,6 +74,7 @@ class PersonModel(BaseModel):
     work_lon: float | None = schema_field(ge=-180, le=180)
     school_lat: float | None = schema_field(ge=-90, le=90)
     school_lon: float | None = schema_field(ge=-180, le=180)
+    industry: Industry | None = schema_field(default=None)
     job_type: JobType | None = schema_field(default=None)
     employment: Employment = schema_field()
     student: Student = schema_field()

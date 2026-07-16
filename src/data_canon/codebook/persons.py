@@ -112,7 +112,7 @@ class Industry(LabeledEnum):
     FINANCE_AND_INSURANCE = (10, "Finance and Insurance")
     REALESTATE = (11, "Real Estate and Rental and Leasing")
     PROFESSIONAL = (12, "Professional, Scientific, and Technical Services")
-    MANAGEMENT = (13, "Management of Companies and Enteprises")
+    MANAGEMENT = (13, "Management of Companies and Enterprises")
     ADMINISTRATIVE = (
         14,
         "Administrative and Support and Waste Management and Remediation Services",
