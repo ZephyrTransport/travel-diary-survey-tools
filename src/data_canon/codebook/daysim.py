@@ -59,7 +59,14 @@ class DaysimDriverPassenger(LabeledEnum):
 class DaysimPurpose(LabeledEnum):
     """DaySim purpose codes.
 
-    Activity purpose codes for trip ends.
+    Activity purpose codes for trip ends. Codes follow the published DaySim
+    trip-file specification, where change mode is 10 (code 8 is recreation and
+    9 is medical in the full spec, which this coarser codebook does not use;
+    code 11 = other follows the regional SFCTA/MTC convention).
+
+    Spec: https://github.com/psrc/soundcast/wiki/Outputs (opurp / dpurp codes),
+    per the DaySim Input Data File Documentation
+    (https://github.com/RSGInc/DaySim/wiki).
     """
 
     HOME = (0, "Home")
@@ -70,8 +77,8 @@ class DaysimPurpose(LabeledEnum):
     SHOP = (5, "Shop")
     MEAL = (6, "Meal")
     SOCIAL_REC = (7, "Social/recreation")
-    CHANGE_MODE = (8, "Change mode")
-    OTHER = (9, "Other")
+    CHANGE_MODE = (10, "Change mode")
+    OTHER = (11, "Other")
 
 
 class DaysimGender(LabeledEnum):

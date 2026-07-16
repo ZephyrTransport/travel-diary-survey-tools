@@ -93,9 +93,12 @@ def format_days(
         .agg(pl.len().alias("hbtours"))
     )
 
-    # Count work-based subtours (tour_type == WORK_BASED)
+    # Count work-based subtours. Primary tours carry parent_tour_id == tour_id
+    # (self-reference), so a subtour is a tour whose parent is a DIFFERENT tour --
+    # not merely a non-null parent (which every tour has). This matches the CT-RAMP
+    # formatter's convention (ctramp/format_tours.py).
     wb_tour_counts = (
-        tours.filter(pl.col("parent_tour_id").is_not_null())
+        tours.filter(pl.col("parent_tour_id") != pl.col("tour_id"))
         .group_by("day_id")
         .agg(pl.len().alias("wbtours"))
     )

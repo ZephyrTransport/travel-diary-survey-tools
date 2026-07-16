@@ -4,12 +4,36 @@ import logging
 
 import polars as pl
 
-from data_canon.codebook.households import IncomeBroad, ResidenceRentOwn, ResidenceType
+from data_canon.codebook.households import (
+    IncomeBroad,
+    IncomeDetailed,
+    IncomeFollowup,
+    ResidenceRentOwn,
+    ResidenceType,
+)
 from data_canon.codebook.persons import Ethnicity, Race
+from data_canon.core.labeled_enum import LabeledEnum
 from pipeline.decoration import step
-from utils.helpers import add_time_columns, expr_haversine
+from utils.helpers import add_time_columns, expr_haversine, get_income_midpoint
 
 logger = logging.getLogger(__name__)
+
+
+def _income_midpoint_expr(col: str, enum: type[LabeledEnum], households: pl.DataFrame) -> pl.Expr:
+    """Map an income-bracket column to its midpoint in dollars (null if unusable).
+
+    Brackets that carry no dollar range (Missing / Prefer-not-to-answer) map to
+    null so the caller can fall back to the next-best income question.
+    """
+    if col not in households.columns:
+        return pl.lit(None, dtype=pl.Int64)
+    midpoints = {}
+    for member in enum:
+        try:
+            midpoints[member.value] = int(get_income_midpoint(member))
+        except ValueError:  # PNTA / Missing carry no dollar range
+            continue
+    return pl.col(col).cast(pl.Int64).replace_strict(midpoints, default=None, return_dtype=pl.Int64)
 
 
 @step()
@@ -181,6 +205,27 @@ def clean_2023_bats(
         .then(pl.col("income_bin"))
         .otherwise(IncomeBroad.MISSING.value)
         .alias("income_bin")
+    )
+
+    # Populate the canonical continuous `income` (dollars) so DaySim `hhincome`
+    # keeps the survey's full granularity. The survey asks a broad bin and then
+    # a detailed follow-up that not every respondent answers, so fall back:
+    #   income_detailed (10 brackets) -> income_followup (6) -> null
+    # A null falls through to the income_bin midpoint in format_households,
+    # which is also what the imputed households get.
+    households = households.with_columns(
+        pl.coalesce(
+            _income_midpoint_expr("income_detailed", IncomeDetailed, households),
+            _income_midpoint_expr("income_followup", IncomeFollowup, households),
+        ).alias("income")
+    )
+    n_income = households["income"].drop_nulls().len()
+    logger.info(
+        "Derived continuous income for %d / %d households (%.1f%%); "
+        "the rest fall back to the income_bin midpoint",
+        n_income,
+        len(households),
+        100 * n_income / len(households),
     )
 
     # CLEANUP PERSON ATTRIBUTES =================================

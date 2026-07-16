@@ -129,9 +129,12 @@ def format_tours(
     ).rename({"tour_id": "tour"})
     tours_daysim = tours_daysim.join(auto_agg, on="tour", how="left")
 
-    # Count number of subtours per tour (count parent_tour_id occurrences)
+    # Count number of subtours per parent tour. Primary tours carry
+    # parent_tour_id == tour_id (self-reference), so only tours whose parent is a
+    # DIFFERENT tour are genuine subtours; counting non-null parents would tally every
+    # tour as its own subtour (subtrs == 1 for all).
     subtour_counts = (
-        tours_daysim.filter(pl.col("parent_tour_id").is_not_null())
+        tours_daysim.filter(pl.col("parent_tour_id") != pl.col("tour_id"))
         .group_by("parent_tour_id")
         .agg(pl.len().alias("subtrs"))
     )
@@ -198,9 +201,12 @@ def format_tours(
         tautocost=pl.lit(-1.0),  # Auto cost
         tautodist=pl.col("tautodist").fill_null(-1.0),  # Auto distance
         tautotime=pl.col("tautotime").fill_null(-1.0),  # Auto time
-        # Stop counts
-        tripsh1=pl.col("num_outbound_stops").fill_null(0) + 1,
-        tripsh2=pl.col("num_inbound_stops").fill_null(0) + 1,
+        # Trip-segment counts on each half tour. num_outbound_stops / num_inbound_stops
+        # already count the linked trips on the half tour, which IS the DaySim segment
+        # count -- so no +1 (that double-counted, yielding a minimum of 2 instead of 1).
+        # Floor at 1 to satisfy the schema's ge=1 for the rare tour with no matched trips.
+        tripsh1=pl.col("num_outbound_stops").fill_null(1),
+        tripsh2=pl.col("num_inbound_stops").fill_null(1),
         # Half-tour indices (not used)
         phtindx1=pl.lit(0),
         phtindx2=pl.lit(0),

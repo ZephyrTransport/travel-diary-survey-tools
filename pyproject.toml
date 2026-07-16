@@ -104,6 +104,11 @@ exclude = ["archive", "*.html", "uv.lock"]
     "INP001",      # script not part of package
     "T201",        # allow print statements in scripts
 ]
+"scripts/validate_sfcta/**/*.py" = [
+    # Validation analysis: magic numbers (day codes 2/3/4, coverage thresholds,
+    # HHMM bound 2359) are inherent and clearer inline than as named constants.
+    "PLR2004",
+]
 "src/processing/weighting/core/controls.py" = [
     "D101",   # subclass .description is the docstring
     "D102",   # overrides inherit base-class method docs
