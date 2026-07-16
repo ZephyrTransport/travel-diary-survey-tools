@@ -3,6 +3,7 @@
 import argparse
 import logging
 import os
+import shutil
 from pathlib import Path
 
 import polars as pl
@@ -104,17 +105,33 @@ if __name__ == "__main__":
         action="store_true",
         help="Clear the pipeline cache before running",
     )
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Path to the YAML config file (default: config.yaml next to this script)",
+    )
     args = parser.parse_args()
 
+    config_path = Path(args.config) if args.config else CONFIG_PATH
+
     logger.info("Starting BATS 2019 DaySim Processing Pipeline")
+    logger.info("Using config: %s", config_path)
 
     cache_dir = Path(".cache/2019")
     pipeline = Pipeline(
-        config_path=CONFIG_PATH,
+        config_path=config_path,
         steps=processing_steps,
         caching=cache_dir,
         log_file_mode="w" if args.clear_cache else "a",
     )
+
+    # Save a copy of the config used into the output directory
+    output_dir = pipeline.config.get("output_dir")
+    if output_dir:
+        saved_config = Path(output_dir) / "pipeline_2019.yaml"
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        shutil.copy2(config_path, saved_config)
+        logger.info("Saved config copy to %s", saved_config)
 
     # Clear cache if requested
     if args.clear_cache and pipeline.cache:
