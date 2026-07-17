@@ -178,11 +178,15 @@ def clean_2023_bats(
             )
         )
         .mode()
+        # mode() can return several tied values in arbitrary order; sort so the
+        # tie-break is deterministic (smallest code) rather than hash-dependent.
+        .sort()
         .first()
         .fill_null(995),
         pl.col("residence_type")
         .filter(pl.col("residence_type") != ResidenceType.MISSING.value)
         .mode()
+        .sort()
         .first()
         .fill_null(995),
     )
