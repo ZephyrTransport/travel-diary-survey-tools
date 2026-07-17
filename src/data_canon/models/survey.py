@@ -210,10 +210,15 @@ class LinkedTripModel(BaseModel):
     )
     tour_direction: TourDirection = schema_field()
     o_location_type: LocationType = schema_field(
-        description="Classified location type of the trip origin (Home/Work/School/Other)."
+        description=(
+            "Classified location type of the trip origin (Home/Work/School/Other/Alternate work)."
+        ),
     )
     d_location_type: LocationType = schema_field(
-        description="Classified location type of the trip destination (Home/Work/School/Other)."
+        description=(
+            "Classified location type of the trip destination "
+            "(Home/Work/School/Other/Alternate work)."
+        ),
     )
     complete: bool | None = schema_field(default=None)
     linked_trip_weight: float | None = schema_field(default=None, ge=0)

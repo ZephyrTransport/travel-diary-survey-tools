@@ -16,6 +16,7 @@ from data_canon.codebook.tours import (
     TourDirection,
     TourType,
 )
+from data_canon.codebook.trips import PurposeCategory
 from utils.helpers import expr_haversine
 
 from .priority_utils import (
@@ -63,6 +64,17 @@ def _calculate_tour_purp_and_dest(
         alias="_activity_duration",
     )
 
+    # Effective destination purpose: a destination classified as ALTERNATE_WORK
+    # (the day's work location when the usual workplace was not visited) is treated
+    # as WORK so the tour is classified as a work tour. WORK_RELATED errands
+    # elsewhere stay subtour activities.
+    effective_purpose = (
+        pl.when(pl.col("d_location_type") == LocationType.ALTERNATE_WORK)
+        .then(pl.lit(PurposeCategory.WORK.value))
+        .otherwise(pl.col("d_purpose_category"))
+    )
+    linked_trips = linked_trips.with_columns(effective_purpose.alias("_d_purpose_effective"))
+
     # Mark last trip (excluded from purpose selection)
     linked_trips = linked_trips.with_columns(
         [
@@ -83,7 +95,7 @@ def _calculate_tour_purp_and_dest(
 
     tour_purp_and_coords = non_last.group_by("tour_id", maintain_order=True).agg(
         [
-            pl.col("d_purpose_category").first().alias("tour_purpose"),
+            pl.col("_d_purpose_effective").first().alias("tour_purpose"),
             pl.col("d_lat").first().alias("_primary_d_lat"),
             pl.col("d_lon").first().alias("_primary_d_lon"),
             pl.col("d_location_type").first().alias("_primary_d_type"),
@@ -131,6 +143,8 @@ def _calculate_destination_times(
             pl.when(pl.col("_primary_d_type") == LocationType.HOME)
             .then(pl.lit(config.distance_thresholds[LocationType.HOME]))
             .when(pl.col("_primary_d_type") == LocationType.WORK)
+            .then(pl.lit(config.distance_thresholds[LocationType.WORK]))
+            .when(pl.col("_primary_d_type") == LocationType.ALTERNATE_WORK)
             .then(pl.lit(config.distance_thresholds[LocationType.WORK]))
             .when(pl.col("_primary_d_type") == LocationType.SCHOOL)
             .then(pl.lit(config.distance_thresholds[LocationType.SCHOOL]))

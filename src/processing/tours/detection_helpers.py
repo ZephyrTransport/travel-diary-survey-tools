@@ -11,6 +11,7 @@ import logging
 import polars as pl
 
 from data_canon.codebook.generic import LocationType
+from data_canon.codebook.trips import PurposeCategory
 from utils.helpers import expr_haversine
 
 logger = logging.getLogger(__name__)
@@ -215,18 +216,120 @@ def expand_anchor_periods(
     work_threshold = distance_thresholds[LocationType.WORK]
     school_threshold = distance_thresholds[LocationType.SCHOOL]
 
+    # --- Work "location for the day" -------------------------------------
+    # The work anchor is where the person actually worked that day, which may
+    # differ from their reported "usual" workplace:
+    #   * If they visited their usual workplace (a WORK-purpose trip, or a trip
+    #     within the work distance threshold of usual work), that is the day's
+    #     work location.
+    #   * Otherwise, if they made any WORK_RELATED trips, the day's work location
+    #     is the WORK_RELATED destination with the longest activity duration
+    #     (an "alternate workplace" day).
+    # This way WORK_RELATED errands *away* from the workplace look like leaving
+    # the anchor (so they become work-based subtours), while an alternate
+    # workplace is treated as the day's work anchor.
+
+    # Did the person visit their USUAL workplace this day?
+    linked_trips = linked_trips.with_columns(
+        (
+            (
+                (pl.col("o_purpose_category") == PurposeCategory.WORK.value)
+                | (pl.col("d_purpose_category") == PurposeCategory.WORK.value)
+                | (pl.col("_o_dist_to_usual_work") <= work_threshold)
+                | (pl.col("_d_dist_to_usual_work") <= work_threshold)
+            )
+            & pl.col("work_lat").is_not_null()
+        ).alias("_trip_touches_usual_work")
+    ).with_columns(
+        pl.col("_trip_touches_usual_work")
+        .any()
+        .over(["person_id", "day_id"])
+        .alias("_visited_usual_work")
+    )
+
+    # On days without a usual-work visit, choose the alternate workplace as the
+    # WORK_RELATED destination with the longest activity duration.
+    alt_work = (
+        linked_trips.filter(
+            ~pl.col("_visited_usual_work")
+            & (pl.col("d_purpose_category") == PurposeCategory.WORK_RELATED.value)
+        )
+        .sort(
+            ["person_id", "day_id", "d_activity_duration"],
+            descending=[False, False, True],
+        )
+        .group_by(["person_id", "day_id"], maintain_order=True)
+        .agg(
+            [
+                pl.col("d_lat").first().alias("_alt_work_lat"),
+                pl.col("d_lon").first().alias("_alt_work_lon"),
+            ]
+        )
+    )
+    linked_trips = linked_trips.join(alt_work, on=["person_id", "day_id"], how="left")
+
+    # Resolve the day's work coordinates and flag alternate-work days.
     linked_trips = linked_trips.with_columns(
         [
-            # Work anchor flags
+            pl.when(pl.col("_visited_usual_work"))
+            .then(pl.col("work_lat"))
+            .otherwise(pl.col("_alt_work_lat"))
+            .alias("_day_work_lat"),
+            pl.when(pl.col("_visited_usual_work"))
+            .then(pl.col("work_lon"))
+            .otherwise(pl.col("_alt_work_lon"))
+            .alias("_day_work_lon"),
+            (~pl.col("_visited_usual_work") & pl.col("_alt_work_lat").is_not_null()).alias(
+                "_is_alternate_work_day"
+            ),
+        ]
+    )
+
+    # Distance from each trip end to the day's work location.
+    linked_trips = linked_trips.with_columns(
+        [
+            expr_haversine(
+                pl.col("o_lat"),
+                pl.col("o_lon"),
+                pl.col("_day_work_lat"),
+                pl.col("_day_work_lon"),
+            ).alias("_o_dist_to_day_work"),
+            expr_haversine(
+                pl.col("d_lat"),
+                pl.col("d_lon"),
+                pl.col("_day_work_lat"),
+                pl.col("_day_work_lon"),
+            ).alias("_d_dist_to_day_work"),
+        ]
+    )
+
+    # "At the workplace": a WORK-purpose end on a usual-work day always counts,
+    # and any end within the work threshold of the day's work location counts.
+    # WORK_RELATED ends only count when physically at the day's work location, so
+    # WORK_RELATED errands elsewhere become subtours.
+    linked_trips = linked_trips.with_columns(
+        [
             (
-                (pl.col("_o_dist_to_usual_work") <= work_threshold)
-                & pl.col("work_lat").is_not_null()
-            ).alias("_o_at_usual_work"),
+                (
+                    pl.col("_visited_usual_work")
+                    & (pl.col("o_purpose_category") == PurposeCategory.WORK.value)
+                )
+                | (
+                    (pl.col("_o_dist_to_day_work") <= work_threshold)
+                    & pl.col("_day_work_lat").is_not_null()
+                )
+            ).alias("_o_at_workplace"),
             (
-                (pl.col("_d_dist_to_usual_work") <= work_threshold)
-                & pl.col("work_lat").is_not_null()
-            ).alias("_d_at_usual_work"),
-            # School anchor flags
+                (
+                    pl.col("_visited_usual_work")
+                    & (pl.col("d_purpose_category") == PurposeCategory.WORK.value)
+                )
+                | (
+                    (pl.col("_d_dist_to_day_work") <= work_threshold)
+                    & pl.col("_day_work_lat").is_not_null()
+                )
+            ).alias("_d_at_workplace"),
+            # School anchor flags (unchanged: distance to usual school)
             (
                 (pl.col("_o_dist_to_usual_school") <= school_threshold)
                 & pl.col("school_lat").is_not_null()
@@ -238,25 +341,40 @@ def expand_anchor_periods(
         ]
     )
 
-    # Determine if trip involves usual anchor (either end at anchor)
+    # Determine if trip involves an anchor (either end at anchor)
     linked_trips = linked_trips.with_columns(
         [
-            (pl.col("_o_at_usual_work") | pl.col("_d_at_usual_work")).alias("_at_usual_work"),
+            (pl.col("_o_at_workplace") | pl.col("_d_at_workplace")).alias("_at_workplace"),
             (pl.col("_o_at_usual_school") | pl.col("_d_at_usual_school")).alias("_at_usual_school"),
         ]
     )
 
-    # For each tour, find first and last trip at each anchor type
-    # Work anchor expansion
+    # Mark trip ends that are at an alternate workplace with LocationType.ALTERNATE_WORK
+    # so the day's actual (non-usual) work location is visible in o/d_location_type.
     linked_trips = linked_trips.with_columns(
         [
-            pl.when(pl.col("_at_usual_work"))
+            pl.when(pl.col("_o_at_workplace") & pl.col("_is_alternate_work_day"))
+            .then(pl.lit(LocationType.ALTERNATE_WORK))
+            .otherwise(pl.col("o_location_type"))
+            .alias("o_location_type"),
+            pl.when(pl.col("_d_at_workplace") & pl.col("_is_alternate_work_day"))
+            .then(pl.lit(LocationType.ALTERNATE_WORK))
+            .otherwise(pl.col("d_location_type"))
+            .alias("d_location_type"),
+        ]
+    )
+
+    # For each tour, find first and last trip at each anchor type
+    # Work anchor expansion (based on the day's work location)
+    linked_trips = linked_trips.with_columns(
+        [
+            pl.when(pl.col("_at_workplace"))
             .then(pl.col("_trip_num_in_tour"))
             .otherwise(None)
             .min()
             .over(["person_id", "day_id", "tour_num"])
             .alias("_work_period_start"),
-            pl.when(pl.col("_at_usual_work"))
+            pl.when(pl.col("_at_workplace"))
             .then(pl.col("_trip_num_in_tour"))
             .otherwise(None)
             .max()
@@ -309,7 +427,10 @@ def expand_anchor_periods(
         ]
     )
 
-    # Clean up temporary columns
+    # Clean up temporary columns. Keep _o_at_workplace / _d_at_workplace, which
+    # subtour detection reads. _is_alternate_work_day is dropped: tour purpose
+    # reads the day's work location from o/d_location_type == ALTERNATE_WORK,
+    # which is written above and outlives this cleanup.
     drop_cols = [
         "work_lat",
         "work_lon",
@@ -319,16 +440,23 @@ def expand_anchor_periods(
         "_d_dist_to_usual_work",
         "_o_dist_to_usual_school",
         "_d_dist_to_usual_school",
-        "_o_at_usual_work",
-        "_d_at_usual_work",
+        "_o_dist_to_day_work",
+        "_d_dist_to_day_work",
         "_o_at_usual_school",
         "_d_at_usual_school",
-        "_at_usual_work",
+        "_at_workplace",
         "_at_usual_school",
         "_work_period_start",
         "_work_period_end",
         "_school_period_start",
         "_school_period_end",
+        "_trip_touches_usual_work",
+        "_visited_usual_work",
+        "_is_alternate_work_day",
+        "_alt_work_lat",
+        "_alt_work_lon",
+        "_day_work_lat",
+        "_day_work_lon",
     ]
     linked_trips = linked_trips.drop(drop_cols)
 
@@ -432,8 +560,11 @@ def detect_anchor_based_subtours(  # noqa: C901, PLR0915
         # Get anchor location flags based on anchor type
         # Pulled outside inner loop to filter once per tour
         if anchor_type == LocationType.WORK.value:
-            o_at_anchor = tour_df["_o_is_work"].to_list()
-            d_at_anchor = tour_df["_d_is_work"].to_list()
+            # Use the day's-workplace flags so WORK_RELATED errands away from the
+            # workplace read as "away from anchor" (and become subtours), while an
+            # alternate workplace is treated as the anchor.
+            o_at_anchor = tour_df["_o_at_workplace"].to_list()
+            d_at_anchor = tour_df["_d_at_workplace"].to_list()
         elif anchor_type == LocationType.SCHOOL.value:
             o_at_anchor = tour_df["_o_is_school"].to_list()
             d_at_anchor = tour_df["_d_is_school"].to_list()

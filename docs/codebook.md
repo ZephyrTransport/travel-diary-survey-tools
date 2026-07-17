@@ -26,6 +26,7 @@ print(purpose.label)  # "Appointment, shopping, or errands (e.g., gas)"
 ```
 
 ---
+::: data_canon.codebook.generic
 
 ::: data_canon.codebook.households
 
