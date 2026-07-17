@@ -13,6 +13,7 @@ import polars as pl
 import pytest
 
 from data_canon.codebook.days import TravelDow
+from data_canon.codebook.generic import LocationType
 from data_canon.codebook.persons import (
     AgeCategory,
     Employment,
@@ -390,6 +391,27 @@ def test_tour_destination_is_primary_destination_not_home(round_trip_tour_data):
     assert (tour["d_lat"], tour["d_lon"]) == SHOP, (
         "Tour destination should be the primary destination (the shop), not the "
         "last trip's destination (home)"
+    )
+
+
+def test_tour_destination_type_matches_destination_coords(round_trip_tour_data):
+    """d_location_type must describe the same place as d_lat/d_lon.
+
+    For home -> shop -> home the destination is the shop (OTHER). d_location_type
+    is taken from the primary destination, like d_lat/d_lon, so the two agree.
+    Previously d_location_type came from the last trip (home) while d_lat came
+    from the primary destination, so a tour zoned to the shop was labelled HOME.
+    """
+    persons, households, unlinked_trips, linked_trips = round_trip_tour_data
+
+    tour = extract_tours(persons, households, unlinked_trips, linked_trips)["tours"].row(
+        0, named=True
+    )
+
+    assert (tour["d_lat"], tour["d_lon"]) == SHOP
+    assert tour["d_location_type"] == LocationType.OTHER.value, (
+        "d_location_type should describe the primary destination (shop=OTHER), "
+        "consistent with d_lat/d_lon, not the last trip's home"
     )
 
 

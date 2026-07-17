@@ -270,12 +270,12 @@ def _aggregate_and_classify_tours(
             pl.col("arrive_time").max().alias("origin_arrive_time"),
             pl.col("o_lat").first(),
             pl.col("o_lon").first(),
-            # Keep fallback destination coordinates for edge cases
+            # Keep fallback destination coordinates and type for edge cases
             # (e.g., single-trip tours with no non-last trip)
             pl.col("d_lat").last().alias("_fallback_d_lat"),
             pl.col("d_lon").last().alias("_fallback_d_lon"),
             pl.col("o_location_type").first().alias("o_location_type"),
-            pl.col("d_location_type").last().alias("d_location_type"),
+            pl.col("d_location_type").last().alias("_fallback_d_location_type"),
             # Counts
             pl.col("linked_trip_id").count().alias("trip_count"),
             (pl.col("linked_trip_id").count() - 1).alias("stop_count"),
@@ -296,6 +296,7 @@ def _aggregate_and_classify_tours(
                     "tour_purpose",
                     pl.col("_primary_d_lat").alias("d_lat"),
                     pl.col("_primary_d_lon").alias("d_lon"),
+                    pl.col("_primary_d_type").alias("d_location_type"),
                 ]
             ),
             on="tour_id",
@@ -305,9 +306,14 @@ def _aggregate_and_classify_tours(
             [
                 pl.coalesce(["d_lat", "_fallback_d_lat"]).alias("d_lat"),
                 pl.coalesce(["d_lon", "_fallback_d_lon"]).alias("d_lon"),
+                # Keep d_location_type describing the same place as d_lat/d_lon:
+                # the primary destination, falling back to the last trip.
+                pl.coalesce(["d_location_type", "_fallback_d_location_type"]).alias(
+                    "d_location_type"
+                ),
             ]
         )
-        .drop(["_fallback_d_lat", "_fallback_d_lon"])
+        .drop(["_fallback_d_lat", "_fallback_d_lon", "_fallback_d_location_type"])
         .join(dest_times, on="tour_id", how="left")
     )
 
