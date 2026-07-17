@@ -303,6 +303,111 @@ def distant_destinations_data():
     return persons, households, unlinked_trips_with_ids, linked_trips
 
 
+HOME = (37.8, -122.4)
+SHOP = (37.82, -122.42)
+
+
+@pytest.fixture
+def round_trip_tour_data():
+    """Person goes home -> shop -> home, so the tour's destination is the shop.
+
+    The last trip of the tour ends at home, so anything reading the tour
+    destination off the final trip reports home rather than where the person
+    actually went.
+    """
+    persons = pl.DataFrame(
+        {
+            "person_id": [1],
+            "hh_id": [1],
+            "age": [AgeCategory.AGE_35_TO_44.value],
+            "employment": [Employment.EMPLOYED_FULLTIME.value],
+            "student": [Student.NONSTUDENT.value],
+            "school_type": [None],
+            "work_lat": [37.85],
+            "work_lon": [-122.45],
+            "school_lat": [None],
+            "school_lon": [None],
+        }
+    )
+
+    households = pl.DataFrame({"hh_id": [1], "home_lat": [HOME[0]], "home_lon": [HOME[1]]})
+
+    unlinked_trips = pl.DataFrame(
+        {
+            "unlinked_trip_id": [1, 2],
+            "day_id": [1, 1],
+            "person_id": [1, 1],
+            "hh_id": [1, 1],
+            "travel_dow": [TravelDow.WEDNESDAY.value] * 2,
+            "depart_time": [
+                datetime(2024, 1, 15, 9, 0, 0),
+                datetime(2024, 1, 15, 11, 0, 0),
+            ],
+            "arrive_time": [
+                datetime(2024, 1, 15, 9, 15, 0),
+                datetime(2024, 1, 15, 11, 15, 0),
+            ],
+            "o_purpose_category": [PurposeCategory.HOME.value, PurposeCategory.SHOP.value],
+            "d_purpose_category": [PurposeCategory.SHOP.value, PurposeCategory.HOME.value],
+            "o_purpose": [Purpose.HOME.value, Purpose.SHOPPING_ERRANDS.value],
+            "d_purpose": [Purpose.SHOPPING_ERRANDS.value, Purpose.HOME.value],
+            "mode_type": [ModeType.CAR.value] * 2,
+            "o_lat": [HOME[0], SHOP[0]],
+            "o_lon": [HOME[1], SHOP[1]],
+            "d_lat": [SHOP[0], HOME[0]],
+            "d_lon": [SHOP[1], HOME[1]],
+            "unlinked_trip_weight": [1.0] * 2,
+            "distance_meters": [2000.0] * 2,
+            "duration_minutes": [15.0] * 2,
+            "num_travelers": [1, 1],
+            "driver": [Driver.DRIVER.value] * 2,
+        }
+    )
+
+    link_result = link_trips(
+        unlinked_trips=unlinked_trips,
+        change_mode_enum=PurposeCategory.CHANGE_MODE.value,
+        transit_mode_enums=[ModeType.TRANSIT.value],
+    )
+    unlinked_trips_with_ids = link_result["unlinked_trips"]
+    linked_trips = link_result["linked_trips"].with_columns(
+        pl.lit(None).cast(pl.Int64).alias("joint_trip_id")
+    )
+
+    return persons, households, unlinked_trips_with_ids, linked_trips
+
+
+def test_tour_destination_is_primary_destination_not_home(round_trip_tour_data):
+    """The tour destination should be the shop, not the home it returns to."""
+    persons, households, unlinked_trips, linked_trips = round_trip_tour_data
+
+    result = extract_tours(persons, households, unlinked_trips, linked_trips)
+    tours_df = result["tours"]
+
+    assert len(tours_df) == 1
+    tour = tours_df.row(0, named=True)
+
+    assert (tour["d_lat"], tour["d_lon"]) == SHOP, (
+        "Tour destination should be the primary destination (the shop), not the "
+        "last trip's destination (home)"
+    )
+
+
+def test_single_trip_tour_destination_falls_back_to_last_trip(single_trip_tour_data):
+    """A single-trip tour has no non-last trip, so it falls back to that trip's end.
+
+    Guards the fallback: without it the tour would have no primary destination to
+    draw from and its coordinates would come out null.
+    """
+    persons, households, unlinked_trips, linked_trips = single_trip_tour_data
+
+    result = extract_tours(persons, households, unlinked_trips, linked_trips)
+    tour = result["tours"].row(0, named=True)
+
+    assert tour["d_lat"] is not None, "Fallback should keep the destination populated"
+    assert (tour["d_lat"], tour["d_lon"]) == SHOP
+
+
 def test_single_trip_tour(single_trip_tour_data):
     """Test that single-trip tours are flagged appropriately."""
     persons, households, unlinked_trips, linked_trips = single_trip_tour_data

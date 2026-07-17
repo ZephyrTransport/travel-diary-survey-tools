@@ -256,8 +256,10 @@ def _aggregate_and_classify_tours(
             pl.col("arrive_time").max().alias("origin_arrive_time"),
             pl.col("o_lat").first(),
             pl.col("o_lon").first(),
-            pl.col("d_lat").last(),
-            pl.col("d_lon").last(),
+            # Keep fallback destination coordinates for edge cases
+            # (e.g., single-trip tours with no non-last trip)
+            pl.col("d_lat").last().alias("_fallback_d_lat"),
+            pl.col("d_lon").last().alias("_fallback_d_lon"),
             pl.col("o_location_type").first().alias("o_location_type"),
             pl.col("d_location_type").last().alias("d_location_type"),
             # Counts
@@ -271,12 +273,29 @@ def _aggregate_and_classify_tours(
         ]
     )
 
-    # Join purpose and destination timing
-    tours = tours.join(
-        tour_purpose_and_coords.select(["tour_id", "tour_purpose"]),
-        on="tour_id",
-        how="left",
-    ).join(dest_times, on="tour_id", how="left")
+    # Join purpose, primary purpose lat/lon and destination timing
+    tours = (
+        tours.join(
+            tour_purpose_and_coords.select(
+                [
+                    "tour_id",
+                    "tour_purpose",
+                    pl.col("_primary_d_lat").alias("d_lat"),
+                    pl.col("_primary_d_lon").alias("d_lon"),
+                ]
+            ),
+            on="tour_id",
+            how="left",
+        )
+        .with_columns(
+            [
+                pl.coalesce(["d_lat", "_fallback_d_lat"]).alias("d_lat"),
+                pl.coalesce(["d_lon", "_fallback_d_lon"]).alias("d_lon"),
+            ]
+        )
+        .drop(["_fallback_d_lat", "_fallback_d_lon"])
+        .join(dest_times, on="tour_id", how="left")
+    )
 
     # Flag single-trip tours (incomplete tours with only one trip)
     # A valid tour must have at least 2 trips: one leaving and one returning
