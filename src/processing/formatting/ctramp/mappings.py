@@ -11,6 +11,7 @@ import polars as pl
 from data_canon.codebook.ctramp import (
     CTRAMPEmploymentCategory,
     CTRAMPGender,
+    CTRAMPIndustry,
     CTRAMPModeType,
     CTRAMPPersonType,
     CTRAMPPurpose,
@@ -20,6 +21,7 @@ from data_canon.codebook.persons import (
     AgeCategory,
     Employment,
     Gender,
+    Industry,
     SchoolType,
     Student,
 )
@@ -1174,3 +1176,115 @@ _duplicate_check = len(PURPOSECATEGORY_TO_JTF_GROUP)
 if _duplicate_check != len(_all_purpose_categories):
     msg = "Duplicate keys found in PURPOSECATEGORY_TO_JTF_GROUP mapping"
     raise ValueError(msg)
+
+
+# Industry (NAICS) -> empsix employment sector -----------------------------------
+# empsix is the six-category employment classification used by MTC travel models.
+INDUSTRY_TO_EMPSIX = {
+    Industry.AGRICULTURE.value: CTRAMPIndustry.AGREMPN.value,
+    Industry.MINING.value: CTRAMPIndustry.AGREMPN.value,
+    Industry.UTILITIES.value: CTRAMPIndustry.MWTEMPN.value,
+    Industry.CONSTRUCTION.value: CTRAMPIndustry.OTHEMPN.value,
+    Industry.MANUFACTURING.value: CTRAMPIndustry.MWTEMPN.value,
+    Industry.WHOLESALE_TRADE.value: CTRAMPIndustry.MWTEMPN.value,
+    Industry.RETAIL_TRADE.value: CTRAMPIndustry.RETEMPN.value,
+    Industry.TRANSPORTATION.value: CTRAMPIndustry.MWTEMPN.value,
+    Industry.INFORMATION.value: CTRAMPIndustry.OTHEMPN.value,
+    Industry.FINANCE_AND_INSURANCE.value: CTRAMPIndustry.FPSEMPN.value,
+    Industry.REALESTATE.value: CTRAMPIndustry.FPSEMPN.value,
+    Industry.PROFESSIONAL.value: CTRAMPIndustry.FPSEMPN.value,
+    Industry.MANAGEMENT.value: CTRAMPIndustry.FPSEMPN.value,
+    Industry.ADMINISTRATIVE.value: CTRAMPIndustry.FPSEMPN.value,
+    Industry.EDUCATIONAL.value: CTRAMPIndustry.HEREMPN.value,
+    Industry.HEALTH_AND_SOCIAL.value: CTRAMPIndustry.HEREMPN.value,
+    Industry.ARTS_AND_RECREATION.value: CTRAMPIndustry.HEREMPN.value,
+    Industry.ACCOMMODATION.value: CTRAMPIndustry.HEREMPN.value,
+    Industry.OTHER.value: CTRAMPIndustry.OTHEMPN.value,
+    Industry.PUBLIC_ADMINISTRATION.value: CTRAMPIndustry.OTHEMPN.value,
+}
+
+# Keyword fallback for the free-text "Other, please specify" industry response.
+# Only used to fill empsix that the structured `industry` code left null.
+INDUSTRY_OTHER_KEYWORD_TO_EMPSIX = {
+    # Financial and professional services
+    "technology": CTRAMPIndustry.FPSEMPN.value,
+    "biotechnology": CTRAMPIndustry.FPSEMPN.value,
+    "biotech": CTRAMPIndustry.FPSEMPN.value,
+    "biomedical": CTRAMPIndustry.FPSEMPN.value,
+    "tech": CTRAMPIndustry.FPSEMPN.value,
+    "software": CTRAMPIndustry.FPSEMPN.value,
+    "security": CTRAMPIndustry.FPSEMPN.value,
+    "legal": CTRAMPIndustry.FPSEMPN.value,
+    "law": CTRAMPIndustry.FPSEMPN.value,
+    "attorney": CTRAMPIndustry.FPSEMPN.value,
+    "marketing": CTRAMPIndustry.FPSEMPN.value,
+    # Other employment
+    "government": CTRAMPIndustry.OTHEMPN.value,
+    "judicial": CTRAMPIndustry.OTHEMPN.value,
+    "national park service": CTRAMPIndustry.OTHEMPN.value,
+    "law enforcement": CTRAMPIndustry.OTHEMPN.value,
+    "military": CTRAMPIndustry.OTHEMPN.value,
+    "library": CTRAMPIndustry.OTHEMPN.value,
+    # Manufacturing, wholesale and transportation
+    "automotive": CTRAMPIndustry.MWTEMPN.value,
+    # Health, educational and recreational services
+    "nonprofit": CTRAMPIndustry.HEREMPN.value,
+    "non-profit": CTRAMPIndustry.HEREMPN.value,
+    "non profit": CTRAMPIndustry.HEREMPN.value,
+    "philanthropy": CTRAMPIndustry.HEREMPN.value,
+    "childcare": CTRAMPIndustry.HEREMPN.value,
+    "health": CTRAMPIndustry.HEREMPN.value,
+    "fitness": CTRAMPIndustry.HEREMPN.value,
+    "school": CTRAMPIndustry.HEREMPN.value,
+    "hospitality": CTRAMPIndustry.HEREMPN.value,
+    "hotel": CTRAMPIndustry.HEREMPN.value,
+    # Retail trade
+    "e-commerce": CTRAMPIndustry.RETEMPN.value,
+    "ecommerce": CTRAMPIndustry.RETEMPN.value,
+}
+
+
+def add_industry_empsix(persons: pl.DataFrame) -> pl.DataFrame:
+    """Add an `industry_empsix` column derived from canonical `industry`.
+
+    Uses the structured NAICS `industry` code first, then fills any remaining
+    nulls from keyword matches in the free-text `industry_other` when that column
+    is present. Both inputs are read from the canonical persons frame; nothing is
+    required upstream.
+
+    Args:
+        persons: Canonical persons frame (must have `industry`; `industry_other`
+            is used when present).
+
+    Returns:
+        persons with an added `industry_empsix` column.
+    """
+    if "industry" not in persons.columns:
+        logger.warning("'industry' column not found; industry_empsix will be null for all persons")
+        return persons.with_columns(pl.lit(None).cast(pl.String).alias("industry_empsix"))
+
+    persons = persons.with_columns(
+        pl.col("industry").replace_strict(INDUSTRY_TO_EMPSIX, default=None).alias("industry_empsix")
+    )
+
+    if "industry_other" in persons.columns:
+        # Fill nulls from the free-text response. Materialise industry_empsix each
+        # iteration so pl.col("industry_empsix") stays a cheap column reference;
+        # accumulating it into a Python expression instead would build an
+        # exponentially large expression tree.
+        persons = persons.with_columns(
+            pl.col("industry_other").str.to_lowercase().str.strip_chars().alias("_industry_other")
+        )
+        for term, sector in INDUSTRY_OTHER_KEYWORD_TO_EMPSIX.items():
+            persons = persons.with_columns(
+                pl.when(
+                    pl.col("industry_empsix").is_null()
+                    & pl.col("_industry_other").str.contains(term, literal=True)
+                )
+                .then(pl.lit(sector))
+                .otherwise(pl.col("industry_empsix"))
+                .alias("industry_empsix")
+            )
+        persons = persons.drop("_industry_other")
+
+    return persons
