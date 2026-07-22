@@ -378,6 +378,8 @@ steps:
         linked_trips: "{{ output_dir }}/survey/linked_trips_2023.csv"
         tours: "{{ output_dir }}/survey/tours_2023.csv"
         joint_trips: "{{ output_dir }}/survey/joint_trips_2023.csv"
+        habitual_locations: "{{ output_dir }}/survey/habitual_locations_2023.csv"
+        habitual_location_days: "{{ output_dir }}/survey/habitual_location_days_2023.csv"
 
         # DaySim Formats
         households_daysim: "{{ output_dir }}/daysim_2023/households.csv"

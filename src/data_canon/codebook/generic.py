@@ -45,15 +45,27 @@ class LocationType(LabeledEnum):
     """The person's usual/reported school."""
 
     OTHER = (4, "Other")
-    """Any other location (shopping, social, errands, etc.)."""
+    """Any other location (shopping, social, errands, etc.).
 
-    ALTERNATE_WORK = (5, "Alternate work")
-    """A work location for the day that is *not* the person's usual workplace.
-
-    Assigned when the person did not visit their usual workplace that day but did
-    make work-related trips; the day's work location is taken to be the
-    work-related destination where they spent the most time. Trip ends at that
-    alternate location are marked ALTERNATE_WORK so the day's actual workplace is
-    visible, and the tour anchored there is treated as a work tour (rather than
-    work-related).
+    Alternate/second worksites and campuses are not a distinct type: they are
+    observed WORK/SCHOOL habitual locations, so a trip end at one is classified
+    WORK or SCHOOL like any other work or school location.
     """
+
+
+class LocationSource(LabeledEnum):
+    """Provenance of a habitual location.
+
+    Records *how* a location was established, which the wide scalar location
+    columns cannot express. See ``HabitualLocationModel``.
+    """
+
+    REPORTED = (1, "Reported")
+    """Taken from the survey's usual home/work/school location questions."""
+
+    OBSERVED = (2, "Observed")
+    """Derived from recurring observed travel (e.g. a habitual alternate
+    worksite the respondent visits repeatedly but did not report)."""
+
+    IMPUTED = (3, "Imputed")
+    """Filled in by imputation when neither reported nor observed."""

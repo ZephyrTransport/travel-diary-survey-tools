@@ -218,6 +218,7 @@ def create_linked_trip(
     driver: Driver = Driver.DRIVER,
     num_travelers: int = 1,
     distance_meters: float = 8046.72,
+    d_activity_duration: int = -2,
     num_unlinked_trips: int = 1,
     tour_direction: TourDirection = TourDirection.OUTBOUND,
     linked_trip_weight: float = 1.0,
@@ -255,6 +256,7 @@ def create_linked_trip(
         driver: Driver status enum
         num_travelers: Number of travelers
         distance_meters: Trip distance in meters
+        d_activity_duration: Minutes at the destination (sentinels: -1 home, -2 last trip)
         num_unlinked_trips: Number of component unlinked trips
         tour_direction: Tour direction enum (OUTBOUND/INBOUND)
         linked_trip_weight: Linked trip expansion factor
@@ -306,6 +308,7 @@ def create_linked_trip(
         "driver": driver.value,
         "num_travelers": num_travelers,
         "distance_meters": distance_meters,
+        "d_activity_duration": d_activity_duration,
         "num_unlinked_trips": num_unlinked_trips,
         "tour_direction": tour_direction.value,
         "linked_trip_weight": linked_trip_weight,

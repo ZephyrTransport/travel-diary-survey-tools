@@ -40,6 +40,7 @@ from data_canon.codebook.generic import LocationType
 from data_canon.codebook.persons import AgeCategory, Employment, SchoolType, Student
 from data_canon.codebook.tours import PersonCategory
 from data_canon.codebook.trips import ModeType, PurposeCategory
+from processing.tours.habitual_locations import HabitualLocationConfig
 
 
 class TourConfig(BaseModel):
@@ -164,6 +165,14 @@ class TourConfig(BaseModel):
         description=(
             "If True, only detect work-based subtours from 'usual workplace' "
             "(coordinate match to work_lat/work_lon)."
+        ),
+    )
+
+    habitual_locations: HabitualLocationConfig = Field(
+        default_factory=HabitualLocationConfig,
+        description=(
+            "Rules for promoting observed places into habitual locations, and "
+            "the radius within which two points are treated as the same place."
         ),
     )
 

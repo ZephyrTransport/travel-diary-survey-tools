@@ -64,12 +64,16 @@ def _calculate_tour_purp_and_dest(
         alias="_activity_duration",
     )
 
-    # Effective destination purpose: a destination classified as ALTERNATE_WORK
-    # (the day's work location when the usual workplace was not visited) is treated
-    # as WORK so the tour is classified as a work tour. WORK_RELATED errands
-    # elsewhere stay subtour activities.
+    # Effective destination purpose: a WORK_RELATED trip that ends at one of the
+    # person's work locations (classified WORK — a usual or an
+    # observed alternate worksite) is treated as WORK, so the tour is classified
+    # as a work tour. WORK_RELATED errands away from any work location keep their
+    # purpose and stay subtour activities.
     effective_purpose = (
-        pl.when(pl.col("d_location_type") == LocationType.ALTERNATE_WORK)
+        pl.when(
+            (pl.col("d_purpose_category") == PurposeCategory.WORK_RELATED.value)
+            & (pl.col("d_location_type") == LocationType.WORK)
+        )
         .then(pl.lit(PurposeCategory.WORK.value))
         .otherwise(pl.col("d_purpose_category"))
     )
@@ -143,8 +147,6 @@ def _calculate_destination_times(
             pl.when(pl.col("_primary_d_type") == LocationType.HOME)
             .then(pl.lit(config.distance_thresholds[LocationType.HOME]))
             .when(pl.col("_primary_d_type") == LocationType.WORK)
-            .then(pl.lit(config.distance_thresholds[LocationType.WORK]))
-            .when(pl.col("_primary_d_type") == LocationType.ALTERNATE_WORK)
             .then(pl.lit(config.distance_thresholds[LocationType.WORK]))
             .when(pl.col("_primary_d_type") == LocationType.SCHOOL)
             .then(pl.lit(config.distance_thresholds[LocationType.SCHOOL]))

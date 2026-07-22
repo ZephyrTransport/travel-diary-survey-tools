@@ -42,6 +42,8 @@ class CanonicalData:
     linked_trips: pl.DataFrame | None = None
     tours: pl.DataFrame | None = None
     joint_trips: pl.DataFrame | None = None
+    habitual_locations: pl.DataFrame | None = None
+    habitual_location_days: pl.DataFrame | None = None
 
     # Model mapping for validation
     models: dict[str, type[BaseModel]] = field(
@@ -53,6 +55,8 @@ class CanonicalData:
             "linked_trips": survey_models.LinkedTripModel,
             "tours": survey_models.TourModel,
             "joint_trips": survey_models.JointTripModel,
+            "habitual_locations": survey_models.HabitualLocationModel,
+            "habitual_location_days": survey_models.HabitualLocationDayModel,
         }
     )
 
@@ -74,6 +78,8 @@ class CanonicalData:
             "linked_trips",
             "joint_trips",
             "tours",
+            "habitual_locations",
+            "habitual_location_days",
         ],
         repr=False,
     )

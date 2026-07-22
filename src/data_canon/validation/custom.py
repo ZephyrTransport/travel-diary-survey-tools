@@ -30,6 +30,8 @@ CUSTOM_VALIDATORS: dict[str, list[Callable]] = {
     "unlinked_trips": [],
     "linked_trips": [],
     "tours": [],
+    "habitual_locations": [],
+    "habitual_location_days": [],
 }
 
 

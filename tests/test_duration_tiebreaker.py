@@ -194,6 +194,8 @@ def test_duration_tiebreaker_different_priority():
                 "d_lon": -122.4094,  # Work
                 "o_purpose_category": PurposeCategory.HOME.value,
                 "d_purpose_category": PurposeCategory.WORK.value,
+                "o_purpose": Purpose.HOME.value,
+                "d_purpose": Purpose.PRIMARY_WORKPLACE.value,
                 "mode_type": ModeType.CAR.value,
                 "distance_meters": 2000,
                 "duration_minutes": 30,
@@ -284,6 +286,8 @@ def test_activity_duration_last_trip():
                 "d_lon": -122.4094,  # Work
                 "o_purpose_category": PurposeCategory.HOME.value,
                 "d_purpose_category": PurposeCategory.WORK.value,
+                "o_purpose": Purpose.HOME.value,
+                "d_purpose": Purpose.PRIMARY_WORKPLACE.value,
                 "mode_type": ModeType.CAR.value,
                 "distance_meters": 10000,
                 "duration_minutes": 60,

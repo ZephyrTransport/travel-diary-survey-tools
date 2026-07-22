@@ -102,8 +102,10 @@ from .detection_helpers import (
     expand_anchor_periods,
     identify_home_based_tours,
 )
+from .habitual_locations import build_habitual_locations
 from .joint_tour_helpers import identify_joint_tours
 from .location_helpers import (
+    add_anchor_flags,
     classify_trip_locations,
     prepare_person_locations,
 )
@@ -132,8 +134,11 @@ logger = logging.getLogger(__name__)
         "linked_trips": {
             "day_id",
             "joint_trip_id",
-            "travel_dow",
+            "o_purpose",
+            "o_purpose_category",
+            "d_purpose",
             "d_purpose_category",
+            "d_activity_duration",
             "mode_type",
         },
     },
@@ -141,6 +146,8 @@ logger = logging.getLogger(__name__)
         "unlinked_trips": {"tour_id"},
         "linked_trips": {"tour_id"},
         "tours": {"tour_id"},
+        "habitual_locations": {"habitual_location_id"},
+        "habitual_location_days": {"habitual_location_id"},
     },
 )
 def extract_tours(
@@ -196,13 +203,36 @@ def extract_tours(
         config.person_category_expression(),
     )
 
+    # Build the habitual locations (reported home/work/school plus observed
+    # worksites, campuses and other homes derived from travel), and the per-day
+    # record of presence at them. The locations drive both classification and
+    # anchor detection; the day table is foundation for later consumers and is
+    # not read here.
+    habitual_locations, habitual_location_days = build_habitual_locations(
+        person_locations,
+        linked_trips,
+        config.habitual_locations,
+    )
+
     msg = f"Processing {len(persons)} persons, {len(linked_trips)} trips"
     logger.info(msg)
 
-    # Step 1: Prepare person locations
+    # Step 1: Classify trip ends against the habitual locations
     linked_trips_classified = classify_trip_locations(
         linked_trips,
-        person_locations,
+        habitual_locations,
+        config.distance_thresholds,
+    ).join(
+        person_locations.select(["person_id", "person_category"]),
+        on="person_id",
+        how="left",
+    )
+
+    # Anchor flags from the habitual locations (reported + observed work/school,
+    # with per-day resolution). These drive anchor-period and subtour detection.
+    linked_trips_classified = add_anchor_flags(
+        linked_trips_classified,
+        habitual_locations,
         config.distance_thresholds,
     )
 
@@ -213,11 +243,7 @@ def extract_tours(
     )
 
     # Step 3: Expand anchor location periods (work, school, etc.)
-    linked_trips_with_anchor_periods = expand_anchor_periods(
-        linked_trips_with_hb_tours,
-        person_locations,
-        config.distance_thresholds,
-    )
+    linked_trips_with_anchor_periods = expand_anchor_periods(linked_trips_with_hb_tours)
 
     # Step 4: Detect anchor-based subtours (work-based, school-based, etc.)
     linked_trips_with_subtours = detect_anchor_based_subtours(linked_trips_with_anchor_periods)
@@ -273,4 +299,6 @@ def extract_tours(
         "unlinked_trips": unlinked_trips_with_tour_ids,
         "linked_trips": linked_trips_with_tour_dir,
         "tours": tours,
+        "habitual_locations": habitual_locations,
+        "habitual_location_days": habitual_location_days,
     }
