@@ -143,7 +143,18 @@ def format_daysim(
     if drop_invalid_tours:
         n_og_tours = len(tours)
         n_og_trips = len(linked_trips)
-        tours = tours.filter(pl.col("tour_data_quality") == TourDataQuality.VALID.value)
+        # Prefer the shared ``model_usable`` gate stamped by flag_model_usable
+        # (cascaded completeness AND admissible tour structure) so DaySim,
+        # CT-RAMP and the weighting agree on the tour universe. Fall back to the
+        # quality descriptor when the gate has not been stamped.
+        # The column can exist but be unstamped (null) on frames that never
+        # passed through the step, so fall back per row rather than dropping.
+        is_valid = pl.col("tour_data_quality") == TourDataQuality.VALID.value
+        if "model_usable" in tours.columns:
+            keep = pl.col("model_usable").fill_null(is_valid)
+        else:
+            keep = is_valid
+        tours = tours.filter(keep)
         linked_trips = linked_trips.filter(pl.col("tour_id").is_in(tours["tour_id"].implode()))
 
         # NOTE: We keep all days even if their tours are invalid

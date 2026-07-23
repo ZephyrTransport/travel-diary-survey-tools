@@ -44,3 +44,4 @@ class TourDataQuality(LabeledEnum):
     MISSING_HOME_ANCHOR = (3, "No home anchor at either end of tour")
     INDETERMINATE = (4, "Invalid tour, cause unknown")
     CHANGE_MODE = (5, "Change mode as primary purpose (linking failure)")
+    SPATIAL_GAP = (6, "Spatial gap between consecutive trips (missing leg)")

@@ -7,6 +7,21 @@ Use the validate_* functions to validate Polars DataFrames by iterating
 through rows.
 
 Any field without None as an allowed type is considered required core data.
+
+# Completeness vs. model admissibility
+
+Two flags answer two different questions and must not be conflated:
+
+* ``complete`` -- *did we collect this record?* Survey reporting completeness,
+  cascaded from household down. Partial and overnight tours stay ``True``: they
+  are valid survey data, useful for survey analysis.
+* ``model_usable`` -- *do the travel models take this record?* Reporting
+  completeness AND an admissible tour structure. Stamped once by the
+  ``flag_model_usable`` step and read by the CT-RAMP/DaySim drop and the
+  weighting.
+
+Gate on ``model_usable``; ``complete`` is the descriptor it derives from. See
+[`processing.completeness`][processing.completeness] for the per-level rules.
 """
 
 from datetime import datetime
@@ -56,6 +71,15 @@ class HouseholdModel(BaseModel):
     hh_weight: float | None = schema_field(ge=0)
     num_vehicles: int = schema_field(ge=0)
     complete: bool = schema_field()
+    model_usable: bool | None = schema_field(
+        default=None,
+        description=(
+            "Admissible to the tour-based model: survey-complete AND part of a "
+            "well-formed tour structure. Stamped by the flag_model_usable step; "
+            "gates the CT-RAMP/DaySim drop and the weighting. Not a data-quality "
+            "verdict - see `complete`."
+        ),
+    )
 
 
 class PersonModel(BaseModel):
@@ -98,6 +122,15 @@ class PersonModel(BaseModel):
     is_proxy: bool | None = schema_field(default=None)
     num_days_complete: int = schema_field(ge=0, default=0)
     complete: bool | None = schema_field(default=None)
+    model_usable: bool | None = schema_field(
+        default=None,
+        description=(
+            "Admissible to the tour-based model: survey-complete AND part of a "
+            "well-formed tour structure. Stamped by the flag_model_usable step; "
+            "gates the CT-RAMP/DaySim drop and the weighting. Not a data-quality "
+            "verdict - see `complete`."
+        ),
+    )
     person_weight: float | None = schema_field(default=None, ge=0)
 
 
@@ -114,6 +147,15 @@ class PersonDayModel(BaseModel):
     travel_date: datetime = schema_field()
     travel_dow: TravelDow = schema_field()
     complete: bool | None = schema_field(default=False)
+    model_usable: bool | None = schema_field(
+        default=None,
+        description=(
+            "Admissible to the tour-based model: survey-complete AND part of a "
+            "well-formed tour structure. Stamped by the flag_model_usable step; "
+            "gates the CT-RAMP/DaySim drop and the weighting. Not a data-quality "
+            "verdict - see `complete`."
+        ),
+    )
     day_weight: float | None = schema_field(default=None, ge=0)
 
 
@@ -145,6 +187,15 @@ class UnlinkedTripModel(BaseModel):
     arrive_time: datetime | None = schema_field()
     num_travelers: int = schema_field(ge=1)
     complete: bool | None = schema_field(default=None)
+    model_usable: bool | None = schema_field(
+        default=None,
+        description=(
+            "Admissible to the tour-based model: survey-complete AND part of a "
+            "well-formed tour structure. Stamped by the flag_model_usable step; "
+            "gates the CT-RAMP/DaySim drop and the weighting. Not a data-quality "
+            "verdict - see `complete`."
+        ),
+    )
     unlinked_trip_weight: float | None = schema_field(default=None, ge=0)
 
     # You can add custom row-level validators here
@@ -221,6 +272,15 @@ class LinkedTripModel(BaseModel):
         description="Classified location type of the trip destination (Home/Work/School/Other).",
     )
     complete: bool | None = schema_field(default=None)
+    model_usable: bool | None = schema_field(
+        default=None,
+        description=(
+            "Admissible to the tour-based model: survey-complete AND part of a "
+            "well-formed tour structure. Stamped by the flag_model_usable step; "
+            "gates the CT-RAMP/DaySim drop and the weighting. Not a data-quality "
+            "verdict - see `complete`."
+        ),
+    )
     linked_trip_weight: float | None = schema_field(default=None, ge=0)
 
 
@@ -271,6 +331,15 @@ class TourModel(BaseModel):
     inbound_mode: ModeType | None = schema_field()
     num_travelers: int = schema_field(ge=1, default=1)
     complete: bool | None = schema_field(default=None)
+    model_usable: bool | None = schema_field(
+        default=None,
+        description=(
+            "Admissible to the tour-based model: survey-complete AND part of a "
+            "well-formed tour structure. Stamped by the flag_model_usable step; "
+            "gates the CT-RAMP/DaySim drop and the weighting. Not a data-quality "
+            "verdict - see `complete`."
+        ),
+    )
     tour_weight: float | None = schema_field(default=None, ge=0)
 
     @model_validator(mode="after")
@@ -332,6 +401,15 @@ class JointTripModel(BaseModel):
     depart_time_mean: datetime = schema_field(description="Mean departure time across member trips")
     depart_arrive_mean: datetime = schema_field(description="Mean arrival time across member trips")
     complete: bool | None = schema_field(default=None)
+    model_usable: bool | None = schema_field(
+        default=None,
+        description=(
+            "Admissible to the tour-based model: survey-complete AND part of a "
+            "well-formed tour structure. Stamped by the flag_model_usable step; "
+            "gates the CT-RAMP/DaySim drop and the weighting. Not a data-quality "
+            "verdict - see `complete`."
+        ),
+    )
     joint_trip_weight: float | None = schema_field(default=None, ge=0)
 
 

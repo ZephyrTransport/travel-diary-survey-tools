@@ -167,10 +167,70 @@ class ExistingWeightConfig(BaseModel):
             raise ValueError(msg)
 
 
+def _zero_out_gated(
+    tables: dict[str, pl.DataFrame | None],
+    has_weight: dict[str, str],
+    *,
+    gate_column: str,
+    rebalance: bool,
+) -> None:
+    """Zero the weight of gated-out records, optionally rebalancing survivors.
+
+    For every weighted table carrying *gate_column*, sets the weight to ``0``
+    where that flag is False. When *rebalance* is True, the surviving weights
+    are then scaled up so the table's total weight returns to its pre-zeroing
+    value — preserving the population estimate ("retain unity"). The rescale is
+    a single naive global factor per table. Modifies *tables* in place.
+
+    Args:
+        tables: Mutable dict of table_name → DataFrame (or None).
+        has_weight: Dict of table_name → weight column name.
+        gate_column: Boolean column deciding which records may carry weight
+            (``model_usable`` by default; ``complete`` to weight the whole
+            valid survey).
+        rebalance: If True, rescale surviving weights to preserve each table's
+            total weight after zeroing.
+    """
+    for table_name, weight_col in has_weight.items():
+        df = tables.get(table_name)
+        if df is None or gate_column not in df.columns:
+            continue
+
+        pre_zero_total = df.select(pl.col(weight_col).sum()).item()
+        df = df.with_columns(
+            pl.when(pl.col(gate_column).fill_null(value=False))
+            .then(pl.col(weight_col))
+            .otherwise(0.0)
+            .alias(weight_col)
+        )
+
+        if rebalance:
+            surviving_total = df.select(pl.col(weight_col).sum()).item()
+            if surviving_total and surviving_total > 0:
+                scale = pre_zero_total / surviving_total
+                df = df.with_columns((pl.col(weight_col) * scale).alias(weight_col))
+                logger.info(
+                    "Rebalanced %s after zeroing gated-out records: scaled surviving weights "
+                    "by %.4f to preserve total weight %.1f",
+                    table_name,
+                    scale,
+                    pre_zero_total,
+                )
+            else:
+                logger.warning(
+                    "Cannot rebalance %s: no complete records with positive weight remain",
+                    table_name,
+                )
+
+        tables[table_name] = df
+
+
 @step()
 def add_existing_weights(  # noqa: C901, PLR0912, PLR0915
     weights: dict[str, ExistingWeightConfig | dict],
     derive_missing_weights: bool = False,
+    rebalance_incompletes: bool = False,
+    weight_gate: str = "model_usable",
     households: pl.DataFrame | None = None,
     persons: pl.DataFrame | None = None,
     days: pl.DataFrame | None = None,
@@ -234,6 +294,17 @@ def add_existing_weights(  # noqa: C901, PLR0912, PLR0915
 
         derive_missing_weights: Whether to derive weights for tables
             without provided weight files (default: False).
+        rebalance_incompletes: If True, after zeroing the weights of gated-out
+            records, rescale the surviving weights so each provided table's total
+            weight returns to its pre-zeroing value. This keeps the population
+            estimate constant when records are dropped to zero. The rescale is a
+            single naive global factor per table and is carried down to derived
+            tables via propagation (default: False).
+        weight_gate: Boolean column deciding which records may carry weight,
+            stamped upstream by the ``flag_model_usable`` step. Defaults to
+            ``model_usable`` (the modelling gate, matching the tours CT-RAMP and
+            DaySim keep); pass ``complete`` to weight the whole valid survey
+            including partial and overnight tours.
         households: Households DataFrame.
         persons: Persons DataFrame.
         days: Days DataFrame.
@@ -251,6 +322,7 @@ def add_existing_weights(  # noqa: C901, PLR0912, PLR0915
         - name: add_existing_weights
           params:
             derive_missing_weights: true
+            rebalance_incompletes: true
             weights:
               household_weights:
                 weight_path: "weights/hh_weights.csv"
@@ -341,16 +413,10 @@ def add_existing_weights(  # noqa: C901, PLR0912, PLR0915
         tables[table_name] = df.join(weight_df, on=cfg.table_id_col, how="left")
         has_weight[table_name] = cfg.canonical_weight_col
 
-    # Zero out weights for incomplete records on tables that already have weights
-    for table_name, weight_col in has_weight.items():
-        df = tables.get(table_name)
-        if df is not None and "complete" in df.columns:
-            tables[table_name] = df.with_columns(
-                pl.when(pl.col("complete"))
-                .then(pl.col(weight_col))
-                .otherwise(0.0)
-                .alias(weight_col)
-            )
+    # Zero out weights for records the gate excludes on tables that already have
+    # weights, optionally rebalancing survivors to preserve each table's total.
+    # The gate itself is stamped upstream by the ``flag_model_usable`` step.
+    _zero_out_gated(tables, has_weight, gate_column=weight_gate, rebalance=rebalance_incompletes)
 
     # Derive missing weights if requested
     if derive_missing_weights:

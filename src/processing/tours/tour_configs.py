@@ -168,6 +168,18 @@ class TourConfig(BaseModel):
         ),
     )
 
+    spatial_gap_threshold_meters: float = Field(
+        default=1000.0,
+        description=(
+            "A tour is flagged SPATIAL_GAP when any internal junction has a "
+            "gap greater than this (meters) between one trip's destination and "
+            "the next trip's origin - i.e. a missing leg the tour extractor "
+            "would otherwise silently weld into one 'complete' tour. Default "
+            "1 km catches genuine teleports while ignoring same-place geocoding "
+            "jitter."
+        ),
+    )
+
     habitual_locations: HabitualLocationConfig = Field(
         default_factory=HabitualLocationConfig,
         description=(

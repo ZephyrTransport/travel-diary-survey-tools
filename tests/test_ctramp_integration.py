@@ -17,7 +17,7 @@ from data_canon.codebook.households import IncomeBroad
 from data_canon.codebook.persons import (
     AgeCategory,
 )
-from data_canon.codebook.tours import TourDirection
+from data_canon.codebook.tours import TourCategory, TourDataQuality, TourDirection
 from data_canon.codebook.trips import PurposeCategory
 from data_canon.models.ctramp import (
     HouseholdCTRAMPModel,
@@ -28,6 +28,7 @@ from data_canon.models.ctramp import (
     PersonCTRAMPModel,
 )
 from processing.formatting.ctramp.ctramp_config import CTRAMPConfig
+from processing.formatting.ctramp.filters import _drop_invalid_tours
 from processing.formatting.ctramp.format_ctramp import format_ctramp
 from processing.formatting.ctramp.format_households import format_households
 from processing.formatting.ctramp.format_persons import format_persons
@@ -267,6 +268,128 @@ class TestEndToEndFormatting:
         # Both households should remain
         assert len(households_ctramp) == 2
         assert len(persons_ctramp) == 2
+
+
+class TestDropInvalidTours:
+    """Tests for dropping unusable tours in the CT-RAMP formatter.
+
+    Drops tours that are not VALID or not COMPLETE, mirroring the DaySim
+    formatter, so single-trip/loop tours (which carry a null tour_purpose) do
+    not leak into CT-RAMP output as the OTHDISCR catch-all, and both outputs
+    keep the same tours.
+    """
+
+    def _linked_trips(self, tour_ids: list[int]) -> pl.DataFrame:
+        """One non-joint linked trip per tour id."""
+        return pl.DataFrame(
+            {
+                "linked_trip_id": [t * 10 for t in tour_ids],
+                "tour_id": tour_ids,
+                "joint_trip_id": [None] * len(tour_ids),
+            },
+            schema={
+                "linked_trip_id": pl.Int64,
+                "tour_id": pl.Int64,
+                "joint_trip_id": pl.Int64,
+            },
+        )
+
+    def _empty_joint_trips(self) -> pl.DataFrame:
+        return pl.DataFrame({"joint_trip_id": []}, schema={"joint_trip_id": pl.Int64})
+
+    def test_drops_invalid_and_partial_and_cascades(self):
+        """Non-VALID and non-COMPLETE tours (and their trips) are removed."""
+        tours = pl.DataFrame(
+            {
+                "tour_id": [1, 2, 3, 4],
+                "tour_data_quality": [
+                    TourDataQuality.VALID.value,
+                    TourDataQuality.SINGLE_TRIP.value,  # invalid
+                    TourDataQuality.VALID.value,
+                    TourDataQuality.VALID.value,
+                ],
+                "tour_category": [
+                    TourCategory.COMPLETE.value,
+                    TourCategory.PARTIAL_BOTH.value,
+                    TourCategory.COMPLETE.value,
+                    TourCategory.PARTIAL_END.value,  # valid but partial
+                ],
+            }
+        )
+        tours_out, linked_out, _ = _drop_invalid_tours(
+            tours, self._linked_trips([1, 2, 3, 4]), self._empty_joint_trips()
+        )
+        # Tour 2 (invalid) and tour 4 (valid-but-partial) dropped
+        assert sorted(tours_out["tour_id"].to_list()) == [1, 3]
+        assert sorted(linked_out["tour_id"].to_list()) == [1, 3]
+
+    def test_all_valid_complete_keeps_everything(self):
+        """VALID + COMPLETE tours are all kept."""
+        tours = pl.DataFrame(
+            {
+                "tour_id": [1, 2],
+                "tour_data_quality": [TourDataQuality.VALID.value] * 2,
+                "tour_category": [TourCategory.COMPLETE.value] * 2,
+            }
+        )
+        tours_out, linked_out, _ = _drop_invalid_tours(
+            tours, self._linked_trips([1, 2]), self._empty_joint_trips()
+        )
+        assert sorted(tours_out["tour_id"].to_list()) == [1, 2]
+        assert sorted(linked_out["tour_id"].to_list()) == [1, 2]
+
+    def test_only_category_present_still_drops_partial(self):
+        """A frame with tour_category but no tour_data_quality still drops partials."""
+        tours = pl.DataFrame(
+            {
+                "tour_id": [1, 2],
+                "tour_category": [TourCategory.COMPLETE.value, TourCategory.PARTIAL_END.value],
+            }
+        )
+        tours_out, linked_out, _ = _drop_invalid_tours(
+            tours, self._linked_trips([1, 2]), self._empty_joint_trips()
+        )
+        assert tours_out["tour_id"].to_list() == [1]
+        assert linked_out["tour_id"].to_list() == [1]
+
+    def test_cascades_to_joint_trips(self):
+        """A joint trip belonging only to a dropped tour is removed."""
+        linked_trips = pl.DataFrame(
+            {
+                "linked_trip_id": [10, 20],
+                "tour_id": [1, 2],
+                "joint_trip_id": [None, 500],
+            },
+            schema={
+                "linked_trip_id": pl.Int64,
+                "tour_id": pl.Int64,
+                "joint_trip_id": pl.Int64,
+            },
+        )
+        joint_trips = pl.DataFrame({"joint_trip_id": [500]}, schema={"joint_trip_id": pl.Int64})
+        tours = pl.DataFrame(
+            {
+                "tour_id": [1, 2],
+                "tour_data_quality": [
+                    TourDataQuality.VALID.value,
+                    TourDataQuality.SINGLE_TRIP.value,
+                ],
+                "tour_category": [TourCategory.COMPLETE.value, TourCategory.PARTIAL_BOTH.value],
+            }
+        )
+
+        _, _, joint_trips_out = _drop_invalid_tours(tours, linked_trips, joint_trips)
+        # Joint trip 500 belonged only to dropped tour 2, so it is removed
+        assert joint_trips_out["joint_trip_id"].to_list() == []
+
+    def test_no_filter_columns_is_noop(self):
+        """Tours with neither quality nor category column are left untouched."""
+        tours = pl.DataFrame({"tour_id": [1, 2]})
+        tours_out, linked_out, _ = _drop_invalid_tours(
+            tours, self._linked_trips([1, 2]), self._empty_joint_trips()
+        )
+        assert sorted(tours_out["tour_id"].to_list()) == [1, 2]
+        assert sorted(linked_out["tour_id"].to_list()) == [1, 2]
 
 
 class TestColumnPresence:

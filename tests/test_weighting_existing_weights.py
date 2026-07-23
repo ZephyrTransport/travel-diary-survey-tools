@@ -527,3 +527,72 @@ class TestAddExistingWeights:
 
         assert "person_weight" in result["persons"].columns
         assert result["persons"]["person_weight"].to_list() == [1.2, 1.5, 1.8]
+
+
+class TestRebalanceIncompletes:
+    """Tests for the rebalance_incompletes option of add_existing_weights.
+
+    These gate on ``complete`` (the survey gate) rather than the default
+    ``model_usable``, since the fixtures carry no tour structure.
+    """
+
+    def _households(self) -> pl.DataFrame:
+        """Four households, one incomplete (hh 3)."""
+        return pl.DataFrame(
+            {
+                "hh_id": [1, 2, 3, 4],
+                "hh_size": [2, 3, 1, 2],
+                "complete": [True, True, False, True],
+            }
+        )
+
+    def _weights_config(self, tmp_path) -> dict:
+        weight_file = tmp_path / "hh_weights.csv"
+        pl.DataFrame({"hh_id": [1, 2, 3, 4], "hh_weight": [10.0, 20.0, 30.0, 40.0]}).write_csv(
+            weight_file
+        )
+        return {"household_weights": {"weight_path": str(weight_file)}}
+
+    def test_incompletes_zeroed_without_rebalance(self, tmp_path):
+        """By default incompletes are zeroed and survivors are unchanged."""
+        result = add_existing_weights(
+            weights=self._weights_config(tmp_path),
+            households=self._households(),
+            weight_gate="complete",
+        )
+        weights = result["households"].sort("hh_id")["hh_weight"].to_list()
+        # hh 3 (incomplete) zeroed; others unchanged; total drops from 100 to 70
+        assert weights == [10.0, 20.0, 0.0, 40.0]
+        assert sum(weights) == pytest.approx(70.0)
+
+    def test_rebalance_preserves_total(self, tmp_path):
+        """With rebalance, survivors are scaled so the pre-zero total is retained."""
+        result = add_existing_weights(
+            weights=self._weights_config(tmp_path),
+            households=self._households(),
+            rebalance_incompletes=True,
+            weight_gate="complete",
+        )
+        df = result["households"].sort("hh_id")
+        weights = df["hh_weight"].to_list()
+        # Incomplete stays 0; total restored to the pre-zero total of 100
+        assert weights[2] == 0.0
+        assert sum(weights) == pytest.approx(100.0)
+        # Survivors scaled by 100/70, preserving their relative proportions
+        scale = 100.0 / 70.0
+        assert weights[0] == pytest.approx(10.0 * scale)
+        assert weights[1] == pytest.approx(20.0 * scale)
+        assert weights[3] == pytest.approx(40.0 * scale)
+
+    def test_rebalance_all_incomplete_is_safe(self, tmp_path):
+        """If no complete records remain, rebalance is skipped without error."""
+        households = pl.DataFrame({"hh_id": [1, 2], "hh_size": [2, 3], "complete": [False, False]})
+        weight_file = tmp_path / "hh_weights.csv"
+        pl.DataFrame({"hh_id": [1, 2], "hh_weight": [10.0, 20.0]}).write_csv(weight_file)
+        result = add_existing_weights(
+            weights={"household_weights": {"weight_path": str(weight_file)}},
+            households=households,
+            rebalance_incompletes=True,
+            weight_gate="complete",
+        )
+        assert result["households"]["hh_weight"].to_list() == [0.0, 0.0]

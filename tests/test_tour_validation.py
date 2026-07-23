@@ -114,6 +114,88 @@ class TestValidateAndCorrectTours:
         assert quality != TourDataQuality.VALID.value
 
 
+class TestSpatialGapDetection:
+    """Test SPATIAL_GAP flagging for tours that teleport across a missing leg."""
+
+    def _tour(self, points, *, purpose=PurposeCategory.WORK.value):
+        """Build a single multi-trip tour + linked_trips from o/d coordinates.
+
+        points: list of (depart, o_home, d_home, o(lat,lon), d(lat,lon)).
+        """
+        n = len(points)
+        tours = pl.DataFrame(
+            {
+                "tour_id": ["tour_1"],
+                "person_id": [1],
+                "day_id": [1],
+                "trip_count": [n],
+                "tour_num": [1],
+                "tour_category": [TourCategory.COMPLETE.value],
+                "tour_purpose": [purpose],
+            }
+        )
+        linked_trips = pl.DataFrame(
+            {
+                "tour_id": ["tour_1"] * n,
+                "person_id": [1] * n,
+                "hh_id": [1] * n,
+                "day_id": [1] * n,
+                "tour_num": [1] * n,
+                "depart_time": [p[0] for p in points],
+                "_o_is_home": [p[1] for p in points],
+                "_d_is_home": [p[2] for p in points],
+                "o_lat": [p[3][0] for p in points],
+                "o_lon": [p[3][1] for p in points],
+                "d_lat": [p[4][0] for p in points],
+                "d_lon": [p[4][1] for p in points],
+            }
+        )
+        return tours, linked_trips
+
+    def test_internal_gap_flags_spatial_gap(self):
+        """A tour whose trips jump across a hole is flagged SPATIAL_GAP."""
+        home, a, b = (37.70, -122.40), (37.75, -122.42), (37.76, -122.43)
+        far = (38.30, -123.00)  # >1km from b -> the connecting leg is missing
+        tours, linked_trips = self._tour(
+            [
+                (8.0, True, False, home, a),
+                (10.0, False, False, a, b),  # continuous: resumes at a
+                (17.0, False, True, far, home),  # jumps: origin far from b
+            ]
+        )
+        result = validate_and_correct_tours(tours, linked_trips)
+        assert result["tour_data_quality"][0] == TourDataQuality.SPATIAL_GAP.value
+
+    def test_continuous_tour_stays_valid(self):
+        """A spatially continuous multi-trip tour remains VALID."""
+        home, a = (37.70, -122.40), (37.75, -122.42)
+        tours, linked_trips = self._tour(
+            [
+                (8.0, True, False, home, a),
+                (17.0, False, True, a, home),  # resumes at a -> continuous
+            ]
+        )
+        result = validate_and_correct_tours(tours, linked_trips)
+        assert result["tour_data_quality"][0] == TourDataQuality.VALID.value
+
+    def test_threshold_is_configurable(self):
+        """A jump below the configured threshold is not flagged."""
+        home, a, b = (37.70, -122.40), (37.75, -122.42), (37.76, -122.43)
+        far = (38.30, -123.00)
+        tours, linked_trips = self._tour(
+            [
+                (8.0, True, False, home, a),
+                (10.0, False, False, a, b),
+                (17.0, False, True, far, home),
+            ]
+        )
+        # A very large threshold tolerates the jump -> tour stays VALID.
+        result = validate_and_correct_tours(
+            tours, linked_trips, spatial_gap_threshold_meters=1_000_000.0
+        )
+        assert result["tour_data_quality"][0] == TourDataQuality.VALID.value
+
+
 class TestDiagnoseProblemTours:
     """Test diagnostic logging for problem tours."""
 

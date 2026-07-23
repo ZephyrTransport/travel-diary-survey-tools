@@ -65,6 +65,13 @@ steps:
   - name: extract_tours
     validate_input: true
     cache: true
+    params:
+      # A tour is flagged SPATIAL_GAP (and dropped by the formatters) when any
+      # internal junction jumps more than this many meters between one trip's
+      # destination and the next trip's origin - a missing leg the extractor
+      # would otherwise weld into one "complete" tour. 1 km catches genuine
+      # teleports while ignoring same-place geocoding jitter.
+      spatial_gap_threshold_meters: 1000.0
 
   # - name: weighting
   #   validate_input: true

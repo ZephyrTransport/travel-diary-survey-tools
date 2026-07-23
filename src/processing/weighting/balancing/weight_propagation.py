@@ -20,12 +20,16 @@ steps to propagate household weights down through the canonical table hierarchy.
 * ``sum(day_weight) ≈ sum(person_weight x complete_travel_days)``
 * ``sum(unlinked_trip_weight) ≈ sum(day_weight x trips_per_day)``
 
-# Completion flag
+# Gate column
 
-If a table has a ``complete`` boolean column, records with
-``complete == False`` receive a weight of **0** after the carry-forward
-join.  This ensures that incomplete records never contribute to
-downstream aggregations (the aggregation step already excludes zeros).
+Records excluded by the *gate column* receive a weight of **0** after the
+carry-forward join, so they never contribute to downstream aggregations (the
+aggregation step already excludes zeros).  The gate defaults to
+``model_usable`` -- the modelling gate stamped by the ``flag_model_usable``
+step (see [`processing.completeness`][processing.completeness]) -- so the
+weighted sample matches the tours CT-RAMP/DaySim actually keep.  Pass
+``complete`` instead to weight the whole valid survey, including partial and
+overnight tours.
 """
 
 import logging
@@ -119,6 +123,7 @@ def propagate_weights(  # noqa: C901, PLR0912
     has_weight: dict[str, str],
     *,
     skip: set[str] | None = None,
+    gate_column: str | None = "model_usable",
 ) -> None:
     """Carry forward and aggregate weights through the hierarchy.
 
@@ -131,6 +136,11 @@ def propagate_weights(  # noqa: C901, PLR0912
             E.g. ``{"households": "hh_weight"}``.
         skip: Table names to skip (e.g. tables that already have
             externally provided weights).
+        gate_column: Boolean column deciding which records may carry weight.
+            Records where it is False get a weight of 0 after each
+            carry-forward join. Defaults to ``model_usable`` (the modelling
+            gate); pass ``complete`` to weight the whole valid survey including
+            partial/overnight tours, or None to skip zeroing entirely.
     """
     skip = skip or set()
 
@@ -164,10 +174,10 @@ def propagate_weights(  # noqa: C901, PLR0912
         w = parent_df.select(join_key, parent_weight).rename({parent_weight: weight_col})
         tables[child] = safe_join_weight(child_df, w, join_key)
 
-        # Zero out weight for incomplete records
-        if "complete" in tables[child].columns:
+        # Zero out weight for records the gate excludes
+        if gate_column and gate_column in tables[child].columns:
             tables[child] = tables[child].with_columns(
-                pl.when(pl.col("complete"))
+                pl.when(pl.col(gate_column).fill_null(value=False))
                 .then(pl.col(weight_col))
                 .otherwise(0.0)
                 .alias(weight_col)

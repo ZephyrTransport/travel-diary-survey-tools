@@ -6,9 +6,14 @@ import polars as pl
 import pytest
 
 from data_canon.codebook.persons import AgeCategory, Gender
+from data_canon.codebook.tours import TourDataQuality
 from data_canon.codebook.trips import ModeType, Purpose, PurposeCategory
 from data_canon.core.dataclass import CanonicalData
 from data_canon.core.exceptions import DataValidationError
+from data_canon.validation.custom import (
+    check_trip_spatial_continuity,
+    check_valid_tours_are_complete,
+)
 from tests.fixtures import create_household, create_person
 
 
@@ -412,3 +417,135 @@ class TestCustomValidators:
             ]
         )
         data.validate("persons", step="link_trips")
+
+
+class TestValidToursAreComplete:
+    """Tests for the check_valid_tours_are_complete custom validator."""
+
+    def _tours(self, quality, *, single_trip, purpose):
+        """Build a one-row tours frame with the given quality/flag/purpose."""
+        return pl.DataFrame(
+            {
+                "tour_id": [1],
+                "tour_data_quality": [quality],
+                "single_trip_tour": [single_trip],
+                "tour_purpose": [purpose],
+            },
+            schema={
+                "tour_id": pl.Int64,
+                "tour_data_quality": pl.Int64,
+                "single_trip_tour": pl.Boolean,
+                "tour_purpose": pl.Int64,
+            },
+        )
+
+    def test_valid_complete_tour_passes(self):
+        """A VALID tour that is not single-trip and has a purpose is clean."""
+        tours = self._tours(
+            TourDataQuality.VALID.value, single_trip=False, purpose=PurposeCategory.WORK.value
+        )
+        assert check_valid_tours_are_complete(tours) == []
+
+    def test_single_trip_flagged_invalid_passes(self):
+        """A single-trip tour flagged non-VALID is allowed to lack a purpose."""
+        tours = self._tours(TourDataQuality.SINGLE_TRIP.value, single_trip=True, purpose=None)
+        assert check_valid_tours_are_complete(tours) == []
+
+    def test_valid_but_single_trip_fails(self):
+        """A tour mislabeled VALID but flagged single-trip is reported."""
+        tours = self._tours(
+            TourDataQuality.VALID.value, single_trip=True, purpose=PurposeCategory.WORK.value
+        )
+        errors = check_valid_tours_are_complete(tours)
+        assert len(errors) == 1
+        assert "VALID" in errors[0]
+
+    def test_valid_but_null_purpose_fails(self):
+        """A tour marked VALID with a null purpose is reported."""
+        tours = self._tours(TourDataQuality.VALID.value, single_trip=False, purpose=None)
+        errors = check_valid_tours_are_complete(tours)
+        assert len(errors) == 1
+
+    def test_missing_quality_column_is_noop(self):
+        """Frames without tour_data_quality produce no errors."""
+        tours = pl.DataFrame({"tour_id": [1], "single_trip_tour": [True], "tour_purpose": [None]})
+        assert check_valid_tours_are_complete(tours) == []
+
+
+class TestTripSpatialContinuity:
+    """Tests for the check_trip_spatial_continuity custom validator."""
+
+    def _trips(self, points):
+        """Build a linked_trips frame from (person, day, depart, o, d) points.
+
+        Each origin/destination is a (lat, lon) tuple.
+        """
+        return pl.DataFrame(
+            {
+                "linked_trip_id": list(range(1, len(points) + 1)),
+                "person_id": [p[0] for p in points],
+                "day_id": [p[1] for p in points],
+                "depart_time": [p[2] for p in points],
+                "o_lat": [p[3][0] for p in points],
+                "o_lon": [p[3][1] for p in points],
+                "d_lat": [p[4][0] for p in points],
+                "d_lon": [p[4][1] for p in points],
+            }
+        )
+
+    def test_continuous_trips_pass(self):
+        """A day where each trip resumes where the last ended has no gaps."""
+        home, work = (37.70, -122.40), (37.80, -122.45)
+        trips = self._trips(
+            [
+                (1, 1, 8.0, home, work),
+                (1, 1, 17.0, work, home),  # resumes at work -> continuous
+            ]
+        )
+        assert check_trip_spatial_continuity(trips) == []
+
+    def test_small_sample_with_gap_never_fails(self):
+        """A high gap rate over only a few junctions is noise, not a failure."""
+        home, a = (37.70, -122.40), (37.75, -122.42)
+        far = (38.50, -123.20)
+        # One person-day, one junction that jumps: 100% rate but tiny sample.
+        trips = self._trips(
+            [
+                (1, 1, 8.0, home, a),
+                (1, 1, 17.0, far, home),
+            ]
+        )
+        assert check_trip_spatial_continuity(trips) == []
+
+    def test_low_rate_at_scale_passes(self):
+        """A small fraction of gaps across many junctions is normal survey noise."""
+        home, a = (37.70, -122.40), (37.75, -122.42)
+        far = (38.20, -122.90)
+        points = []
+        # 1,200 continuous person-days (1 junction each, gap 0)
+        for person in range(1, 1201):
+            points.append((person, 1, 8.0, home, a))
+            points.append((person, 1, 17.0, a, home))
+        # 20 person-days with a genuine gap -> ~1.6% << 15% ceiling
+        for person in range(1201, 1221):
+            points.append((person, 1, 8.0, home, a))
+            points.append((person, 1, 17.0, far, home))
+        assert check_trip_spatial_continuity(self._trips(points)) == []
+
+    def test_high_rate_at_scale_fails(self):
+        """A high gap rate over a meaningful sample flags a systemic problem."""
+        home, a = (37.70, -122.40), (37.75, -122.42)
+        far = (38.50, -123.20)
+        points = []
+        # 1,200 person-days where every junction jumps -> 100% rate at scale.
+        for person in range(1, 1201):
+            points.append((person, 1, 8.0, home, a))
+            points.append((person, 1, 17.0, far, home))
+        errors = check_trip_spatial_continuity(self._trips(points))
+        assert len(errors) == 1
+        assert "systemic" in errors[0].lower()
+
+    def test_missing_columns_is_noop(self):
+        """Frames without coordinate columns produce no errors."""
+        trips = pl.DataFrame({"linked_trip_id": [1], "person_id": [1], "day_id": [1]})
+        assert check_trip_spatial_continuity(trips) == []

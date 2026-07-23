@@ -418,63 +418,80 @@ def _make_tables_with_complete():
     }
 
 
-class TestPropagateCompletionFlag:
-    """Tests for zeroing out weights on incomplete records."""
+class TestPropagateGateColumn:
+    """Tests for zeroing out weights on records the gate column excludes.
 
-    def test_incomplete_persons_get_zero_weight(self):
+    The gate defaults to ``model_usable``; these exercise it against the
+    ``complete`` column, which is the other supported gate.
+    """
+
+    def test_gated_out_persons_get_zero_weight(self):
         """Persons with complete=False get weight 0 even if parent HH has weight."""
         tables = _make_tables_with_complete()
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight)
+        propagate_weights(tables, has_weight, gate_column="complete")
 
         persons = tables["persons"].sort("person_id")
         assert persons["person_weight"].to_list() == [10.0, 10.0, 0.0]
 
-    def test_incomplete_days_get_zero_weight(self):
+    def test_no_gate_keeps_carried_weights(self):
+        """With gate_column=None, excluded children keep the parent weight."""
+        tables = _make_tables_with_complete()
+        has_weight: dict[str, str] = {"households": "hh_weight"}
+
+        propagate_weights(tables, has_weight, gate_column=None)
+
+        # Person 3 (complete=False, in HH 2 with weight 20) keeps 20 instead of 0
+        persons = tables["persons"].sort("person_id")
+        assert persons["person_weight"].to_list() == [10.0, 10.0, 20.0]
+        days = tables["days"].sort("day_id")
+        assert days["day_weight"].to_list() == [10.0, 10.0, 20.0]
+
+    def test_gated_out_days_get_zero_weight(self):
         """Days with complete=False get weight 0."""
         tables = _make_tables_with_complete()
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight)
+        propagate_weights(tables, has_weight, gate_column="complete")
 
         days = tables["days"].sort("day_id")
         assert days["day_weight"].to_list() == [10.0, 0.0, 0.0]
 
-    def test_incomplete_unlinked_trips_get_zero_weight(self):
+    def test_gated_out_unlinked_trips_get_zero_weight(self):
         """Unlinked trips with complete=False get weight 0."""
         tables = _make_tables_with_complete()
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight)
+        propagate_weights(tables, has_weight, gate_column="complete")
 
         ut = tables["unlinked_trips"].sort("unlinked_trip_id")
         assert ut["unlinked_trip_weight"].to_list() == [10.0, 10.0, 0.0, 0.0]
 
-    def test_aggregate_excludes_zero_from_incomplete(self):
-        """Aggregated weights exclude zeros from incomplete records."""
+    def test_aggregate_excludes_zero_from_gated_out(self):
+        """Aggregated weights exclude zeros from gated-out records."""
         tables = _make_tables_with_complete()
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight)
+        propagate_weights(tables, has_weight, gate_column="complete")
 
         lt = tables["linked_trips"].sort("linked_trip_id")
         # linked_trip 1: unlinked 100 (wt=10, complete) + 200 (wt=10, complete) -> mean=10
         # linked_trip 2: unlinked 300 (wt=0, incomplete) + 400 (wt=0, incomplete) -> 0 (all zero)
         assert lt["linked_trip_weight"].to_list() == [10.0, 0.0]
 
-    def test_no_complete_column_propagates_normally(self):
-        """Without a complete column, weights propagate as before."""
-        tables = _make_tables()  # no complete column
+    def test_missing_gate_column_propagates_normally(self):
+        """Without the gate column present, weights propagate as before."""
+        tables = _make_tables()  # no complete/model_usable column
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight)
+        propagate_weights(tables, has_weight, gate_column="complete")
 
         persons = tables["persons"].sort("person_id")
         assert persons["person_weight"].to_list() == [10.0, 10.0, 20.0]
 
-    def test_all_complete_propagates_normally(self):
-        """When all records are complete, weights propagate normally."""
+    def test_all_admitted_propagates_normally(self):
+        """When every record passes the gate, weights propagate normally."""
         tables = _make_tables_with_complete()
         # Override all to complete
         tables["persons"] = tables["persons"].with_columns(pl.lit(value=True).alias("complete"))
@@ -484,7 +501,7 @@ class TestPropagateCompletionFlag:
         )
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight)
+        propagate_weights(tables, has_weight, gate_column="complete")
 
         persons = tables["persons"].sort("person_id")
         assert persons["person_weight"].to_list() == [10.0, 10.0, 20.0]

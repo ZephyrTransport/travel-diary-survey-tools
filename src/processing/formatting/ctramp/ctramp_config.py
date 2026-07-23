@@ -11,6 +11,7 @@ class CTRAMPConfig(BaseModel):
         income_med_threshold: Income threshold for medium income bracket
         income_high_threshold: Income threshold for high income bracket
         drop_missing_taz: If True, remove households without valid TAZ IDs
+        drop_invalid_tours: If True, remove tours flagged as invalid
         age_adult: Age threshold for adult vs child in joint tour composition
         income_base_year_dollars: Base year for income dollar units
         gender_default_for_missing: Default gender for missing/non-binary
@@ -53,6 +54,17 @@ class CTRAMPConfig(BaseModel):
     drop_missing_taz: bool = Field(
         default=True,
         description="If True, remove households without valid TAZ IDs",
+    )
+
+    drop_invalid_tours: bool = Field(
+        default=True,
+        description=(
+            "If True, remove tours that are not VALID (single-trip, loop, "
+            "missing-anchor, change-mode, indeterminate) or not COMPLETE (do not "
+            "start and end at home). Mirrors the DaySim formatter, which drops "
+            "both, so both outputs keep the same tours. Cascades to linked and "
+            "joint trips."
+        ),
     )
 
     # Age thresholds

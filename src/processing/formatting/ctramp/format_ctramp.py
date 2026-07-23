@@ -208,6 +208,7 @@ from data_canon.models.ctramp import (
 from pipeline.decoration import step
 
 from .ctramp_config import CTRAMPConfig
+from .filters import _drop_invalid_tours, _drop_missing_taz
 from .format_ao import format_ao_results
 from .format_cdap import format_cdap_results
 from .format_households import format_households
@@ -233,148 +234,6 @@ MODEL_MAP = {
 }
 
 
-def _drop_missing_taz(
-    households: pl.DataFrame,
-    persons: pl.DataFrame,
-    tours: pl.DataFrame,
-    linked_trips: pl.DataFrame,
-    joint_trips: pl.DataFrame,
-    config: CTRAMPConfig,
-) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
-    """Remove records with missing TAZ fields and ensure referential integrity.
-
-    Performs cascading deletions to maintain data consistency:
-    1. Remove households without valid home TAZ
-    2. Remove persons from dropped households
-    3. Remove tours/trips with missing origin or destination TAZ
-    4. Remove tours that have no trips remaining
-    5. Remove joint trips that have no linked trips remaining
-
-    Args:
-        households: Canonical household data
-        persons: Canonical person data
-        tours: Canonical tour data
-        linked_trips: Canonical linked trip data
-        joint_trips: Canonical joint trip data
-        config: CTRAMP configuration with taz_field name
-
-    Returns:
-        Tuple of filtered DataFrames maintaining referential integrity
-    """
-    # Track original counts for logging
-    counts = {
-        "households": len(households),
-        "persons": len(persons),
-        "tours": max(0, len(tours)),
-        "linked_trips": max(0, len(linked_trips)),
-        "joint_trips": max(0, len(joint_trips)),
-    }
-
-    # Step 1: Filter households by home TAZ
-    households = households.filter(
-        pl.col(f"home_{config.taz_field}").is_not_null()
-        & (pl.col(f"home_{config.taz_field}") != -1)
-    )
-    valid_hh_ids = households["hh_id"]
-
-    # Step 2: Remove orphaned persons
-    persons = persons.filter(pl.col("hh_id").is_in(valid_hh_ids.implode()))
-
-    logger.info(
-        "Dropped %d households without valid home TAZ (keeping %d households, %d persons)",
-        counts["households"] - len(households),
-        len(households),
-        len(persons),
-    )
-
-    # Step 3: Filter tours by household and TAZ fields
-    if len(tours) > 0:
-        tours = tours.filter(
-            pl.col("hh_id").is_in(valid_hh_ids.implode())
-            & pl.col(f"o_{config.taz_field}").is_not_null()
-            & (pl.col(f"o_{config.taz_field}") != -1)
-            & pl.col(f"d_{config.taz_field}").is_not_null()
-            & (pl.col(f"d_{config.taz_field}") != -1)
-        )
-        valid_tour_ids = tours["tour_id"]
-    else:
-        valid_tour_ids = pl.Series("tour_id", [], dtype=pl.Int64)
-
-    # Step 4: Filter linked trips by tour and TAZ fields
-    if len(linked_trips) > 0:
-        linked_trips = linked_trips.filter(
-            pl.col("tour_id").is_in(valid_tour_ids.implode())
-            & pl.col(f"o_{config.taz_field}").is_not_null()
-            & (pl.col(f"o_{config.taz_field}") != -1)
-            & pl.col(f"d_{config.taz_field}").is_not_null()
-            & (pl.col(f"d_{config.taz_field}") != -1)
-        )
-        # Get tours that still have trips
-        tours_with_trips = linked_trips["tour_id"].unique()
-
-        # Remove tours that lost all their trips
-        if len(tours) > 0:
-            tours_before = len(tours)
-            tours = tours.filter(pl.col("tour_id").is_in(tours_with_trips.implode()))
-            if tours_before != len(tours):
-                logger.info(
-                    "Removed %d tours that had no valid trips remaining",
-                    tours_before - len(tours),
-                )
-    # No trips means no tours should remain
-    elif len(tours) > 0:
-        logger.info("Removed all %d tours because no valid trips exist", len(tours))
-        tours = tours.head(0)
-
-    # Step 5: Filter joint trips by linked trips and TAZ fields
-    if len(joint_trips) > 0:
-        # First filter by household
-        joint_trips = joint_trips.filter(pl.col("hh_id").is_in(valid_hh_ids))
-
-        # Filter by TAZ fields if they exist in joint_trips
-        taz_cols = [f"o_{config.taz_field}", f"d_{config.taz_field}"]
-        has_taz = all(col in joint_trips.columns for col in taz_cols)
-        if has_taz:
-            joint_trips = joint_trips.filter(
-                pl.col(f"o_{config.taz_field}").is_not_null()
-                & (pl.col(f"o_{config.taz_field}") != -1)
-                & pl.col(f"d_{config.taz_field}").is_not_null()
-                & (pl.col(f"d_{config.taz_field}") != -1)
-            )
-
-        # Keep only joint trips that have corresponding linked trips
-        if len(linked_trips) > 0 and "joint_trip_id" in linked_trips.columns:
-            valid_joint_trip_ids = linked_trips.filter(pl.col("joint_trip_id").is_not_null())[
-                "joint_trip_id"
-            ].unique()
-            joint_trips = joint_trips.filter(pl.col("joint_trip_id").is_in(valid_joint_trip_ids))
-        else:
-            # No linked trips with joint_trip_id means no joint trips should remain
-            logger.info(
-                "Removed all %d joint trips because no valid linked trips exist", len(joint_trips)
-            )
-            joint_trips = joint_trips.head(0)
-
-    # Final logging
-    logger.info(
-        "TAZ filtering complete:\n"
-        "  Tours: %d → %d (dropped %d)\n"
-        "  Linked trips: %d → %d (dropped %d)\n"
-        "  Joint trips: %d → %d (dropped %d)",
-        counts["tours"],
-        len(tours),
-        counts["tours"] - len(tours),
-        counts["linked_trips"],
-        len(linked_trips),
-        counts["linked_trips"] - len(linked_trips),
-        counts["joint_trips"],
-        len(joint_trips),
-        counts["joint_trips"] - len(joint_trips),
-    )
-
-    return households, persons, tours, linked_trips, joint_trips
-
-
 def _drop_excess_fields(
     df: pl.DataFrame,
     model_cls: type,
@@ -384,11 +243,9 @@ def _drop_excess_fields(
     Args:
         df: Input DataFrame
         model_cls: Data model class with defined fields
+
     Returns:
         DataFrame with only columns defined in the model class
-    valid_fields = set(model_cls.model_fields.keys())
-    cols_to_drop = [col for col in df.columns if col not in valid_fields]
-    return df.drop(cols_to_drop)
     """
     valid_fields = set(model_cls.model_fields.keys())
     cols_to_drop = set(df.columns) - valid_fields
@@ -425,6 +282,7 @@ def format_ctramp(
     income_base_year_dollars: int,
     taz_field: str = "taz",
     drop_missing_taz: bool = True,
+    drop_invalid_tours: bool = True,
 ) -> dict[str, pl.DataFrame]:
     """Format canonical survey data to CT-RAMP model specification.
 
@@ -460,6 +318,10 @@ def format_ctramp(
             (default: "taz").
         drop_missing_taz: If True, remove households without valid TAZ IDs. This
             cascades to persons, tours, and trips (default: True).
+        drop_invalid_tours: If True, remove tours that are not VALID (single-trip,
+            loop, missing-anchor, change-mode, indeterminate) or not COMPLETE (do
+            not start and end at home), mirroring the DaySim formatter (which drops
+            both). Cascades to linked and joint trips (default: True).
 
     Returns:
         Dictionary with keys:
@@ -513,9 +375,15 @@ def format_ctramp(
         income_high_threshold=income_high_threshold,
         income_base_year_dollars=income_base_year_dollars,
         drop_missing_taz=drop_missing_taz,
+        drop_invalid_tours=drop_invalid_tours,
         taz_field=taz_field,
     )
     logger.info("Starting CT-RAMP formatting")
+
+    # Drop invalid/partial tours before anything else so CT-RAMP and DaySim
+    # outputs contain the same set of tours (and no null-purpose leakage).
+    if config.drop_invalid_tours:
+        tours, linked_trips, joint_trips = _drop_invalid_tours(tours, linked_trips, joint_trips)
 
     # Ensure TAZ columns are Int64 for filtering
     households = households.with_columns(pl.col(f"home_{config.taz_field}").cast(pl.Int64))
