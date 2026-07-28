@@ -358,6 +358,18 @@ def format_joint_trip(
         pl.col("joint_trip_id").rank("dense").over("joint_tour_id").cast(pl.Int64).alias("stop_id")
     )
 
+    # The joint trip weight comes from the cascade on joint_trips_canonical; carry
+    # it through and express it as a sample rate, as individual trips do.
+    weight_cols: list[pl.Expr] = []
+    if "joint_trip_weight" in joint_trips_formatted.columns:
+        weight_cols = [
+            pl.col("joint_trip_weight"),
+            pl.when(pl.col("joint_trip_weight") > 0)
+            .then(pl.col("joint_trip_weight").pow(-1))
+            .otherwise(None)
+            .alias("sampleRate"),
+        ]
+
     # Select final columns with snake_case names
     joint_trips_ctramp = joint_trips_formatted.select(
         [
@@ -378,6 +390,7 @@ def format_joint_trip(
             pl.col("num_joint_travelers").cast(pl.Int64).alias("num_participants"),
             pl.col("depart_hour").cast(pl.Int64),
             pl.col("trip_time"),
+            *weight_cols,
         ]
     )
 

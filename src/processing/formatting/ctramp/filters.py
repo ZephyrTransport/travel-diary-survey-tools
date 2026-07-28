@@ -21,6 +21,7 @@ import logging
 import polars as pl
 
 from data_canon.codebook.tours import TourCategory, TourDataQuality
+from processing.completeness import MIN_JOINT_PARTICIPANTS
 
 from .ctramp_config import CTRAMPConfig
 
@@ -61,6 +62,82 @@ def _drop_by_tour_ids(
         joint_trips = joint_trips.filter(
             pl.col("joint_trip_id").is_in(valid_joint_trip_ids.implode())
         )
+
+    tours, linked_trips, joint_trips = _drop_lone_joint_participants(
+        tours, linked_trips, joint_trips
+    )
+    return tours, linked_trips, joint_trips
+
+
+def _drop_lone_joint_participants(
+    tours: pl.DataFrame,
+    linked_trips: pl.DataFrame,
+    joint_trips: pl.DataFrame,
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """Un-joint any joint group left with a single surviving participant.
+
+    Dropping tours can strip a joint tour down to one member, and CT-RAMP's
+    ``num_participants >= 2`` makes a group of one meaningless. Rather than
+    delete the survivor's travel -- it is still a real tour -- the joint ids are
+    nulled so it is emitted as an individual tour instead.
+
+    Args:
+        tours: Tours surviving the filter, carrying ``joint_tour_id``
+        linked_trips: Linked trips already pruned to the surviving tours
+        joint_trips: Joint trips already pruned to the surviving linked trips
+
+    Returns:
+        Tuple of (tours, linked_trips, joint_trips) with singleton joint groups
+        demoted to individual travel.
+    """
+    if "joint_tour_id" not in tours.columns:
+        return tours, linked_trips, joint_trips
+
+    survivors = tours.filter(pl.col("joint_tour_id").is_not_null())
+    if survivors.is_empty():
+        return tours, linked_trips, joint_trips
+
+    person_col = "person_id" if "person_id" in survivors.columns else "tour_id"
+    lone = (
+        survivors.group_by("joint_tour_id")
+        .agg(pl.col(person_col).n_unique().alias("_n"))
+        .filter(pl.col("_n") < MIN_JOINT_PARTICIPANTS)
+        .select("joint_tour_id")
+    )
+    if lone.is_empty():
+        return tours, linked_trips, joint_trips
+
+    lone_ids = lone["joint_tour_id"]
+    logger.info(
+        "Demoted %d joint tour(s) to individual travel: the tour drop left them "
+        "with a single participant",
+        lone_ids.len(),
+    )
+
+    def _unjoint(df: pl.DataFrame) -> pl.DataFrame:
+        if "joint_tour_id" not in df.columns:
+            return df
+        is_lone = pl.col("joint_tour_id").is_in(lone_ids.implode())
+        exprs = [
+            pl.when(is_lone).then(None).otherwise(pl.col("joint_tour_id")).alias("joint_tour_id")
+        ]
+        if "joint_trip_id" in df.columns:
+            exprs.append(
+                pl.when(is_lone)
+                .then(None)
+                .otherwise(pl.col("joint_trip_id"))
+                .alias("joint_trip_id")
+            )
+        return df.with_columns(exprs)
+
+    tours, linked_trips = _unjoint(tours), _unjoint(linked_trips)
+
+    # Joint trips that lost their group are no longer joint travel at all.
+    if len(joint_trips) > 0 and "joint_trip_id" in linked_trips.columns:
+        still_joint = linked_trips.filter(pl.col("joint_trip_id").is_not_null())[
+            "joint_trip_id"
+        ].unique()
+        joint_trips = joint_trips.filter(pl.col("joint_trip_id").is_in(still_joint.implode()))
 
     return tours, linked_trips, joint_trips
 

@@ -472,6 +472,17 @@ class JointTourCTRAMPModel(BaseModel):
     )
     num_ob_stops: int = Field(ge=0, description="Number of out-bound (from home) stops on the tour")
     num_ib_stops: int = Field(ge=0, description="Number of in-bound (to home) stops on the tour")
+    # NOTE: Derivable from survey weights when available.
+    sampleRate: float | None = Field(
+        default=None,
+        gt=0,
+        description="This tour represents 1/sampleRate joint tours, calculate from weights as 1/weight",
+    )
+    joint_tour_weight: float | None = Field(
+        default=None,
+        ge=0,
+        description="Survey weight for the joint tour (not part of CT-RAMP spec)",
+    )
     # NOTE: Model output only, not derivable from survey data.
     orig_walk_segment: WalkToTransitSubZone | None = Field(
         default=None,
@@ -528,6 +539,17 @@ class JointTripCTRAMPModel(BaseModel):
         description="Primary travel mode for the tour (see TravelModes#tour-and-trip-modes)"
     )
     tour_category: str = Field(description='Tour category ("JOINT_NON_MANDATORY")')
+    # NOTE: Derivable from survey weights when available.
+    sampleRate: float | None = Field(
+        default=None,
+        gt=0,
+        description="This trip represents 1/sampleRate joint trips, calculate from weights as 1/weight",
+    )
+    joint_trip_weight: float | None = Field(
+        default=None,
+        ge=0,
+        description="Survey weight for the joint trip (not part of CT-RAMP spec)",
+    )
     # NOTE: Model output only, not derivable from survey data.
     orig_walk_segment: WalkToTransitSubZone | None = Field(
         default=None,

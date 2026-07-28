@@ -64,6 +64,7 @@ nav:
       - Link Trips: pipeline_steps/link_trips.md
       - Detect Joint Trips: pipeline_steps/detect_joint_trips.md
       - Extract Tours: pipeline_steps/extract_tours.md
+      - Model Usability: pipeline_steps/model_usable.md
       - Weighting:
           - Overview: pipeline_steps/weighting/index.md
           - Compute Weights:

@@ -204,12 +204,14 @@ steps:
       # keep incomplete households in the seed and give them computed weights.
       exclude_incompletes: true
 
-      # Which gate decides who carries weight (stamped by flag_model_usable):
+      # Which flag decides who carries weight (stamped by flag_model_usable):
       #   model_usable -> only model-admissible records, so the weighted tour
       #                   universe matches what CT-RAMP/DaySim keep.
       #   complete     -> the whole valid survey, including partial/overnight
       #                   tours (survey-analysis weights).
-      weight_gate: model_usable
+      # Each parent's weight is spread across its usable children, so dropping a
+      # record does not shrink the expansion.
+      usability_flag_col: model_usable
 
       # -- EF grid search (optional) -----------------------------------
       # Re-run balancing across a grid of max_expansion_factor values and
@@ -330,7 +332,7 @@ steps:
   #   cache: false
   #   params:
   #     derive_missing_weights: true
-  #     rebalance_incompletes: true  # rescale surviving weights so totals are preserved after zeroing incompletes
+  #     usability_flag_col: model_usable  # supplied weights are redistributed onto usable records, preserving each supplied total
   #     weights:
   #       household_weights:
   #         weight_path: "{{ weights_dir }}/hh_weights.csv"

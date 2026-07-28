@@ -286,6 +286,7 @@ def format_joint_tour(
     persons_canonical: pl.DataFrame,
     households_ctramp: pl.DataFrame,
     config: CTRAMPConfig,
+    joint_tours_canonical: pl.DataFrame | None = None,
 ) -> pl.DataFrame:
     """Format joint tours to CT-RAMP specification.
 
@@ -310,6 +311,9 @@ def format_joint_tour(
             age_category (for composition determination)
         households_ctramp: Formatted CT-RAMP households DataFrame with hh_id, income
         config: CT-RAMP configuration with income thresholds and age_adult category
+        joint_tours_canonical: Canonical joint tours carrying ``joint_tour_weight``.
+            The weight is read from there rather than re-derived here, so the
+            cascade stays the single definition of what a joint tour represents.
 
     Returns:
         DataFrame with CT-RAMP joint tour fields
@@ -503,6 +507,23 @@ def format_joint_tour(
                 )
                 raise ValueError(msg)
 
+    # Carry the joint tour weight from the cascade, and express it as a sample rate
+    # the same way individual tours do.
+    weight_cols: list[pl.Expr] = []
+    if joint_tours_canonical is not None and "joint_tour_weight" in joint_tours_canonical.columns:
+        joint_tours_formatted = joint_tours_formatted.join(
+            joint_tours_canonical.select("joint_tour_id", "joint_tour_weight"),
+            on="joint_tour_id",
+            how="left",
+        )
+        weight_cols = [
+            pl.col("joint_tour_weight"),
+            pl.when(pl.col("joint_tour_weight") > 0)
+            .then(pl.col("joint_tour_weight").pow(-1))
+            .otherwise(None)
+            .alias("sampleRate"),
+        ]
+
     # Select final columns with snake_case names
     joint_tours_ctramp = joint_tours_formatted.select(
         [
@@ -519,6 +540,7 @@ def format_joint_tour(
             pl.col("tour_mode_ctramp").alias("tour_mode"),
             pl.col("num_ob_stops").cast(pl.Int64),
             pl.col("num_ib_stops").cast(pl.Int64),
+            *weight_cols,
         ]
     )
 

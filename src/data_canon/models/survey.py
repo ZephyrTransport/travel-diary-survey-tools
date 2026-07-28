@@ -147,13 +147,30 @@ class PersonDayModel(BaseModel):
     travel_date: datetime = schema_field()
     travel_dow: TravelDow = schema_field()
     complete: bool | None = schema_field(default=False)
+    hh_day_complete: bool | None = schema_field(
+        default=None,
+        description=(
+            "Household-day coherence: every member of the household reported a "
+            "complete day on this travel_date. Stamped by the flag_model_usable "
+            "step as an ALL reduction over member-days. A day is only "
+            "model_usable within a complete household-day."
+        ),
+    )
+    hh_day_usable: bool | None = schema_field(
+        default=None,
+        description=(
+            "Usable-side mirror of hh_day_complete: every member's day on this "
+            "travel_date is model_usable. Stamped by flag_model_usable; a "
+            "household is admissible only with >=1 usable household-day."
+        ),
+    )
     model_usable: bool | None = schema_field(
         default=None,
         description=(
-            "Admissible to the tour-based model: survey-complete AND part of a "
-            "well-formed tour structure. Stamped by the flag_model_usable step; "
-            "gates the CT-RAMP/DaySim drop and the weighting. Not a data-quality "
-            "verdict - see `complete`."
+            "Admissible to the tour-based model: survey-complete AND a coherent "
+            "household-day AND part of a well-formed tour structure. Stamped by "
+            "the flag_model_usable step; gates the CT-RAMP/DaySim drop and the "
+            "weighting. Not a data-quality verdict - see `complete`."
         ),
     )
     day_weight: float | None = schema_field(default=None, ge=0)
@@ -411,6 +428,38 @@ class JointTripModel(BaseModel):
         ),
     )
     joint_trip_weight: float | None = schema_field(default=None, ge=0)
+
+
+class JointTourModel(BaseModel):
+    """Joint tour group containing the tours of several household members.
+
+    A joint tour is a *meta-entity*: the participants' individual tours remain
+    the real records and keep their own ``tour_weight``. This table exists so the
+    group can be counted and weighted once, rather than inferred by grouping
+    tours on ``joint_tour_id`` at every point of use.
+
+    Its weight is the mean of its member tours, so it sits on the same footing as
+    a tour (the mean of its linked trips). Membership requires at least two
+    participants -- a group of one is not joint.
+    """
+
+    joint_tour_id: int = schema_field(ge=1, unique=True)
+    hh_id: int = schema_field(ge=1, fk_to="households.hh_id")
+    day_id: int = schema_field(ge=1, fk_to="days.day_id")
+    num_participants: int = schema_field(
+        ge=2, description="Number of household members on this joint tour"
+    )
+    complete: bool | None = schema_field(default=None)
+    model_usable: bool | None = schema_field(
+        default=None,
+        description=(
+            "Admissible to the tour-based model: at least two member tours are "
+            "themselves model-usable, so the group is still joint. Stamped by the "
+            "flag_model_usable step; gates the CT-RAMP/DaySim drop and the "
+            "weighting. Not a data-quality verdict - see `complete`."
+        ),
+    )
+    joint_tour_weight: float | None = schema_field(default=None, ge=0)
 
 
 class HabitualLocationModel(BaseModel):

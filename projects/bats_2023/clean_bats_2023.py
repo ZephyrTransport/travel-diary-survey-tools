@@ -302,27 +302,44 @@ def clean_2023_bats(
     )
 
     # ASSIGN COMPLETION STATUS =========================================
-    # BATS 2023 has a "completion" field in the tables that just need to be renamed to canonical
-    results = {
+    # Completeness rolls up from the surveyed trip (see processing.completeness).
+    # This project measures two leaf facts directly; person and household
+    # completeness are derived *upward* later by the flag_model_usable step, so
+    # the vendor's person/household is_complete here is only a placeholder the
+    # rollup overwrites.
+    #
+    #   trip.complete = trip_survey_complete            (the measured leaf)
+    #   day.complete  = every trip surveyed, else a *declared* no-travel day
+    #                   (a no-travel reason given, or a proxy filled the day in)
+    unlinked_trips = unlinked_trips.rename({"trip_survey_complete": "complete"}).with_columns(
+        pl.col("complete").cast(pl.Boolean)
+    )
+
+    all_trips_surveyed = unlinked_trips.group_by("day_id").agg(
+        pl.col("complete").all().alias("_all_surveyed")
+    )
+    days = (
+        days.join(all_trips_surveyed, on="day_id", how="left")
+        .with_columns(
+            pl.when(pl.col("num_trips") > 0)
+            .then(pl.col("_all_surveyed").fill_null(value=False))
+            .otherwise((pl.col("num_reasons_no_travel") >= 1) | (pl.col("proxy_complete") == 1))
+            .fill_null(value=False)
+            .alias("complete")
+        )
+        .drop("_all_surveyed")
+    )
+
+    households = households.rename({"is_complete": "complete"}).with_columns(
+        pl.col("complete").cast(pl.Boolean)
+    )
+    persons = persons.rename({"is_complete": "complete"}).with_columns(
+        pl.col("complete").cast(pl.Boolean)
+    )
+
+    return {
         "households": households,
         "persons": persons,
         "days": days,
         "unlinked_trips": unlinked_trips,
     }
-
-    # Rename completion columns and cast to boolean
-    column_mapping = {
-        "households": "is_complete",
-        "persons": "is_complete",
-        "days": "is_complete",
-        "unlinked_trips": "trip_survey_complete",
-    }
-
-    for key, old_col in column_mapping.items():
-        results[key] = (
-            results[key]
-            .rename({old_col: "complete"})
-            .with_columns(pl.col("complete").cast(pl.Boolean))
-        )
-
-    return results

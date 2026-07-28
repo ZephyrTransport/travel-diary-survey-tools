@@ -8,6 +8,7 @@ import logging
 
 import polars as pl
 
+from processing.weighting.balancing.weight_propagation import LEVELS, Flow, levels_with_flow
 from processing.weighting.controls.base import ControlLevel
 from processing.weighting.controls.registry import CONTROLS
 from processing.weighting.specs import ControlSpec, ControlTotals
@@ -165,49 +166,118 @@ def _compare_and_log(
         logger.info("  %s", line)
 
 
-# Hierarchy pairs: (parent, child, join_key, parent_weight, child_weight)
-_HIERARCHY_PAIRS = [
-    ("households", "persons", "hh_id", "hh_weight", "person_weight"),
-    ("persons", "days", "person_id", "person_weight", "day_weight"),
-    ("days", "unlinked_trips", "day_id", "day_weight", "unlinked_trip_weight"),
-]
+# Rows of a failing scope to name in the error before summarising the rest.
+_MAX_REPORTED = 5
 
 
-def _check_hierarchy(tables: dict[str, pl.DataFrame]) -> None:
-    """Verify that child weight sums equal parent_weight * n_children."""
-    for parent_name, child_name, join_key, parent_wt, child_wt in _HIERARCHY_PAIRS:
-        parent = tables.get(parent_name)
+def _check_hierarchy(
+    tables: dict[str, pl.DataFrame], usability_flag_col: str = "model_usable"
+) -> None:
+    """Verify that children sum to what their parents represent, or raise.
+
+    This is the cascade's defining identity: a scope's population is carried by
+    the records it kept, so ``sum(child_weight) == sum(parent_weight *
+    n_children)`` over each scope. It is arithmetic we control, so any deviation
+    past floating-point tolerance is a bug and fails loudly.
+
+    The identity is checked at the scope the weight was actually conserved
+    within, read from the same [`HIERARCHY`]
+    [processing.weighting.balancing.weight_propagation.HIERARCHY] the
+    propagation walks -- so the check cannot drift from the rule. Days are
+    conserved over the household, for instance, because a person who kept no
+    usable day has their day-weight covered by the household's remaining days.
+    Scopes where *nothing* was usable have no denominator anywhere; they are
+    reported as a shortfall rather than failed.
+
+    Args:
+        tables: Weighted canonical tables.
+        usability_flag_col: Flag marking which records may carry weight.
+
+    Raises:
+        ValueError: If any scope's children do not sum to what its parents
+            represent.
+    """
+    for level in levels_with_flow(Flow.DOWN):
+        parent_name, child_name = level.parent, level.table
+        join_key, child_wt = level.key, level.weight_col
+        parent = tables.get(parent_name)  # type: ignore[arg-type]
         child = tables.get(child_name)
         if parent is None or child is None:
             continue
+        parent_wt = LEVELS[parent_name].weight_col  # type: ignore[index]
         if parent_wt not in parent.columns or child_wt not in child.columns:
             continue
 
-        child_agg = (
+        # Check the identity at the scope the weight was conserved within.
+        scope = level.scope if level.scope in child.columns else join_key
+
+        usable = (
+            pl.col(usability_flag_col).fill_null(value=False)
+            if usability_flag_col in child.columns
+            else pl.lit(value=True)
+        )
+        per_parent = (
             child.filter(pl.col(child_wt).is_not_null())
             .group_by(join_key)
             .agg(
+                pl.col(scope).first().alias("_scope"),
                 pl.col(child_wt).sum().alias("child_sum"),
                 pl.len().alias("n_children"),
+                usable.sum().alias("n_usable"),
             )
         )
         merged = (
             parent.filter(pl.col(parent_wt).is_not_null())
             .select(join_key, parent_wt)
-            .join(child_agg, on=join_key, how="inner")
+            .join(per_parent, on=join_key, how="inner")
             .with_columns((pl.col(parent_wt) * pl.col("n_children")).alias("expected"))
         )
         if merged.is_empty():
             logger.info("  Hierarchy %s → %s: OK", parent_name, child_name)
             continue
 
-        max_abs = float((merged["child_sum"] - merged["expected"]).abs().max())  # type: ignore[arg-type]
-        if max_abs <= _HIERARCHY_ABS_TOL:
-            logger.info("  Hierarchy %s → %s: OK", parent_name, child_name)
-        else:
-            logger.warning(
-                "  Hierarchy %s → %s: MISMATCH max|diff|=%.4f",
+        by_scope = merged.group_by("_scope").agg(
+            pl.col("child_sum").sum(),
+            pl.col("expected").sum(),
+            pl.col("n_usable").sum(),
+        )
+
+        # Scopes that kept nothing have no denominator; report, do not fail.
+        emptied = by_scope.filter(pl.col("n_usable") == 0)
+        checked = by_scope.filter(pl.col("n_usable") > 0)
+        if emptied.height:
+            logger.info(
+                "  Hierarchy %s → %s: %d %s kept no usable %s, leaving %.1f unrepresented",
                 parent_name,
                 child_name,
-                max_abs,
+                emptied.height,
+                scope,
+                child_name,
+                float(emptied["expected"].sum()),
             )
+
+        failures = checked.filter(
+            (pl.col("child_sum") - pl.col("expected")).abs() > _HIERARCHY_ABS_TOL
+        )
+        if failures.is_empty():
+            logger.info("  Hierarchy %s → %s: OK (per %s)", parent_name, child_name, scope)
+            continue
+
+        rows = "\n".join(
+            f"  {row['_scope']:<16} {row['child_sum']:>14.4f} {row['expected']:>14.4f}"
+            for row in failures.head(_MAX_REPORTED).iter_rows(named=True)
+        )
+        more = (
+            f"\n  ... and {failures.height - _MAX_REPORTED} more"
+            if failures.height > _MAX_REPORTED
+            else ""
+        )
+        msg = (
+            f"Weight cascade broken between {parent_name} and {child_name}: "
+            f"{failures.height} {scope}(s) whose {child_wt} does not sum to "
+            f"{parent_wt} x n_{child_name}.\n"
+            f"  {scope:<16} {'child_sum':>14} {'expected':>14}\n"
+            f"{rows}{more}"
+        )
+        logger.error(msg)
+        raise ValueError(msg)

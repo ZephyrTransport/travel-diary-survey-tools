@@ -32,7 +32,9 @@
     options:
       show_root_heading: true
       members:
+        - HIERARCHY
+        - Level
+        - Flow
         - propagate_weights
+        - distribute_within_scope
         - WEIGHT_CONFIG_MAPPING
-        - CARRY_FORWARD
-        - AGGREGATE

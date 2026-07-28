@@ -587,17 +587,17 @@ class WeightingPipeline:
         tables = self.data.as_dict()
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        # Records are gated by a single flag stamped upstream by the
-        # ``flag_model_usable`` step (default ``model_usable``: cascaded survey
-        # completeness AND admissible tour structure). Nothing is re-derived here.
-        gate = self.config.weight_gate
+        # Usability is a single flag stamped upstream by the ``flag_model_usable``
+        # step (default ``model_usable``: cascaded survey completeness AND an
+        # admissible tour structure). Nothing is re-derived here.
+        usability_flag_col = self.config.usability_flag_col
 
-        # Zero out hh_weight for gated-out households (unless they were kept in
-        # the seed and balanced normally).
+        # Unusable households were held out of the seed, so they never received a
+        # balanced weight; zero them so the join leaves nothing behind.
         hh = tables["households"]
-        if self.config.exclude_incompletes and hh is not None and gate in hh.columns:
+        if self.config.exclude_incompletes and hh is not None and usability_flag_col in hh.columns:
             tables["households"] = hh.with_columns(
-                pl.when(pl.col(gate).fill_null(value=False))
+                pl.when(pl.col(usability_flag_col).fill_null(value=False))
                 .then(pl.col("hh_weight"))
                 .otherwise(0.0)
                 .alias("hh_weight")
@@ -607,7 +607,7 @@ class WeightingPipeline:
         propagate_weights(
             tables,
             has_weight,
-            gate_column=gate if self.config.exclude_incompletes else None,
+            usability_flag_col=usability_flag_col if self.config.exclude_incompletes else None,
         )
 
         # Write propagated tables back to self.data

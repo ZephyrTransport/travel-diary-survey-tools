@@ -270,7 +270,7 @@ def _drop_excess_fields(
         "tours": {"num_travelers"},
     },
 )
-def format_ctramp(
+def format_ctramp(  # noqa: PLR0913
     persons: pl.DataFrame,
     households: pl.DataFrame,
     linked_trips: pl.DataFrame,
@@ -280,6 +280,7 @@ def format_ctramp(
     income_med_threshold: int,
     income_high_threshold: int,
     income_base_year_dollars: int,
+    joint_tours: pl.DataFrame | None = None,
     taz_field: str = "taz",
     drop_missing_taz: bool = True,
     drop_invalid_tours: bool = True,
@@ -303,6 +304,8 @@ def format_ctramp(
         tours: Canonical tour data. Required columns: tour_id, hh_id, person_id,
             person_num, tour_category, tour_purpose, o_taz, d_taz, times,
             tour_mode, joint_tour_id, parent_tour_id.
+        joint_tours: Aggregated joint tour data carrying ``joint_tour_weight``.
+            Optional; when absent the joint tour output simply carries no weight.
         joint_trips: Aggregated joint trip data. Required columns: joint_trip_id,
             hh_id, num_joint_travelers.
         income_low_threshold: Dollar value dividing low from medium income bracket.
@@ -461,6 +464,7 @@ def format_ctramp(
         persons_canonical=persons,
         households_ctramp=households_ctramp,
         config=config,
+        joint_tours_canonical=joint_tours,
     )
 
     individual_trips_ctramp = format_individual_trip(

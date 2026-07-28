@@ -129,6 +129,54 @@ def identify_joint_tours(
     return linked_trips, tours
 
 
+def build_joint_tours_table(tours: pl.DataFrame) -> pl.DataFrame:
+    """Build the canonical ``joint_tours`` table from tours carrying a joint id.
+
+    One row per ``joint_tour_id``, mirroring how ``build_joint_trips_table``
+    collapses member trips into a joint trip. The member tours stay authoritative
+    for everything tour-shaped; this table exists so the group itself can be
+    counted, validated and weighted once.
+
+    Args:
+        tours: Canonical tours, after ``identify_joint_tours`` has stamped
+            ``joint_tour_id``.
+
+    Returns:
+        One row per joint tour with ``hh_id``, ``day_id``, ``num_participants``
+        and, where the member tours carry it, ``complete``.
+    """
+    schema = {
+        "joint_tour_id": pl.Int64,
+        "hh_id": pl.Int64,
+        "day_id": pl.Int64,
+        "num_participants": pl.Int64,
+    }
+    if "joint_tour_id" not in tours.columns:
+        return pl.DataFrame(schema=schema)
+
+    members = tours.filter(pl.col("joint_tour_id").is_not_null())
+    if members.is_empty():
+        return pl.DataFrame(schema=schema)
+
+    agg = [
+        pl.col("hh_id").first(),
+        pl.col("day_id").first(),
+        pl.col("person_id").n_unique().alias("num_participants"),
+    ]
+    # A joint tour is only as complete as its least complete member.
+    if "complete" in members.columns:
+        agg.append(pl.all("complete").alias("complete"))
+
+    joint_tours = members.group_by("joint_tour_id").agg(agg).sort("joint_tour_id")
+
+    logger.info(
+        "Built %d joint tours from %d member tours",
+        joint_tours.height,
+        members.height,
+    )
+    return joint_tours
+
+
 def _without_joint_tours(
     linked_trips: pl.DataFrame,
     tours: pl.DataFrame,

@@ -103,7 +103,7 @@ from .detection_helpers import (
     identify_home_based_tours,
 )
 from .habitual_locations import build_habitual_locations
-from .joint_tour_helpers import identify_joint_tours
+from .joint_tour_helpers import build_joint_tours_table, identify_joint_tours
 from .location_helpers import (
     add_anchor_flags,
     classify_trip_locations,
@@ -299,10 +299,15 @@ def extract_tours(
     )
     logger.info(msg)
 
+    # Step 9: Collapse the member tours into the canonical joint_tours table, so
+    # the group is a record in its own right rather than a grouping key.
+    joint_tours = build_joint_tours_table(tours)
+
     return {
         "unlinked_trips": unlinked_trips_with_tour_ids,
         "linked_trips": linked_trips_with_tour_dir,
         "tours": tours,
+        "joint_tours": joint_tours,
         "habitual_locations": habitual_locations,
         "habitual_location_days": habitual_location_days,
     }
