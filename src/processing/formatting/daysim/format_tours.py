@@ -4,7 +4,7 @@ import logging
 
 import polars as pl
 
-from data_canon.codebook.tours import TourDirection
+from data_canon.codebook.tours import TourDirection, TourType
 from data_canon.codebook.trips import ModeType
 
 from .mappings import PURPOSE_MAP, determine_tour_mode
@@ -56,22 +56,32 @@ def format_tours(
         how="left",
     )
 
-    # Extract household, person, and day IDs from composite keys
+    # Number the tours within each person-day. tour_num cannot be used directly:
+    # a work-based subtour carries its parent's tour_num (subtour_num is what
+    # separates them), so the two would collide on DaySim's (hhno, pno, day,
+    # tour) key. The canonical tour_id already packs day / tour_num /
+    # subtour_num in travel order, so ranking it puts each parent immediately
+    # ahead of its own subtours.
     tours_daysim = tours_daysim.with_columns(
         hhno=pl.col("hh_id"),
         pno=pl.col("person_num"),
         day=pl.col("travel_dow"),
-        tour=pl.col("tour_num"),
+        tour=pl.col("tour_id").rank("dense").over(["person_id", "day_id"]).cast(pl.Int16),
     )
 
-    # Map tour identifiers and purpose
+    # Point each subtour at its parent's DaySim tour number. Home-based tours
+    # self-reference in canonical data, but DaySim reserves parent=0 for "not a
+    # subtour", so they are zeroed rather than pointed at themselves.
     tours_daysim = tours_daysim.join(
-        tours.select(["tour_id", "tour_num"]).rename({"tour_num": "parent_tour_num"}),
+        tours_daysim.select(["tour_id", "tour"]).rename({"tour": "parent_tour_number"}),
         left_on="parent_tour_id",
         right_on="tour_id",
         how="left",
     ).with_columns(
-        parent=pl.col("parent_tour_num").fill_null(0).cast(pl.Int16),
+        parent=pl.when(pl.col("tour_type") == TourType.HOME_BASED.value)
+        .then(0)
+        .otherwise(pl.col("parent_tour_number").fill_null(0))
+        .cast(pl.Int16),
         pdpurp=pl.col("tour_purpose").replace_strict(PURPOSE_MAP),
         toadtyp=pl.col("o_location_type"),
         tdadtyp=pl.col("d_location_type"),
@@ -126,8 +136,12 @@ def format_tours(
                 pl.sum("distance_meters").alias("tautodist"),
             ]
         )
-    ).rename({"tour_id": "tour"})
-    tours_daysim = tours_daysim.join(auto_agg, on="tour", how="left")
+    )
+    # Join on the canonical tour_id, which is what the trips carry. This used to
+    # rename tour_id to "tour" and join on that, matching it against DaySim's
+    # per-day tour number -- so tautotime/tautodist were null for all but the
+    # handful of tours whose canonical id happened to equal a small integer.
+    tours_daysim = tours_daysim.join(auto_agg, on="tour_id", how="left")
 
     # Count number of subtours per parent tour. Primary tours carry
     # parent_tour_id == tour_id (self-reference), so only tours whose parent is a

@@ -776,9 +776,9 @@ class TestWeightsAndSampleRate:
         assert "tour_weight" in result.columns
         assert "sampleRate" in result.columns
 
-        # Verify sampleRate = 1/weight (CTRAMP tour_id is tour_num: 1, 2)
-        assert result.filter(pl.col("tour_id") == 1)["sampleRate"][0] == pytest.approx(1 / 3.0)
-        assert result.filter(pl.col("tour_id") == 2)["sampleRate"][0] == pytest.approx(1 / 5.0)
+        # Verify sampleRate = 1/weight (CTRAMP tour_id is 0-based: 0, 1)
+        assert result.filter(pl.col("tour_id") == 0)["sampleRate"][0] == pytest.approx(1 / 3.0)
+        assert result.filter(pl.col("tour_id") == 1)["sampleRate"][0] == pytest.approx(1 / 5.0)
 
     def test_tour_samplerate_null_when_zero_weight(self, standard_config):
         """Test tour sampleRate is None when tour_weight is zero."""
@@ -819,9 +819,9 @@ class TestWeightsAndSampleRate:
             tours, trips, persons, households_formatted, standard_config
         )
 
-        # CTRAMP tour_id is tour_num: 1, 2
-        assert result.filter(pl.col("tour_id") == 1)["sampleRate"][0] is None
-        assert result.filter(pl.col("tour_id") == 2)["sampleRate"][0] == pytest.approx(1 / 2.5)
+        # CTRAMP tour_id is 0-based: 0, 1
+        assert result.filter(pl.col("tour_id") == 0)["sampleRate"][0] is None
+        assert result.filter(pl.col("tour_id") == 1)["sampleRate"][0] == pytest.approx(1 / 2.5)
 
     def test_tour_no_weight_columns_when_missing(self, standard_config):
         """Test tour_weight and sampleRate absent when not in input."""

@@ -20,6 +20,8 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from data_canon.codebook.ctramp import CTRAMPTourCategory
+from data_canon.codebook.tours import TourCategory, TourDataQuality, TourType
 from tests.e2e.assertions import assert_referential_integrity, assert_tables_non_empty
 
 pytestmark = [pytest.mark.e2e, pytest.mark.slow]
@@ -134,6 +136,29 @@ class TestTourExtraction:
         if "single_trip_tour" in hh7.columns:
             assert hh7["single_trip_tour"].to_list()[0] is True
 
+    def test_at_work_subtour_extracted(self, full_result):
+        # HH 6 is home -> work -> lunch -> work -> home. The lunch leg is an
+        # at-work subtour: anchored at the workplace, so it never touches home
+        # and is only COMPLETE against its own anchor (issue #85).
+        hh6 = full_result.tours.filter(pl.col("hh_id") == 6)
+        subtours = hh6.filter(pl.col("tour_type") == TourType.WORK_BASED.value)
+        assert subtours.height == 1, f"expected one at-work subtour for HH 6, got {hh6.height}"
+        assert subtours["tour_category"].to_list() == [TourCategory.COMPLETE.value]
+        assert subtours["tour_data_quality"].to_list() == [TourDataQuality.VALID.value]
+
+    def test_at_work_subtour_reaches_ctramp(self, full_result):
+        # The whole point of #85: the subtour must survive the model_usable gate
+        # and the CT-RAMP drop, and be emitted as an AT_WORK tour whose parent
+        # reports it in atWork_freq.
+        tours = full_result.individual_tours_ctramp
+        hh6 = tours.filter(pl.col("hh_id") == 6)
+        at_work = hh6.filter(pl.col("tour_category") == CTRAMPTourCategory.AT_WORK.value)
+        assert at_work.height == 1, "HH 6's at-work subtour is missing from CT-RAMP output"
+        assert hh6["tour_id"].n_unique() == hh6.height, (
+            "a work tour and its at-work subtour must not share a CT-RAMP tour_id"
+        )
+        assert hh6["atWork_freq"].max() == 1, "the parent work tour should report one subtour"
+
 
 # ── Imputation (full profile) ─────────────────────────────────────────
 # The full profile runs imputation (RF on households.income_bin); these exercise
@@ -193,7 +218,7 @@ class TestEdgeCaseCoverage:
         assert {"M", "N", "H"} <= patterns, f"missing activity patterns: {patterns}"
 
     def test_tour_data_quality_buckets_present(self, full_result):
-        # VALID(0), SINGLE_TRIP(1), LOOP_TRIP(2), MISSING_HOME_ANCHOR(3),
+        # VALID(0), SINGLE_TRIP(1), LOOP_TRIP(2), MISSING_ANCHOR(3),
         # CHANGE_MODE(5). INDETERMINATE(4) is a contradictory diagnostic bucket
         # not representable with clean input, so it is intentionally excluded.
         q = set(full_result.tours["tour_data_quality"].to_list())

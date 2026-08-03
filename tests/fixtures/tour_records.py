@@ -8,7 +8,7 @@ from datetime import UTC, datetime, time
 import polars as pl
 
 from data_canon.codebook.days import TravelDow
-from data_canon.codebook.tours import TourCategory, TourDataQuality
+from data_canon.codebook.tours import TourCategory, TourDataQuality, TourType
 from data_canon.codebook.trips import Mode, PurposeCategory
 from data_canon.models.survey import TourModel
 
@@ -25,6 +25,7 @@ def create_tour(
     day_num: int = 1,
     tour_num: int = 1,
     tour_purpose: PurposeCategory = PurposeCategory.WORK,
+    tour_type: TourType | None = None,
     tour_category: TourCategory = TourCategory.COMPLETE,
     o_taz: int = 100,
     d_taz: int = 200,
@@ -63,7 +64,10 @@ def create_tour(
         day_num: Day number
         tour_num: Tour number within the day
         tour_purpose: Tour purpose enum
-        tour_category: Tour category enum (mandatory/non-mandatory/at-work)
+        tour_type: What the tour is anchored on. Defaults to WORK_BASED when
+            the record looks like a subtour (``subtour_num`` set, or a
+            ``parent_tour_id`` pointing at a different tour), else HOME_BASED.
+        tour_category: How completely the tour reaches that anchor
         o_taz: Origin TAZ
         d_taz: Destination TAZ
         o_maz: Origin MAZ (optional, for Daysim)
@@ -93,6 +97,12 @@ def create_tour(
     Returns:
         Complete tour record dict
     """
+    # A subtour is a tour numbered under a parent, or one whose parent is some
+    # other tour. Primary tours self-reference in canonical data and are None here.
+    if tour_type is None:
+        is_subtour = subtour_num > 0 or (parent_tour_id is not None and parent_tour_id != tour_id)
+        tour_type = TourType.WORK_BASED if is_subtour else TourType.HOME_BASED
+
     # Default times if not provided - use defaults from canonical schema
     default_depart = datetime.combine(datetime.now(tz=UTC).date(), time(8, 0))
     default_arrive = datetime.combine(datetime.now(tz=UTC).date(), time(17, 0))
@@ -115,6 +125,7 @@ def create_tour(
         "day_num": day_num,
         "tour_num": tour_num,
         "tour_purpose": tour_purpose.value,
+        "tour_type": tour_type.value,
         "tour_category": tour_category.value,
         "o_taz": o_taz,
         "d_taz": d_taz,

@@ -231,6 +231,46 @@ def _calculate_destination_times(
     return dest_times
 
 
+def add_tour_anchor_flags(linked_trips: pl.DataFrame) -> pl.DataFrame:
+    """Flag each trip end as being at its own tour's anchor.
+
+    A tour's anchor is the place it is expected to leave from and come back to:
+    home for a home-based tour, and -- for a subtour -- whatever the containing
+    tour anchored on (``_anchor_location_type``, set by
+    :func:`~processing.tours.detection_helpers.expand_anchor_periods`).
+
+    Collapsing both cases into one pair of columns is what lets tour
+    classification and validation ask "did this tour reach its anchor?" without
+    first knowing which anchor applies. Before this existed, the anchor was
+    assumed to be home, so an at-work subtour -- which by definition never
+    touches home -- could never be classified COMPLETE and was dropped by every
+    downstream gate.
+
+    Args:
+        linked_trips: Trips with ``subtour_num``, the home flags
+            (``_o_is_home`` / ``_d_is_home``) and the anchor flags
+            (``_o_at_work`` / ``_d_at_work`` / ``_o_at_school`` /
+            ``_d_at_school``) plus ``_anchor_location_type``.
+
+    Returns:
+        The trips with ``_o_at_anchor`` / ``_d_at_anchor`` boolean columns.
+    """
+    is_subtour = pl.col("subtour_num") > 0
+    anchored_at_school = pl.col("_anchor_location_type") == LocationType.SCHOOL.value
+    return linked_trips.with_columns(
+        [
+            pl.when(~is_subtour)
+            .then(pl.col(f"_{end}_is_home"))
+            .when(anchored_at_school)
+            .then(pl.col(f"_{end}_at_school"))
+            .otherwise(pl.col(f"_{end}_at_work"))
+            .fill_null(value=False)
+            .alias(f"_{end}_at_anchor")
+            for end in ("o", "d")
+        ]
+    )
+
+
 def _aggregate_and_classify_tours(
     linked_trips: pl.DataFrame,
     tour_purpose_and_coords: pl.DataFrame,
@@ -239,8 +279,9 @@ def _aggregate_and_classify_tours(
     """Aggregate trip data to tour level and classify tour categories.
 
     Groups trips by tour and calculates tour-level attributes including mode,
-    timing, locations, and counts. Classifies tours as work-based subtours or
-    by boundary type (complete, partial start/end/both).
+    timing, locations, and counts. Records what each tour is anchored on
+    (``tour_type``) and, separately, how completely it reaches that anchor
+    (``tour_category``).
 
     Args:
         linked_trips: Enhanced trip data with priorities and flags
@@ -283,8 +324,9 @@ def _aggregate_and_classify_tours(
             (pl.col("linked_trip_id").count() - 1).alias("stop_count"),
             # Flags for classification
             pl.col("subtour_num").first().alias("_subtour_num"),
-            pl.col("_o_is_home").first().alias("_o_is_home"),
-            pl.col("_d_is_home").last().alias("_d_is_home"),
+            pl.col("_anchor_location_type").first().alias("_anchor_location_type"),
+            pl.col("_o_at_anchor").first().alias("_o_at_anchor"),
+            pl.col("_d_at_anchor").last().alias("_d_at_anchor"),
             *([pl.all("complete")] if "complete" in linked_trips.columns else []),
         ]
     )
@@ -333,17 +375,27 @@ def _aggregate_and_classify_tours(
         MIN_TRIPS_FOR_VALID_TOUR,
     )
 
-    # Classify tour category based on actual tour structure
-    # Validation will separately flag data quality issues (tour_num=0, etc.)
+    # Classify what the tour is anchored on, and -- separately -- how completely
+    # it reaches that anchor. These are two orthogonal facts and must not share a
+    # column: TourType.WORK_BASED and TourCategory.PARTIAL_END are both 2, so
+    # writing the type into tour_category made every subtour read as
+    # "start at home, end not at home" and lose its boundary information.
+    # Validation separately flags data quality issues (tour_num=0, etc.).
+    is_subtour = pl.col("_subtour_num") > 0
+    anchored_at_school = pl.col("_anchor_location_type") == LocationType.SCHOOL.value
     tours = tours.with_columns(
         [
-            pl.when(pl.col("_subtour_num") > 0)
-            .then(pl.lit(TourType.WORK_BASED))
-            .when(pl.col("_o_is_home") & pl.col("_d_is_home"))
+            pl.when(~is_subtour)
+            .then(pl.lit(TourType.HOME_BASED))
+            .when(anchored_at_school)
+            .then(pl.lit(TourType.SCHOOL_BASED))
+            .otherwise(pl.lit(TourType.WORK_BASED))
+            .alias("tour_type"),
+            pl.when(pl.col("_o_at_anchor") & pl.col("_d_at_anchor"))
             .then(pl.lit(TourCategory.COMPLETE))
-            .when(pl.col("_o_is_home") & ~pl.col("_d_is_home"))
+            .when(pl.col("_o_at_anchor") & ~pl.col("_d_at_anchor"))
             .then(pl.lit(TourCategory.PARTIAL_END))
-            .when(~pl.col("_o_is_home") & pl.col("_d_is_home"))
+            .when(~pl.col("_o_at_anchor") & pl.col("_d_at_anchor"))
             .then(pl.lit(TourCategory.PARTIAL_START))
             .otherwise(pl.lit(TourCategory.PARTIAL_BOTH))
             .alias("tour_category"),
@@ -466,6 +518,11 @@ def aggregate_tour_attributes(
         - enhanced_linked_trips: Input trips with tour_id and subtour_id added
     """
     logger.info("Aggregating tour data...")
+
+    # Resolve each trip end against its own tour's anchor (home, or the
+    # workplace/campus a subtour hangs off). Done once here so tour
+    # classification and, later, validation read the same flags.
+    linked_trips = add_tour_anchor_flags(linked_trips)
 
     # Calculate tour purpose and primary destination
     linked_trips, tour_purp_and_coords = _calculate_tour_purp_and_dest(linked_trips, config)

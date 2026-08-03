@@ -716,7 +716,7 @@ class TestIndividualTourFormatting:
         )
 
         assert len(result) == 1
-        assert result["tour_id"][0] == 1  # CTRAMP tour_id is tour_num (1 for first tour)
+        assert result["tour_id"][0] == 0  # CTRAMP tour_id is 0-based (0 for first tour)
         assert result["hh_id"][0] == 1
         assert result["person_id"][0] == 101
         assert result["orig_taz"][0] == 100
@@ -883,13 +883,14 @@ class TestIndividualTourFormatting:
             standard_config,
         )
 
-        # Primary tour should have 2 subtours (CTRAMP tour_id is tour_num: 1, 2, 3)
-        primary_tour = result.filter(pl.col("tour_id") == 1)
+        # Primary tour is 0-based (tour_id 0); its at-work subtours are encoded as
+        # two-digit <1-based parent tour #><subtour #> -> 11 and 12.
+        primary_tour = result.filter(pl.col("tour_id") == 0)
         assert primary_tour["atWork_freq"][0] == 2
 
         # Subtours should have 0 subtours
-        subtour1 = result.filter(pl.col("tour_id") == 2)
-        subtour2 = result.filter(pl.col("tour_id") == 3)
+        subtour1 = result.filter(pl.col("tour_id") == 11)
+        subtour2 = result.filter(pl.col("tour_id") == 12)
         assert subtour1["atWork_freq"][0] == 0
         assert subtour2["atWork_freq"][0] == 0
 
@@ -981,7 +982,7 @@ class TestIndividualTourFormatting:
 
         # Only individual tour should be included
         assert len(result) == 1
-        assert result["tour_id"][0] == 1  # CTRAMP tour_id is tour_num (1 for first tour)
+        assert result["tour_id"][0] == 0  # CTRAMP tour_id is 0-based (0 for first tour)
 
 
 class TestJointTourFormatting:
@@ -1380,9 +1381,9 @@ class TestWeightsAndSampleRate:
         assert "tour_weight" in result.columns
         assert "sampleRate" in result.columns
 
-        # Verify sampleRate = 1/weight (CTRAMP tour_id is tour_num: 1, 2)
-        assert result.filter(pl.col("tour_id") == 1)["sampleRate"][0] == pytest.approx(1 / 3.0)
-        assert result.filter(pl.col("tour_id") == 2)["sampleRate"][0] == pytest.approx(1 / 5.0)
+        # Verify sampleRate = 1/weight (CTRAMP tour_id is 0-based: 0, 1)
+        assert result.filter(pl.col("tour_id") == 0)["sampleRate"][0] == pytest.approx(1 / 3.0)
+        assert result.filter(pl.col("tour_id") == 1)["sampleRate"][0] == pytest.approx(1 / 5.0)
 
     def test_tour_samplerate_null_when_zero_weight(self, standard_config):
         """Test tour sampleRate is None when tour_weight is zero."""
@@ -1423,9 +1424,9 @@ class TestWeightsAndSampleRate:
             tours, trips, persons, households_formatted, standard_config
         )
 
-        # CTRAMP tour_id is tour_num: 1, 2
-        assert result.filter(pl.col("tour_id") == 1)["sampleRate"][0] is None
-        assert result.filter(pl.col("tour_id") == 2)["sampleRate"][0] == pytest.approx(1 / 2.5)
+        # CTRAMP tour_id is 0-based: 0, 1
+        assert result.filter(pl.col("tour_id") == 0)["sampleRate"][0] is None
+        assert result.filter(pl.col("tour_id") == 1)["sampleRate"][0] == pytest.approx(1 / 2.5)
 
     def test_tour_no_weight_columns_when_missing(self, standard_config):
         """Test tour_weight and sampleRate absent when not in input."""

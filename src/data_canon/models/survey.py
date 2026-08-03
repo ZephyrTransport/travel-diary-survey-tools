@@ -45,7 +45,7 @@ from data_canon.codebook.persons import (
     Student,
     WorkParking,
 )
-from data_canon.codebook.tours import TourCategory, TourDirection
+from data_canon.codebook.tours import TourCategory, TourDirection, TourType
 from data_canon.codebook.trips import (
     AccessEgressMode,
     Driver,
@@ -314,6 +314,13 @@ class TourModel(BaseModel):
     joint_tour_id: int | None = schema_field(ge=1, default=None)
 
     tour_purpose: PurposeCategory | None = schema_field(default=None)
+    tour_type: TourType = schema_field(
+        description=(
+            "What the tour is anchored on: home for a home-based tour, the "
+            "workplace or campus for a subtour. Orthogonal to `tour_category`, "
+            "which grades how completely the tour reaches that anchor."
+        ),
+    )
     tour_category: TourCategory = schema_field()
     single_trip_tour: bool = schema_field(default=False)
 

@@ -162,6 +162,7 @@ Each tab shows the fields for one canonical table. Only steps that reference the
     | `parent_tour_id` | int | ≥ 1, FK → `tours.tour_id` |  |  |  |  |
     | `joint_tour_id` | int or None | ≥ 1 |  |  |  |  |
     | `tour_purpose` | PurposeCategory or None |  |  |  |  |  |
+    | `tour_type` | TourType |  |  |  |  |  |
     | `tour_category` | TourCategory |  |  |  |  |  |
     | `single_trip_tour` | bool |  |  |  |  |  |
     | `origin_depart_time` | datetime |  |  |  |  |  |

@@ -4,7 +4,7 @@ import logging
 
 import polars as pl
 
-from data_canon.codebook.tours import TourCategory
+from data_canon.codebook.tours import TourCategory, TourType
 from data_canon.codebook.trips import PurposeCategory
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,8 @@ def format_days(
     Args:
         persons: Canonical person data with person_id, hh_id, work/school coords
         days: Canonical day data with day_id, person_id, travel_dow, day_weight
-        tours: Canonical tour data with tour_id, day_id, tour_purpose, tour_category
+        tours: Canonical tour data with tour_id, day_id, tour_purpose,
+            tour_type, tour_category
 
     Returns:
         DataFrame with DaySim PersonDay format including:
@@ -86,19 +87,18 @@ def format_days(
         if daysim_col not in tour_counts.columns:
             tour_counts = tour_counts.with_columns(pl.lit(0).alias(daysim_col))
 
-    # Count home-based tours (complete tours)
+    # Count home-based tours: complete tours anchored at home. COMPLETE alone is
+    # not enough -- an at-work subtour that leaves and returns to the workplace
+    # is also COMPLETE, against its own anchor -- so the type is checked too.
+    is_home_based = pl.col("tour_type") == TourType.HOME_BASED.value
+    is_complete = pl.col("tour_category") == TourCategory.COMPLETE.value
     hb_tour_counts = (
-        tours.filter(pl.col("tour_category") == TourCategory.COMPLETE.value)
-        .group_by("day_id")
-        .agg(pl.len().alias("hbtours"))
+        tours.filter(is_home_based & is_complete).group_by("day_id").agg(pl.len().alias("hbtours"))
     )
 
-    # Count work-based subtours. Primary tours carry parent_tour_id == tour_id
-    # (self-reference), so a subtour is a tour whose parent is a DIFFERENT tour --
-    # not merely a non-null parent (which every tour has). This matches the CT-RAMP
-    # formatter's convention (ctramp/format_tours.py).
+    # Count work-based subtours: tours anchored at a workplace rather than home.
     wb_tour_counts = (
-        tours.filter(pl.col("parent_tour_id") != pl.col("tour_id"))
+        tours.filter(pl.col("tour_type") == TourType.WORK_BASED.value)
         .group_by("day_id")
         .agg(pl.len().alias("wbtours"))
     )
@@ -107,8 +107,7 @@ def format_days(
     # This is an approximation - you may need additional logic
     uw_tour_counts = (
         tours.filter(
-            (pl.col("tour_purpose") == PurposeCategory.WORK.value)
-            & (pl.col("tour_category") == TourCategory.COMPLETE.value)
+            (pl.col("tour_purpose") == PurposeCategory.WORK.value) & is_home_based & is_complete
         )
         .group_by("day_id")
         .agg(pl.len().alias("uwtours"))

@@ -2,7 +2,7 @@
 
 This module contains functions for:
 - Validating tour data quality
-- Identifying problematic tours (tour_num=0, single-trip, missing home anchor)
+- Identifying problematic tours (tour_num=0, single-trip, missing anchor)
 - Correcting tour_category for definitive error cases
 """
 
@@ -10,7 +10,7 @@ import logging
 
 import polars as pl
 
-from data_canon.codebook.tours import TourCategory, TourDataQuality, TourType
+from data_canon.codebook.tours import TourCategory, TourDataQuality
 from data_canon.codebook.trips import PurposeCategory
 from utils.helpers import expr_haversine
 
@@ -92,16 +92,16 @@ def _diagnose_problem_tours(
             len(indeterminate_tours),
         )
 
-        # Analyze by home anchor pattern
+        # Analyze by anchor pattern
         home_pattern = (
-            indeterminate_tours.group_by(["_has_home_origin", "_has_home_dest"])
+            indeterminate_tours.group_by(["_has_anchor_origin", "_has_anchor_dest"])
             .agg(pl.len().alias("count"))
             .sort("count", descending=True)
         )
-        logger.warning("INDETERMINATE tours by home anchor pattern:")
+        logger.warning("INDETERMINATE tours by anchor pattern:")
         for row in home_pattern.iter_rows(named=True):
-            origin = "home" if row["_has_home_origin"] else "not_home"
-            dest = "home" if row["_has_home_dest"] else "not_home"
+            origin = "anchor" if row["_has_anchor_origin"] else "away"
+            dest = "anchor" if row["_has_anchor_dest"] else "away"
             logger.warning(
                 "  Origin=%s, Dest=%s: %d tours",
                 origin,
@@ -127,14 +127,15 @@ def _diagnose_problem_tours(
         for tour_id in sample_tour_ids:
             tour_info = indeterminate_tours.filter(pl.col("tour_id") == tour_id).row(0, named=True)
             logger.warning(
-                "  Tour %s: person=%d, day=%d, trips=%d, category=%s, home_origin=%s, home_dest=%s",
+                "  Tour %s: person=%d, day=%d, trips=%d, category=%s, "
+                "anchor_origin=%s, anchor_dest=%s",
                 tour_id,
                 tour_info["person_id"],
                 tour_info["day_id"],
                 tour_info["trip_count"],
                 TourCategory(tour_info["tour_category"]).label,
-                tour_info["_has_home_origin"],
-                tour_info["_has_home_dest"],
+                tour_info["_has_anchor_origin"],
+                tour_info["_has_anchor_dest"],
             )
 
             # Show constituent trips
@@ -168,15 +169,16 @@ def validate_and_correct_tours(
     - SINGLE_TRIP: Only one trip in tour (always incomplete)
     - CHANGE_MODE: Change mode as primary purpose (trip linking failure)
     - SPATIAL_GAP: Internal junction jumps > threshold (a missing leg)
-    - MISSING_HOME_ANCHOR: Neither origin nor destination at home
+    - MISSING_ANCHOR: Neither origin nor destination at the tour's anchor
 
     Corrects tour_category for definitive cases:
     - Single-trip tours → PARTIAL_BOTH
-    - Missing home anchor → PARTIAL_BOTH
+    - Missing anchor → PARTIAL_BOTH
 
     Args:
         tours: Aggregated tour DataFrame with tour_num, trip_count, etc.
-        linked_trips: Linked trips with tour_id and home location flags
+        linked_trips: Linked trips with tour_id and the ``_o_at_anchor`` /
+            ``_d_at_anchor`` flags from ``add_tour_anchor_flags``
         spatial_gap_threshold_meters: Gap distance (meters) above which a tour's
             internal junction is treated as a missing leg (SPATIAL_GAP).
 
@@ -199,15 +201,18 @@ def validate_and_correct_tours(
             zero_tour_trips["hh_id"].n_unique(),
         )
 
-    # Check for home anchors by aggregating from linked trips
-    home_check = linked_trips.group_by("tour_id").agg(
+    # Check whether the tour touches its own anchor at either end. For a
+    # home-based tour that anchor is home; for a subtour it is the workplace or
+    # campus it hangs off. ``aggregate_tour_attributes`` resolves the two into
+    # ``_o_at_anchor`` / ``_d_at_anchor`` so this check never has to assume home.
+    anchor_check = linked_trips.group_by("tour_id").agg(
         [
-            pl.col("_o_is_home").any().alias("_has_home_origin"),
-            pl.col("_d_is_home").any().alias("_has_home_dest"),
+            pl.col("_o_at_anchor").any().alias("_has_anchor_origin"),
+            pl.col("_d_at_anchor").any().alias("_has_anchor_dest"),
         ]
     )
 
-    tours = tours.join(home_check, on="tour_id", how="left")
+    tours = tours.join(anchor_check, on="tour_id", how="left")
 
     # Flag tours whose trips teleport across a data gap (missing connecting leg)
     gap_check = _spatial_gap_flags(linked_trips, spatial_gap_threshold_meters)
@@ -215,16 +220,19 @@ def validate_and_correct_tours(
 
     # Assign data quality flags (priority order matters)
     # Note: Loop trips are a specific type of single-trip tour
-    # (trip starts and ends at home)
-    # Note: Work-based tours (subtours) don't need home anchors,
-    # so we skip that check for them
+    # (trip starts and ends at the tour's anchor)
+    # Note: the anchor check applies to every tour, home-based or not -- a
+    # subtour is anchored at its workplace/campus, so it is checked against
+    # that, not against home.
     # Note: CHANGE_MODE purpose indicates trip linking failure
     # (mode changes should be merged with adjacent trips)
     tours = tours.with_columns(
         [
             # Check conditions in order of specificity
             pl.when(
-                (pl.col("trip_count") == 1) & pl.col("_has_home_origin") & pl.col("_has_home_dest")
+                (pl.col("trip_count") == 1)
+                & pl.col("_has_anchor_origin")
+                & pl.col("_has_anchor_dest")
             )
             .then(pl.lit(TourDataQuality.LOOP_TRIP))
             .when(pl.col("trip_count") == 1)
@@ -233,14 +241,8 @@ def validate_and_correct_tours(
             .then(pl.lit(TourDataQuality.CHANGE_MODE))
             .when(pl.col("_has_spatial_gap").fill_null(value=False))
             .then(pl.lit(TourDataQuality.SPATIAL_GAP))
-            .when(
-                # Only check for home anchor on home-based tours
-                # Work-based tours (subtours) have work as their anchor
-                (pl.col("tour_category") != TourType.WORK_BASED)
-                & ~pl.col("_has_home_origin")
-                & ~pl.col("_has_home_dest")
-            )
-            .then(pl.lit(TourDataQuality.MISSING_HOME_ANCHOR))
+            .when(~pl.col("_has_anchor_origin") & ~pl.col("_has_anchor_dest"))
+            .then(pl.lit(TourDataQuality.MISSING_ANCHOR))
             .when(pl.col("tour_num") == 0)
             .then(pl.lit(TourDataQuality.INDETERMINATE))
             .otherwise(pl.lit(TourDataQuality.VALID))
@@ -248,14 +250,16 @@ def validate_and_correct_tours(
         ]
     )
 
-    # Correct tour_category for definitive error cases
-    # Note: Loop trips should remain COMPLETE (correct structure)
-    # if from home to home
+    # Correct tour_category for definitive error cases. A tour that never
+    # reaches its anchor at either end is PARTIAL_BOTH by construction; stating
+    # it explicitly keeps the category honest for single-trip tours too.
+    # Note: Loop trips should remain COMPLETE (correct structure) if they run
+    # from the anchor back to the anchor.
     tours = tours.with_columns(
         [
             pl.when(
                 (pl.col("tour_data_quality") == TourDataQuality.SINGLE_TRIP)
-                | (pl.col("tour_data_quality") == TourDataQuality.MISSING_HOME_ANCHOR)
+                | (pl.col("tour_data_quality") == TourDataQuality.MISSING_ANCHOR)
             )
             .then(pl.lit(TourCategory.PARTIAL_BOTH))
             .otherwise(pl.col("tour_category"))
@@ -291,6 +295,6 @@ def validate_and_correct_tours(
     _diagnose_problem_tours(tours, zero_tour_trips)
 
     # Drop temporary columns
-    tours = tours.drop(["_has_home_origin", "_has_home_dest", "_has_spatial_gap"])
+    tours = tours.drop(["_has_anchor_origin", "_has_anchor_dest", "_has_spatial_gap"])
 
     return tours

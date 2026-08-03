@@ -264,6 +264,11 @@ def _flag_tours(tables: dict[str, pl.DataFrame | None], *, require_valid_tours: 
     CT-RAMP (which reads ``tour.model_usable``) would keep a tour the weighting
     has zeroed. ``hh_day_complete`` is available because the reverse cascade runs
     before this.
+
+    Subtours then take their parent's verdict on top of their own: an at-work
+    subtour is travel *within* its parent tour, so keeping one whose parent was
+    dropped would leave CT-RAMP an AT_WORK tour hanging off a tour that is not
+    in the output, and would strand the parent's ``atWork_freq``.
     """
     tours = tables.get("tours")
     if tours is None or "complete" not in tours.columns:
@@ -276,18 +281,46 @@ def _flag_tours(tables: dict[str, pl.DataFrame | None], *, require_valid_tours: 
     )
     days = tables.get("days")
     if days is None or "hh_day_complete" not in days.columns or "day_id" not in tours.columns:
-        tables["tours"] = tours.with_columns(usable.alias("model_usable"))
+        tables["tours"] = _flag_subtours_from_parent(
+            tours.with_columns(usable.alias("model_usable"))
+        )
         return
 
     coherence = days.select("day_id", pl.col("hh_day_complete").alias("_hh_day_complete")).unique(
         subset="day_id"
     )
-    tables["tours"] = (
+    tables["tours"] = _flag_subtours_from_parent(
         tours.join(coherence, on="day_id", how="left")
         .with_columns(
             (usable & pl.col("_hh_day_complete").fill_null(value=False)).alias("model_usable")
         )
         .drop("_hh_day_complete")
+    )
+
+
+def _flag_subtours_from_parent(tours: pl.DataFrame) -> pl.DataFrame:
+    """Reduce each subtour's ``model_usable`` by its parent tour's verdict.
+
+    Primary tours self-reference (``parent_tour_id == tour_id``) and so are
+    unaffected. A subtour whose parent is missing entirely is left on its own
+    verdict rather than silently dropped -- the parent's absence is a different
+    defect, and dropping here would hide it.
+    """
+    if "parent_tour_id" not in tours.columns or "tour_id" not in tours.columns:
+        return tours
+
+    parent_usable = tours.select(
+        pl.col("tour_id").alias("parent_tour_id"),
+        pl.col("model_usable").alias("_parent_usable"),
+    )
+    return (
+        tours.join(parent_usable, on="parent_tour_id", how="left")
+        .with_columns(
+            (pl.col("model_usable") & pl.col("_parent_usable").fill_null(value=True)).alias(
+                "model_usable"
+            )
+        )
+        .drop("_parent_usable")
     )
 
 
@@ -299,8 +332,10 @@ def _tour_model_usable_expr(
     A tour is model-usable when its (cascaded) reporting is complete and, if
     ``require_valid_tours``, its structure is admissible: VALID quality (not
     single-trip, loop, missing-anchor, change-mode, spatial-gap, indeterminate)
-    AND COMPLETE category (starts and ends at home). This matches the CT-RAMP /
-    DaySim drop criterion exactly.
+    AND COMPLETE category -- it departs from and returns to its own anchor. The
+    anchor is home for a home-based tour and the workplace for an at-work
+    subtour, so one criterion admits both. This matches the CT-RAMP / DaySim
+    drop criterion exactly.
     """
     usable = pl.col("complete").fill_null(value=False)
     if require_valid_tours and has_quality:
