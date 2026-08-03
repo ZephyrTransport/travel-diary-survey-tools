@@ -29,13 +29,13 @@ COMPLETE -- rolls up from surveyed trips     op        rule
 trip .................................   direct    trip_survey_complete (measured leaf)
  └ person-day ........................   ALL       all trips surveyed, else declared no-travel
     ├ person .........................   >=1       has >=1 complete day
-    └ household-day ..................   ALL       all members complete that date
+    └ household-day ..................   ALL       all surveyable members complete that date
        └ household ...................   >=1       has >=1 complete household-day
 
 USABLE -- rolls down from the tour fuse      op        rule
 ------------------------------------------------------------------------
 household ...........................   >=1       has >=1 usable household-day
- ├ household-day ....................   ALL       all members' days usable that date
+ ├ household-day ....................   ALL       all surveyable members' days usable that date
  └ person ...........................   >=1       has >=1 usable day
     └ day ...........................   >=1       >=1 usable tour (or a no-travel day)
        └ tour .......................   fuse      complete AND VALID AND hh-day complete
@@ -45,7 +45,10 @@ household ...........................   >=1       has >=1 usable household-day
           └ joint trip ..............   >=2       >=2 usable member linked trips
 
 declared no-travel: num_reasons_no_travel >= 1, OR proxy_complete (a proxy filled the day in --
-  this is how unrelated / unsurveyable persons, who file no trips, still get a complete day).
+  this is how children, who file no trips themselves, still get a complete day).
+surveyable: persons whose travel the survey could collect at all. Unsurveyable persons
+  (unrelated members, e.g. roommates) have no day rows in the vendor data; where a source
+  carries any, they neither veto the household-day ALL reductions nor inherit their verdict.
 VALID feeds the fuse: trips -> linked trips -> tour, home-to-home, no missing legs.
 op: ALL / >=1 / >=2 = quantity gate (count members vs threshold);
     direct = measured; inherit = take a neighbour's verdict; fuse = AND of conditions
@@ -165,14 +168,39 @@ def rollup_household_complete(tables: dict[str, pl.DataFrame | None]) -> None:
     )
 
 
+def _join_surveyable(days: pl.DataFrame, persons: pl.DataFrame | None) -> pl.DataFrame:
+    """Return *days* with a ``_surveyable`` bool column joined from persons.
+
+    A person is *surveyable* when the survey could collect their travel at all;
+    unrelated household members (e.g. roommates) are not, file no trips, and
+    must not veto the household-day reductions -- the vendor gives them no day
+    rows whatsoever. When the persons table (or its ``surveyable`` column) is
+    absent, every member-day counts, preserving the plain ALL reduction.
+    """
+    if persons is None or "surveyable" not in persons.columns or "person_id" not in days.columns:
+        return days.with_columns(pl.lit(value=True).alias("_surveyable"))
+    flag = persons.select(
+        "person_id",
+        pl.col("surveyable").cast(pl.Boolean).fill_null(value=True).alias("_surveyable"),
+    )
+    return days.join(flag, on="person_id", how="left").with_columns(
+        pl.col("_surveyable").fill_null(value=True)
+    )
+
+
 def flag_household_day_complete(tables: dict[str, pl.DataFrame | None]) -> None:
     """Stamp ``hh_day_complete`` on the days table, in place (reverse cascade).
 
     A **household-day** -- the set of person-days sharing one ``hh_id`` and
-    ``travel_date`` -- is complete only when *every* member's day is complete
-    (an ALL reduction over member-days). The result is written back onto each day
-    on that date, so ``hh_day_complete`` marks whether the day belongs to a
-    coherently observed household-date.
+    ``travel_date`` -- is complete only when every *surveyable* member's day is
+    complete (an ALL reduction over surveyable member-days). The result is
+    written back onto each day on that date, so ``hh_day_complete`` marks
+    whether the day belongs to a coherently observed household-date.
+
+    Unsurveyable members (see :func:`_join_surveyable`) neither veto the date
+    nor borrow its verdict: their own day rows -- if a data source carries any
+    -- keep their own ``complete`` (typically False), so they can never become
+    usable travel days.
 
     This runs after :func:`cascade_completeness`, so ``complete`` already
     reflects ancestry; the reduction then flows the other way, up from members to
@@ -188,22 +216,34 @@ def flag_household_day_complete(tables: dict[str, pl.DataFrame | None]) -> None:
         tables["days"] = days.with_columns(own.alias("hh_day_complete"))
         return
 
-    household_day = days.group_by("hh_id", "travel_date").agg(own.all().alias("_hh_day_complete"))
+    days = _join_surveyable(days, tables.get("persons"))
+    # all() over an empty set is True: a date observed only through unsurveyable
+    # members has no surveyable observation to fail -- and no surveyable day to
+    # gain usability from it either.
+    household_day = days.group_by("hh_id", "travel_date").agg(
+        own.filter(pl.col("_surveyable")).all().alias("_hh_day_complete")
+    )
     tables["days"] = (
         days.join(household_day, on=["hh_id", "travel_date"], how="left")
-        .with_columns(pl.col("_hh_day_complete").fill_null(value=False).alias("hh_day_complete"))
-        .drop("_hh_day_complete")
+        .with_columns(
+            pl.when(pl.col("_surveyable"))
+            .then(pl.col("_hh_day_complete").fill_null(value=False))
+            .otherwise(own)
+            .alias("hh_day_complete")
+        )
+        .drop("_hh_day_complete", "_surveyable")
     )
 
 
 def flag_household_day_usable(tables: dict[str, pl.DataFrame | None]) -> None:
-    """Stamp ``hh_day_usable`` on days: ALL member-days usable that date, in place.
+    """Stamp ``hh_day_usable`` on days: ALL surveyable member-days usable that date, in place.
 
     The usable-side mirror of :func:`flag_household_day_complete`: a household-day
-    is *usable* only when every member's day is model-usable, not merely complete.
-    ``household.model_usable`` then needs at least one such date. Requires
-    ``model_usable`` on days; days without ``hh_id`` / ``travel_date`` fall back to
-    each day's own ``model_usable``.
+    is *usable* only when every surveyable member's day is model-usable, not
+    merely complete. ``household.model_usable`` then needs at least one such
+    date. Unsurveyable members neither veto the date nor inherit its verdict.
+    Requires ``model_usable`` on days; days without ``hh_id`` / ``travel_date``
+    fall back to each day's own ``model_usable``.
     """
     days = tables.get("days")
     if days is None or "model_usable" not in days.columns:
@@ -214,11 +254,19 @@ def flag_household_day_usable(tables: dict[str, pl.DataFrame | None]) -> None:
         tables["days"] = days.with_columns(own.alias("hh_day_usable"))
         return
 
-    household_day = days.group_by("hh_id", "travel_date").agg(own.all().alias("_hh_day_usable"))
+    days = _join_surveyable(days, tables.get("persons"))
+    household_day = days.group_by("hh_id", "travel_date").agg(
+        own.filter(pl.col("_surveyable")).all().alias("_hh_day_usable")
+    )
     tables["days"] = (
         days.join(household_day, on=["hh_id", "travel_date"], how="left")
-        .with_columns(pl.col("_hh_day_usable").fill_null(value=False).alias("hh_day_usable"))
-        .drop("_hh_day_usable")
+        .with_columns(
+            pl.when(pl.col("_surveyable"))
+            .then(pl.col("_hh_day_usable").fill_null(value=False))
+            .otherwise(own)
+            .alias("hh_day_usable")
+        )
+        .drop("_hh_day_usable", "_surveyable")
     )
 
 

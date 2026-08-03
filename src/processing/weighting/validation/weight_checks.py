@@ -175,19 +175,22 @@ def _check_hierarchy(
 ) -> None:
     """Verify that children sum to what their parents represent, or raise.
 
-    This is the cascade's defining identity: a scope's population is carried by
-    the records it kept, so ``sum(child_weight) == sum(parent_weight *
-    n_children)`` over each scope. It is arithmetic we control, so any deviation
-    past floating-point tolerance is a bug and fails loudly.
-
-    The identity is checked at the scope the weight was actually conserved
-    within, read from the same [`HIERARCHY`]
+    Each DOWN edge is checked against the identity its rule actually maintains,
+    read from the same [`HIERARCHY`]
     [processing.weighting.balancing.weight_propagation.HIERARCHY] the
-    propagation walks -- so the check cannot drift from the rule. Days are
-    conserved over the household, for instance, because a person who kept no
-    usable day has their day-weight covered by the household's remaining days.
-    Scopes where *nothing* was usable have no denominator anywhere; they are
-    reported as a shortfall rather than failed.
+    propagation walks -- so the check cannot drift from the rule:
+
+    * copy-and-conserve levels: ``sum(child_weight) == sum(parent_weight *
+      n_children)`` over each conservation scope.
+    * split levels (days): ``sum(child_weight) == parent_weight`` per parent --
+      a person's usable days sum to exactly their person weight, the
+      average-day convention.
+
+    It is arithmetic we control, so any deviation past floating-point tolerance
+    is a bug and fails loudly. Parents where *nothing* was usable have no
+    denominator anywhere; they are reported as a shortfall rather than failed
+    -- their weight is deliberately unrepresented below, never pooled across
+    parents.
 
     Args:
         tables: Weighted canonical tables.
@@ -226,15 +229,37 @@ def _check_hierarchy(
                 usable.sum().alias("n_usable"),
             )
         )
+        # A split level represents each parent once; a copy level once per child.
+        expected = pl.col(parent_wt) if level.split else pl.col(parent_wt) * pl.col("n_children")
         merged = (
             parent.filter(pl.col(parent_wt).is_not_null())
             .select(join_key, parent_wt)
             .join(per_parent, on=join_key, how="inner")
-            .with_columns((pl.col(parent_wt) * pl.col("n_children")).alias("expected"))
+            .with_columns(expected.alias("expected"))
         )
         if merged.is_empty():
             logger.info("  Hierarchy %s → %s: OK", parent_name, child_name)
             continue
+
+        if level.split:
+            # A split parent is represented once by its children, so a parent
+            # carrying weight but owning no child rows at all (e.g. an
+            # unsurveyable person has no days) is a genuine shortfall --
+            # reported, not failed. Copy levels have nothing to represent.
+            rowless = parent.filter(pl.col(parent_wt).fill_null(0.0) > 0).join(
+                per_parent.select(join_key), on=join_key, how="anti"
+            )
+            if rowless.height:
+                logger.info(
+                    "  Hierarchy %s → %s: %d %s(s) carry weight but have no %s rows "
+                    "(%.1f unrepresented below)",
+                    parent_name,
+                    child_name,
+                    rowless.height,
+                    join_key,
+                    child_name,
+                    float(rowless[parent_wt].sum()),
+                )
 
         by_scope = merged.group_by("_scope").agg(
             pl.col("child_sum").sum(),
@@ -272,10 +297,11 @@ def _check_hierarchy(
             if failures.height > _MAX_REPORTED
             else ""
         )
+        identity = parent_wt if level.split else f"{parent_wt} x n_{child_name}"
         msg = (
             f"Weight cascade broken between {parent_name} and {child_name}: "
             f"{failures.height} {scope}(s) whose {child_wt} does not sum to "
-            f"{parent_wt} x n_{child_name}.\n"
+            f"{identity}.\n"
             f"  {scope:<16} {'child_sum':>14} {'expected':>14}\n"
             f"{rows}{more}"
         )

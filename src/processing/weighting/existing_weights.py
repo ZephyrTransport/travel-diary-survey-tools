@@ -281,7 +281,7 @@ def add_existing_weights(  # noqa: C901, PLR0912, PLR0915
 
         hh_weight
           └─ person_weight        (carry forward via hh_id)
-              └─ day_weight        (carry forward via person_id)
+              └─ day_weight        (split: person_weight / n_usable_days)
                   └─ unlinked_trip_weight  (carry forward via day_id)
                       ├─ linked_trip_weight   (mean agg via linked_trip_id)
                       ├─ joint_trip_weight    (mean agg via joint_trip_id)
@@ -292,13 +292,15 @@ def add_existing_weights(  # noqa: C901, PLR0912, PLR0915
     [`HIERARCHY`][processing.weighting.balancing.weight_propagation.HIERARCHY]; this
     step only supplies the weights it is given and derives the rest from it.
 
-    Note that if there are no "adjustments" made to sub-table weights (e.g., person or trip), then
-    all weights should actually be exactly same from household through tour.
+    Days are the *average-day* split: a person's usable days share their person
+    weight equally, so day totals read as persons on an average day (the
+    vendor's own convention). Supplied day weights are redistributed within
+    each person the same way.
 
     Carry-forward levels are checked against what their parents represent:
 
     - ``sum(person_weight) ≈ sum(hh_weight x num_persons)``
-    - ``sum(day_weight) ≈ sum(person_weight x num_days)`` (per household)
+    - ``sum(day_weight) ≈ person_weight`` (per person, usable days)
     - ``sum(unlinked_trip_weight) ≈ sum(day_weight x num_trips)``
 
     The aggregate levels have no such identity: a mean over members does **not**

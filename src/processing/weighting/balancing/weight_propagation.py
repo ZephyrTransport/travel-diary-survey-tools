@@ -17,7 +17,7 @@ the propagation, the supplied-weight path and the checksum.
 |-----------|------------------------|-----------------------------------------
 |households |``hh_weight``           |Anchor -- from the balancer, or supplied
 |persons    |``person_weight``       |Down from ``hh_weight`` via ``hh_id``
-|days       |``day_weight``          |Down from ``person_weight`` via ``person_id``
+|days       |``day_weight``          |Split: ``person_weight / n_usable_days``
 |unlinked   |``unlinked_trip_weight``|Down from ``day_weight`` via ``day_id``
 |linked     |``linked_trip_weight``  |Up: mean of member ``unlinked_trip_weight``
 |joint trips|``joint_trip_weight``   |Up: mean of member ``linked_trip_weight``
@@ -38,22 +38,32 @@ claims share the scope's whole claim:
 
     w = claim x sum(claims in scope) / sum(claims of usable in scope)
 
-One expression, no special cases.  Because every record in a scope is scaled by
-the same factor, the relative weights inside a household are untouched, and the
-conservation identity holds by construction:
+Because every record in a scope is scaled by the same factor, the relative
+weights inside a household are untouched, and the conservation identity holds
+by construction:
 
     sum(weight in scope) == sum(claim in scope)
 
-# Scope, and why days are special
+# Days: the average-day split
 
-``scope`` is usually the parent itself: a person's weight spreads over that
-person's own days.  Days are the exception -- they are conserved over the
-**household**.  An unrelated person who reported no usable day keeps their
-person weight (they are a real person, and person weights stay calibrated to the
-person controls), but they have no day of their own left to carry it, so the
-household's remaining days stand in:
+Days use a different DOWN rule (``split=True``): a person's usable days jointly
+represent that person *once*, not once each --
 
-    sum(day_weight over a household) == sum(person_weight x n_days) over its persons
+    day_weight = person_weight / n_usable_days        (usable days; 0 otherwise)
+    sum(day_weight over a person's days) == person_weight
+
+the vendor's own convention (their weighted days are exactly ``person_weight /
+n``), with our usability flag deciding which days count.  Summing day weights
+therefore yields *persons on an average day*, not person-days.
+
+Conservation is strictly **within the person -- never pooled across a
+household**: pooling would siphon day-weight from members with fewer usable
+days toward members with more, silently distorting person-day totals while
+still passing any household-level checksum.  A person with no usable day keeps
+their person weight (person weights stay calibrated to the person controls) but
+contributes nothing at the day level; that shortfall is reported by the
+checksum, never rescaled away.  Unsurveyable persons (e.g. unrelated household
+members) carry no day rows at all, matching the vendor's day table.
 
 Where a whole scope is unusable there is no denominator anywhere and the weight
 is genuinely stranded.  That is reported as a shortfall, never silently rescaled.
@@ -92,9 +102,11 @@ class Level:
             ``DOWN`` it identifies the parent record; for ``UP`` it identifies
             the grouping the member belongs to.
         flow: Which way the weight moves along the edge.
-        scope: Group within which this weight is conserved. Usually the parent
-            key; wider only where a parent can legitimately keep no usable child
-            (see the module docstring on days).
+        scope: Group within which this weight is conserved -- the parent key.
+        split: If True, the parent's weight is divided equally among its usable
+            children (``parent_weight / n_usable``) instead of copied to each.
+            Days use this: a person's usable days jointly represent that person
+            once -- the average-day convention (see the module docstring).
     """
 
     table: str
@@ -105,6 +117,7 @@ class Level:
     key: str | None = None
     flow: Flow | None = None
     scope: str | None = None
+    split: bool = False
 
     def __post_init__(self) -> None:
         """Reject a half-declared edge at import time rather than mid-pipeline."""
@@ -138,8 +151,10 @@ HIERARCHY: tuple[Level, ...] = (
         parent="persons",
         key="person_id",
         flow=Flow.DOWN,
-        # Conserved over the household, not the person: see the module docstring.
-        scope="hh_id",
+        # Conserved within the person: a person's usable days sum to their
+        # person weight (the vendor's average-day convention, split=True).
+        scope="person_id",
+        split=True,
     ),
     Level(
         "unlinked_trips",
@@ -349,6 +364,75 @@ def distribute_within_scope(
     return df
 
 
+def split_among_usable(
+    df: pl.DataFrame,
+    *,
+    weight_col: str,
+    key: str,
+    usability_flag_col: str | None,
+    table: str,
+) -> pl.DataFrame:
+    """Divide each parent's weight equally among its usable children, in place.
+
+    The average-day rule: a parent's children jointly represent the parent
+    *once*, not once each ::
+
+        w = parent_weight / n_usable_children    (usable children; 0 otherwise)
+
+    so the usable children of every parent sum exactly to the parent's weight.
+    This is the vendor's own day-weight convention (``day_weight =
+    person_weight / n_weighted_days``), with our usability flag deciding which
+    children count. There is **no cross-parent pooling**: a parent whose
+    children are all unusable is a reported shortfall, never re-homed onto
+    other parents' children.
+
+    Args:
+        df: Child table holding each row's parent weight in *weight_col*.
+        weight_col: Weight column, replaced in place by the split weight.
+        key: Column identifying the parent record.
+        usability_flag_col: Boolean column deciding which children carry
+            weight, or None to split among all children.
+        table: Table name, for logging.
+
+    Returns:
+        *df* with *weight_col* split among each parent's usable children.
+    """
+    usable = (
+        is_usable(usability_flag_col)
+        if usability_flag_col and usability_flag_col in df.columns
+        else pl.lit(value=True)
+    )
+    counts = df.group_by(key).agg(
+        usable.sum().alias("_n_usable"),
+        pl.col(weight_col).fill_null(0.0).first().alias("_parent_weight"),
+    )
+
+    stranded = counts.filter((pl.col("_n_usable") == 0) & (pl.col("_parent_weight") > 0))
+    if stranded.height:
+        logger.info(
+            "%s: %d %s(s) kept no usable child; %.1f of %s stays unrepresented "
+            "(reported by the checksum, never pooled across parents)",
+            table,
+            stranded.height,
+            key,
+            float(stranded["_parent_weight"].sum()),
+            weight_col,
+        )
+
+    df = (
+        df.join(counts.select(key, "_n_usable"), on=key, how="left")
+        .with_columns(
+            pl.when(usable & (pl.col("_n_usable") > 0))
+            .then(pl.col(weight_col) / pl.col("_n_usable"))
+            .otherwise(0.0)
+            .alias(weight_col)
+        )
+        .drop("_n_usable")
+    )
+    logger.info("%s: %s split equally among each %s's usable children", table, weight_col, key)
+    return df
+
+
 def _carry_down(
     tables: dict[str, pl.DataFrame | None],
     has_weight: dict[str, str],
@@ -384,7 +468,16 @@ def _carry_down(
     claims = parent_df.select(level.key, parent_weight).rename({parent_weight: level.weight_col})
     child_df = safe_join_weight(child_df, claims, level.key)  # type: ignore[arg-type]
 
-    if usability_flag_col:
+    if level.split:
+        # Average-day convention: children jointly represent the parent once.
+        child_df = split_among_usable(
+            child_df,
+            weight_col=level.weight_col,
+            key=level.key,  # type: ignore[arg-type]
+            usability_flag_col=usability_flag_col,
+            table=level.table,
+        )
+    elif usability_flag_col:
         child_df = distribute_within_scope(
             child_df,
             weight_col=level.weight_col,
@@ -471,7 +564,8 @@ def propagate_weights(
         usability_flag_col: Boolean column deciding which records may carry
             weight. Defaults to ``model_usable``; pass ``complete`` to weight the
             whole valid survey including partial/overnight tours, or None to give
-            every record its claim regardless of usability.
+            every record its claim regardless of usability (split levels still
+            divide the parent weight equally, over *all* children).
     """
     skip = skip or set()
 

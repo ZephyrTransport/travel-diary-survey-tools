@@ -281,26 +281,33 @@ class TestJointGroupingsNeedTwoMembers:
         assert tables["joint_trips"]["model_usable"].to_list() == [False]
 
 
-def _hh_day_tables(*, day_complete, dates, hh_ids, persons=None):
+def _hh_day_tables(*, day_complete, dates, hh_ids, persons=None, surveyable=None):
     """Days for a household-day coherence scenario, with matching tours per day.
 
     Each day gets one VALID home-to-home tour so the day gate turns on purely on
-    household-day coherence, not tour structure.
+    household-day coherence, not tour structure. Pass *surveyable* as a dict of
+    ``person_id -> 0/1`` to mark unsurveyable members; omitted persons default
+    to surveyable.
     """
     n = len(day_complete)
     day_ids = list(range(1, n + 1))
     people = persons or [1] * n
+    person_frame = pl.DataFrame(
+        {
+            "person_id": sorted(set(people)),
+            "hh_id": [hh_ids[people.index(p)] for p in sorted(set(people))],
+            "complete": [True] * len(set(people)),
+        }
+    )
+    if surveyable is not None:
+        person_frame = person_frame.with_columns(
+            pl.col("person_id").replace_strict(surveyable, default=1).alias("surveyable")
+        )
     return {
         "households": pl.DataFrame(
             {"hh_id": sorted(set(hh_ids)), "complete": [True] * len(set(hh_ids))}
         ),
-        "persons": pl.DataFrame(
-            {
-                "person_id": sorted(set(people)),
-                "hh_id": [hh_ids[people.index(p)] for p in sorted(set(people))],
-                "complete": [True] * len(set(people)),
-            }
-        ),
+        "persons": person_frame,
         "days": pl.DataFrame(
             {
                 "day_id": day_ids,
@@ -393,6 +400,46 @@ class TestHouseholdDayCoherence:
             persons=[1, 2],
         )
         compute_model_usable(t)
+        assert t["households"]["model_usable"].to_list() == [False]
+
+    def test_unsurveyable_member_does_not_veto_the_household_day(self):
+        """An unsurveyable member's day neither vetoes the date nor becomes usable.
+
+        The vendor gives unsurveyable persons (unrelated members, e.g. roommates)
+        no day rows at all; where a source carries any, the ALL reduction runs
+        over surveyable members only. Member 2's incomplete day must not break
+        member 1's date -- but member 2's own day stays unusable (their travel
+        was never collected).
+        """
+        t = _hh_day_tables(
+            day_complete=[True, False],
+            dates=["2023-05-01", "2023-05-01"],
+            hh_ids=[1, 1],
+            persons=[1, 2],
+            surveyable={2: 0},
+        )
+        compute_model_usable(t)
+        d = t["days"].sort("day_id")
+        assert d["hh_day_complete"].to_list() == [True, False]
+        assert d["model_usable"].to_list() == [True, False]
+        # The household is admissible through its surveyable member's date.
+        assert t["households"]["model_usable"].to_list() == [True]
+
+    def test_surveyable_member_still_vetoes_the_household_day(self):
+        """A surveyable member's incomplete day still breaks the date.
+
+        The exclusion is only for unsurveyable members, even when the persons
+        table carries the surveyable column.
+        """
+        t = _hh_day_tables(
+            day_complete=[True, False],
+            dates=["2023-05-01", "2023-05-01"],
+            hh_ids=[1, 1],
+            persons=[1, 2],
+            surveyable={2: 1},
+        )
+        compute_model_usable(t)
+        assert t["days"].sort("day_id")["hh_day_complete"].to_list() == [False, False]
         assert t["households"]["model_usable"].to_list() == [False]
 
 

@@ -488,10 +488,12 @@ class TestPropagateUsableColumn:
         assert days["day_weight"].to_list() == [10.0, 10.0, 20.0]
 
     def test_unusable_days_get_zero_weight(self):
-        """Days with complete=False get weight 0; the household keeps their claim.
+        """Days with complete=False get weight 0; their person's weight is a shortfall.
 
-        Person 2's only day is unusable, so within household 1 its claim moves to
-        day 10 -- the household's day-weight is conserved, not shrunk.
+        Person 2's only day is unusable, so their weight goes unrepresented at
+        the day level -- it is **not** pooled onto person 1's day. Person 1's
+        single usable day carries exactly person 1's weight (the average-day
+        split, ``person_weight / n_usable_days``).
         """
         tables = _make_tables_with_complete()
         has_weight: dict[str, str] = {"households": "hh_weight"}
@@ -499,9 +501,9 @@ class TestPropagateUsableColumn:
         propagate_weights(tables, has_weight, usability_flag_col="complete")
 
         days = tables["days"].sort("day_id")
-        assert days["day_weight"].to_list() == [20.0, 0.0, 0.0]
-        # Household 1 claimed 2 days at a person weight of 10 apiece.
-        assert days["day_weight"].sum() == pytest.approx(20.0)
+        assert days["day_weight"].to_list() == [10.0, 0.0, 0.0]
+        # Person 1's days sum to person 1's weight; person 2's 10 is a shortfall.
+        assert days["day_weight"].sum() == pytest.approx(10.0)
 
     def test_unusable_unlinked_trips_get_zero_weight(self):
         """Unlinked trips with complete=False get weight 0."""
@@ -511,8 +513,8 @@ class TestPropagateUsableColumn:
         propagate_weights(tables, has_weight, usability_flag_col="complete")
 
         ut = tables["unlinked_trips"].sort("unlinked_trip_id")
-        # Day 10 carries 20.0 and both its trips are usable, so each keeps 20.0.
-        assert ut["unlinked_trip_weight"].to_list() == [20.0, 20.0, 0.0, 0.0]
+        # Day 10 carries 10.0 and both its trips are usable, so each keeps 10.0.
+        assert ut["unlinked_trip_weight"].to_list() == [10.0, 10.0, 0.0, 0.0]
 
     def test_aggregate_excludes_zero_from_unusable(self):
         """Aggregated weights exclude zeros from unusable records."""
@@ -522,9 +524,9 @@ class TestPropagateUsableColumn:
         propagate_weights(tables, has_weight, usability_flag_col="complete")
 
         lt = tables["linked_trips"].sort("linked_trip_id")
-        # linked_trip 1: unlinked 100 (wt=20) + 200 (wt=20) -> mean=20
+        # linked_trip 1: unlinked 100 (wt=10) + 200 (wt=10) -> mean=10
         # linked_trip 2: unlinked 300 (wt=0, incomplete) + 400 (wt=0, incomplete) -> 0 (all zero)
-        assert lt["linked_trip_weight"].to_list() == [20.0, 0.0]
+        assert lt["linked_trip_weight"].to_list() == [10.0, 0.0]
 
     def test_missing_usable_column_propagates_normally(self):
         """Without the usability column present, weights propagate as before."""
@@ -547,7 +549,7 @@ class TestPropagateUsableColumn:
 
         propagate_weights(tables, has_weight, usability_flag_col="complete")
 
-        assert tables["linked_trips"]["linked_trip_weight"].to_list() == [20.0, 0.0]
+        assert tables["linked_trips"]["linked_trip_weight"].to_list() == [10.0, 0.0]
         assert tables["tours"]["tour_weight"].to_list() == [0.0]
 
     def test_all_usable_propagates_normally(self):
@@ -568,17 +570,21 @@ class TestPropagateUsableColumn:
 
 
 class TestPropagateRedistribution:
-    """The parent's weight is spread across the children it kept, not shrunk."""
+    """Days split their person's weight; trips conserve their day's claim."""
 
-    def test_usable_days_absorb_the_unusable_ones(self):
-        """A person keeping 2 of 4 days doubles the weight of each survivor."""
+    def test_usable_days_split_the_person_weight(self):
+        """A person keeping 2 of 4 days puts half their weight on each survivor.
+
+        The average-day rule: day_weight = person_weight / n_usable_days, so the
+        person's usable days sum to exactly their person weight.
+        """
         tables = _make_tables_partial_usability()
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
         propagate_weights(tables, has_weight, usability_flag_col="complete")
 
         days = tables["days"].sort("day_id")
-        assert days["day_weight"].to_list() == [20.0, 20.0, 0.0, 0.0]
+        assert days["day_weight"].to_list() == [5.0, 5.0, 0.0, 0.0]
 
     def test_usable_trips_absorb_the_unusable_ones(self):
         """A day keeping 1 of 4 trips gives that trip four times the day weight."""
@@ -588,11 +594,11 @@ class TestPropagateRedistribution:
         propagate_weights(tables, has_weight, usability_flag_col="complete")
 
         ut = tables["unlinked_trips"].sort("unlinked_trip_id")
-        # day 10 carries 20.0 and kept 1 of its 4 trips -> 20 * 4/1
-        assert ut["unlinked_trip_weight"].to_list() == [80.0, 0.0, 0.0, 0.0]
+        # day 10 carries 5.0 and kept 1 of its 4 trips -> 5 * 4/1
+        assert ut["unlinked_trip_weight"].to_list() == [20.0, 0.0, 0.0, 0.0]
 
     def test_checksum_holds_at_every_level(self):
-        """sum(child) == parent_weight * n_children wherever a child survived."""
+        """Each edge maintains its own identity wherever a child survived."""
         tables = _make_tables_partial_usability()
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
@@ -600,18 +606,18 @@ class TestPropagateRedistribution:
 
         # 1 household at 10.0 with 1 person
         assert tables["persons"]["person_weight"].sum() == pytest.approx(10.0)
-        # 1 person at 10.0 with 4 days
-        assert tables["days"]["day_weight"].sum() == pytest.approx(40.0)
-        # day 10 carries 20.0 and holds all 4 trips
-        assert tables["unlinked_trips"]["unlinked_trip_weight"].sum() == pytest.approx(80.0)
+        # split: the person's usable days sum to the person weight
+        assert tables["days"]["day_weight"].sum() == pytest.approx(10.0)
+        # copy: day 10 carries 5.0 and holds all 4 trips
+        assert tables["unlinked_trips"]["unlinked_trip_weight"].sum() == pytest.approx(20.0)
 
-    def test_unrelated_person_days_are_covered_by_the_household(self):
-        """A person with no usable day keeps their weight; their days move to the HH.
+    def test_person_with_no_usable_day_is_a_shortfall_not_pooled(self):
+        """A person with no usable day keeps their weight; nobody absorbs their days.
 
-        Person 2 is an "unrelated person" who reported no usable travel day. They
-        keep a person weight, but their day-weight allocation has no sibling day
-        of their own to land on, so the household's remaining usable days stand
-        in for it -- leaving sum(day_weight) per household intact.
+        Person 2 reported no usable travel day. They keep a person weight (person
+        weights stay calibrated to the person controls), but their weight is
+        simply unrepresented at the day level -- person 1's days must NOT inflate
+        to cover it, or person-day totals would be silently distorted.
         """
         tables = {
             "households": pl.DataFrame({"hh_id": [1], "hh_weight": [10.0], "complete": [True]}),
@@ -637,13 +643,47 @@ class TestPropagateRedistribution:
 
         # Both persons keep their weight -- person 2 is still a real person.
         assert tables["persons"]["person_weight"].to_list() == [10.0, 10.0]
+        # Person 1's usable days split person 1's weight; person 2's days stay 0.
+        days = tables["days"].sort("day_id")
+        assert days["day_weight"].to_list() == [5.0, 5.0, 0.0, 0.0]
+        assert days["day_weight"].sum() == pytest.approx(10.0)
+
+    def test_day_split_matches_vendor_convention(self):
+        """Two persons with different usable-day counts: each conserves independently.
+
+        The vendor identity: day_weight = person_weight / n_usable_days, so
+        sum(day_weight per person) == person_weight regardless of how many days
+        the *other* household members kept. No cross-person transfer.
+        """
+        tables = {
+            "households": pl.DataFrame({"hh_id": [1], "hh_weight": [100.0], "complete": [True]}),
+            "persons": pl.DataFrame(
+                {"person_id": [1, 2], "hh_id": [1, 1], "complete": [True, True]}
+            ),
+            "days": pl.DataFrame(
+                {
+                    "day_id": [10, 20, 30, 40],
+                    "person_id": [1, 1, 2, 2],
+                    "hh_id": [1, 1, 1, 1],
+                    "complete": [True, True, True, False],
+                }
+            ),
+            "unlinked_trips": None,
+            "linked_trips": None,
+            "joint_trips": None,
+            "tours": None,
+        }
+        has_weight: dict[str, str] = {"households": "hh_weight"}
+
+        propagate_weights(tables, has_weight, usability_flag_col="complete")
 
         days = tables["days"].sort("day_id")
-        # Person 1's 2 usable days carry their own 2 days (10 each) plus person
-        # 2's stranded 2 days (20 split over 2 usable days = 10 each).
-        assert days["day_weight"].to_list() == pytest.approx([20.0, 20.0, 0.0, 0.0])
-        # sum(day_weight) == sum over persons of person_weight * n_days
-        assert days["day_weight"].sum() == pytest.approx(10.0 * 2 + 10.0 * 2)
+        # person 1: 100/2 per usable day; person 2: 100/1 on their single usable day
+        assert days["day_weight"].to_list() == [50.0, 50.0, 100.0, 0.0]
+        per_person = (
+            tables["days"].group_by("person_id").agg(pl.col("day_weight").sum()).sort("person_id")
+        )
+        assert per_person["day_weight"].to_list() == pytest.approx([100.0, 100.0])
 
     def test_parent_with_no_usable_child_leaves_a_shortfall(self):
         """A person keeping no day has nowhere to spread, so their days stay 0."""

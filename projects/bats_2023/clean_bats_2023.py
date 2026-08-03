@@ -133,9 +133,14 @@ def clean_2023_bats(
     )
 
     # ADD DAYS FOR PERSONS WITHOUT DAYS =================================
-    # Find persons without days
+    # Find surveyable persons without days. Unsurveyable persons (unrelated
+    # household members, e.g. roommates) get no day rows at all, matching the
+    # vendor's day table: they are kept for weighting at the person level but
+    # contribute no travel days, and a synthesized all-null day would wrongly
+    # veto the household-day completeness reduction (ALL members complete).
     persons_without_days = persons.filter(
         ~pl.col("person_id").is_in(days["person_id"].unique().implode())
+        & (pl.col("surveyable") == 1)
     )
 
     logger.info(

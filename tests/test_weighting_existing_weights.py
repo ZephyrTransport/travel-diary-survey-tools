@@ -572,13 +572,12 @@ class TestSuppliedTotalPreserved:
         assert weights[1] == pytest.approx(20.0 * scale)
         assert weights[3] == pytest.approx(40.0 * scale)
 
-    def test_supplied_day_weight_is_conserved_within_the_household(self, tmp_path):
-        """A supplied day weight moves to the household's usable days.
+    def test_supplied_day_weight_is_conserved_within_the_person(self, tmp_path):
+        """A supplied day weight moves to the *same person's* usable days.
 
-        Day weights are conserved over the household, so the unusable day's claim
-        is shared out in proportion to what the survivors already carry -- every
-        day in household 1 scales by the same 30/20, leaving the relative weights
-        of its two persons untouched.
+        Day weights are conserved within the person -- never pooled across a
+        household. Person 1's unusable day moves onto their own remaining day;
+        person 2's days are untouched even though they share the household.
         """
         days = pl.DataFrame(
             {
@@ -599,13 +598,13 @@ class TestSuppliedTotalPreserved:
             usability_flag_col="complete",
         )
         weights = result["days"].sort("day_id")["day_weight"].to_list()
-        scale = 30.0 / 20.0
-        assert weights == pytest.approx([10.0 * scale, 0.0, 5.0 * scale, 5.0 * scale])
+        # Person 1: 20 supplied over one usable day; person 2: unchanged.
+        assert weights == pytest.approx([20.0, 0.0, 5.0, 5.0])
         assert sum(weights) == pytest.approx(30.0)
 
     def test_missing_scope_column_raises(self, tmp_path):
-        """Days without hh_id cannot be conserved as declared, so this fails loudly."""
-        days = pl.DataFrame({"day_id": [10, 20], "person_id": [1, 1], "complete": [True, False]})
+        """Days without person_id cannot be conserved as declared, so this fails loudly."""
+        days = pl.DataFrame({"day_id": [10, 20], "hh_id": [1, 1], "complete": [True, False]})
         weight_file = tmp_path / "day_weights.csv"
         pl.DataFrame({"day_id": [10, 20], "day_weight": [10.0, 10.0]}).write_csv(weight_file)
 
