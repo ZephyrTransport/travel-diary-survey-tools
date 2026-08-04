@@ -62,13 +62,24 @@ PROFILES = {
 }
 
 # Canonical step order (mandatory + optional interleaved correctly).
-_MANDATORY = {"load_data", "link_trips", "extract_tours", "add_zone_ids", "write_data"}
+# cascade_completeness is mandatory: it mirrors the shipping bats_2023 pipeline,
+# where the formatters and weighting read the flags it stamps rather than
+# re-deriving them per row.
+_MANDATORY = {
+    "load_data",
+    "link_trips",
+    "extract_tours",
+    "cascade_completeness",
+    "add_zone_ids",
+    "write_data",
+}
 _STEP_ORDER = (
     "load_data",
     "link_trips",
     "detect_joint_trips",
     "imputation",
     "extract_tours",
+    "cascade_completeness",
     "add_zone_ids",
     "format_ctramp",
     "format_daysim",
@@ -173,6 +184,11 @@ def _step_blocks(data_dir: Path, output_dir: Path, enabled: frozenset) -> dict:
             },
         },
         "extract_tours": {"name": "extract_tours", "validate_input": False, "cache": False},
+        "cascade_completeness": {
+            "name": "cascade_completeness",
+            "validate_input": False,
+            "cache": False,
+        },
         "add_zone_ids": {
             "name": "add_zone_ids",
             "validate_input": False,
@@ -237,6 +253,7 @@ def _run_pipeline(enabled: frozenset):
     from pipeline.pipeline import Pipeline
     from processing import (
         add_zone_ids,
+        cascade_completeness,
         detect_joint_trips,
         extract_tours,
         format_ctramp,
@@ -262,6 +279,7 @@ def _run_pipeline(enabled: frozenset):
         detect_joint_trips,
         imputation,
         extract_tours,
+        cascade_completeness,
         add_zone_ids,
         format_ctramp,
         format_daysim,

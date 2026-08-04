@@ -309,7 +309,7 @@ def clean_2023_bats(
     # ASSIGN COMPLETION STATUS =========================================
     # Completeness rolls up from the surveyed trip (see processing.completeness).
     # This project measures two leaf facts directly; person and household
-    # completeness are derived *upward* later by the flag_model_usable step, so
+    # completeness are derived *upward* later by the cascade_completeness step, so
     # the vendor's person/household is_complete here is only a placeholder the
     # rollup overwrites.
     #

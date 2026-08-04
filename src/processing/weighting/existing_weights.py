@@ -326,7 +326,7 @@ def add_existing_weights(  # noqa: C901, PLR0912, PLR0915
         derive_missing_weights: Whether to derive weights for tables
             without provided weight files (default: False).
         usability_flag_col: Boolean column deciding which records may carry weight,
-            stamped upstream by the ``flag_model_usable`` step. Defaults to
+            stamped upstream by the ``cascade_completeness`` step. Defaults to
             ``model_usable`` (matching the tours CT-RAMP and DaySim keep); pass
             ``complete`` to weight the whole valid survey including partial and
             overnight tours. Supplied weights are redistributed onto the usable
@@ -442,7 +442,7 @@ def add_existing_weights(  # noqa: C901, PLR0912, PLR0915
         has_weight[table_name] = cfg.canonical_weight_col
 
     # Redistribute each supplied weight onto the usable records, preserving the
-    # supplied total. Usability is stamped upstream by ``flag_model_usable``.
+    # supplied total. Usability is stamped upstream by ``cascade_completeness``.
     _apply_usability(tables, has_weight, usability_flag_col=usability_flag_col)
 
     # Derive missing weights if requested

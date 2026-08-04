@@ -325,17 +325,42 @@ class Pipeline:
         except subprocess.CalledProcessError:
             logger.warning("Could not determine git version (not a git repo)")
 
+    def _validate_steps(self) -> None:
+        """Check every configured step resolves to a registered function.
+
+        Runs before any step executes, so a config naming a step the runner never
+        registered fails immediately instead of part-way through a long pipeline.
+        All unresolved names are reported at once.
+
+        Raises:
+            ValueError: If any configured step has no registered function.
+        """
+        missing = [
+            step_cfg["name"]
+            for step_cfg in self.config.get("steps", [])
+            if step_cfg["name"] not in self.steps
+        ]
+        if not missing:
+            return
+
+        named = ", ".join(f"'{name}'" for name in missing)
+        registered = ", ".join(sorted(self.steps)) or "(none)"
+        label = "Step" if len(missing) == 1 else "Steps"
+        msg = (
+            f"{label} {named} not found in pipeline steps. Every step named in "
+            f"the config must be passed to Pipeline(steps=[...]); add the "
+            f"function to the runner's step list. Registered steps: {registered}."
+        )
+        raise ValueError(msg)
+
     def run(self) -> CanonicalData:
         """Run a data processing pipeline based on a configuration file."""
+        self._validate_steps()
         self._log_git_version()
         n_steps = len(self.config["steps"])
         for i, step_cfg in enumerate(self.config["steps"], start=1):
             step_name = step_cfg["name"]
-
-            step_obj = self.steps.get(step_name)
-            if step_obj is None:
-                msg = f"Step '{step_name}' not found in pipeline steps."
-                raise ValueError(msg)
+            step_obj = self.steps[step_name]
 
             logger.info("")
             logger.info("=" * 70)

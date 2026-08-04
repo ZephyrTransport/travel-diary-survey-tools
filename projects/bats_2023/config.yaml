@@ -132,16 +132,15 @@ steps:
       # teleports while ignoring same-place geocoding jitter.
       spatial_gap_threshold_meters: 1000.0
 
-  - name: flag_model_usable
+  # Cascade `complete` (survey reporting) through hh <-> person <-> day <->
+  # trip/tour so it is consistent with any upstream adjustments, and stamp
+  # `model_usable`: the subset of complete records admissible to the tour-based
+  # models (VALID tour structure + COMPLETE home-to-home category + household-
+  # day coherence). Parameterless: downstream consumers choose which flag to
+  # honour (weighting: usability_flag_col; formatters: drop_invalid_tours).
+  - name: cascade_completeness
     validate_input: false
     cache: true
-    params:
-      # Fold strict tour structure (VALID quality + COMPLETE category) into the
-      # model_usable gate. `complete` stays untouched as survey-reporting
-      # completeness, so partials/overnights remain valid survey data; they are
-      # just not admissible to the tour-based model. Set false to make
-      # model_usable equal reporting completeness.
-      require_valid_tours: true
 
   - name: compute_weights
     validate_input: false
@@ -204,7 +203,7 @@ steps:
       # keep incomplete households in the seed and give them computed weights.
       exclude_incompletes: true
 
-      # Which flag decides who carries weight (stamped by flag_model_usable):
+      # Which flag decides who carries weight (stamped by cascade_completeness):
       #   model_usable -> only model-admissible records, so the weighted tour
       #                   universe matches what CT-RAMP/DaySim keep.
       #   complete     -> the whole valid survey, including partial/overnight

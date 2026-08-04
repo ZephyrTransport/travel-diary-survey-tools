@@ -4,7 +4,7 @@ This module imports and exposes all step functions for easy access.
 """
 
 from .add_zone_ids import add_zone_ids
-from .completeness import flag_model_usable
+from .completeness import cascade_completeness
 from .final_check import final_check
 from .formatting import format_ctramp, format_daysim
 from .imputation.impute import imputation
@@ -17,11 +17,11 @@ from .weighting import add_existing_weights, compute_weights
 __all__ = [
     "add_existing_weights",
     "add_zone_ids",
+    "cascade_completeness",
     "compute_weights",
     "detect_joint_trips",
     "extract_tours",
     "final_check",
-    "flag_model_usable",
     "format_ctramp",
     "format_daysim",
     "imputation",

@@ -7,9 +7,9 @@ from data_canon.codebook.tours import TourCategory, TourDataQuality
 from processing.completeness import (
     _flag_households,
     _flag_joint_groupings,
+    cascade_completeness,
     compute_model_usable,
     flag_household_day_complete,
-    flag_model_usable,
     rollup_completeness,
     rollup_household_complete,
 )
@@ -199,12 +199,6 @@ class TestComputeModelUsable:
         assert tables["persons"]["model_usable"].to_list() == [False]
         assert tables["days"]["model_usable"].to_list() == [False]
         assert tables["tours"]["model_usable"].to_list() == [False, False, False]
-
-    def test_require_valid_tours_false_reduces_to_completeness(self):
-        """With structure checks off, the gate is just reporting completeness."""
-        tables = _gate_tables()
-        compute_model_usable(tables, require_valid_tours=False)
-        assert tables["tours"].sort("tour_id")["model_usable"].to_list() == [True, True, True]
 
     def test_missing_descriptors_fall_back_to_completeness(self):
         """Tours without quality/category columns are gated on completeness alone."""
@@ -478,8 +472,8 @@ class TestUnflaggedMemberTablesRaise:
         assert tables["joint_trips"]["model_usable"].to_list() == [True]
 
 
-class TestFlagModelUsableStep:
-    """Tests for the flag_model_usable pipeline step.
+class TestCascadeCompletenessStep:
+    """Tests for the cascade_completeness pipeline step.
 
     The step is a thin wrapper over :func:`compute_model_usable` (covered above);
     the full pipeline wiring is exercised by the synthetic end-to-end run. Here we
@@ -489,6 +483,6 @@ class TestFlagModelUsableStep:
     def test_omits_tables_not_supplied(self):
         """Tables passed as None are not present in the result."""
         tables = _gate_tables()
-        result = flag_model_usable(households=tables["households"])
+        result = cascade_completeness(households=tables["households"])
         assert set(result) == {"households"}
         assert "model_usable" in result["households"].columns

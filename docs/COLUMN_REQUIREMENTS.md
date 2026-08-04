@@ -69,7 +69,7 @@ Each tab shows the fields for one canonical table. Only steps that reference the
 
 === "days"
 
-    | Field | Type | Constraints | flag_model_usable | format_daysim |
+    | Field | Type | Constraints | cascade_completeness | format_daysim |
     | --- | --- | --- | --- | --- |
     | `person_id` | int | ≥ 1, FK → `persons.person_id`, REQ_CHILD |  |  |
     | `day_id` | int | ≥ 1, UNIQUE | ✓ |  |
@@ -152,7 +152,7 @@ Each tab shows the fields for one canonical table. Only steps that reference the
 
 === "tours"
 
-    | Field | Type | Constraints | flag_model_usable | add_zone_ids | format_ctramp | format_daysim |
+    | Field | Type | Constraints | cascade_completeness | add_zone_ids | format_ctramp | format_daysim |
     | --- | --- | --- | --- | --- | --- | --- |
     | `tour_id` | int | ≥ 1, UNIQUE | ✓ | ✓ |  |  |
     | `hh_id` | int | ≥ 1, FK → `households.hh_id` |  |  |  |  |

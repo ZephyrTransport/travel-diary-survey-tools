@@ -216,7 +216,7 @@ def _drop_invalid_tours(
     Keeps only tours the ``model_usable`` gate admits -- cascaded survey
     completeness AND an admissible tour structure (VALID quality, COMPLETE
     home-to-home category). That gate is stamped upstream by the
-    ``flag_model_usable`` step (see [`processing.completeness`]
+    ``cascade_completeness`` step (see [`processing.completeness`]
     [processing.completeness]) and is shared with the DaySim formatter and the
     weighting, so all three agree on the tour universe. Without this,
     single-trip/loop tours (which carry a null ``tour_purpose``) survive into
@@ -247,7 +247,7 @@ def _drop_invalid_tours(
 
     # Re-derive the criterion from the descriptors as a fallback. The column may
     # exist but be unstamped (null) on frames that never passed through
-    # ``flag_model_usable`` -- e.g. schema-built fixtures -- so fall back per row
+    # ``cascade_completeness`` -- e.g. schema-built fixtures -- so fall back per row
     # rather than treating null as "drop".
     if has_quality and has_category:
         derived = is_valid & is_complete

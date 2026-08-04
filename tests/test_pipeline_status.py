@@ -643,6 +643,48 @@ def test_pipeline_run_missing_step(tmp_path):
         pipeline.run()
 
 
+def test_pipeline_run_missing_step_reports_all_and_runs_nothing(tmp_path):
+    """An unregistered step aborts the run before any step executes.
+
+    Resolution happens up front, so a config naming a step the runner never
+    passed fails immediately rather than part-way through a long pipeline, and
+    every unresolved name is listed at once instead of one per re-run.
+    """
+    config = {
+        "steps": [
+            {"name": "good_step"},
+            {"name": "missing_one"},
+            {"name": "missing_two"},
+        ]
+    }
+    config_path = tmp_path / "config.yaml"
+    with config_path.open("w") as f:
+        yaml.dump(config, f)
+
+    executed = []
+
+    def good_step(canonical_data, **kwargs):  # noqa: ARG001
+        executed.append("good_step")
+
+    pipeline = Pipeline(
+        config_path=str(config_path),
+        steps=[good_step],
+        caching=False,
+    )
+
+    with pytest.raises(ValueError, match="not found in pipeline steps") as exc_info:
+        pipeline.run()
+
+    message = str(exc_info.value)
+    # Both unresolved names reported together, not just the first.
+    assert "missing_one" in message
+    assert "missing_two" in message
+    # The registered steps are listed so the fix is obvious from the error.
+    assert "good_step" in message
+    # Nothing ran: the failure precedes execution rather than interrupting it.
+    assert executed == []
+
+
 def test_pipeline_run_with_log_file(tmp_path):
     """Test pipeline with log file configuration."""
     config = {

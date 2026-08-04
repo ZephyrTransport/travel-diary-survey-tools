@@ -58,7 +58,7 @@ Because each level reads its neighbours, the derivation order is load-bearing;
 getting it wrong fails loudly (an unflagged member table raises), never silently.
 
 This module is the one place the logic lives. :func:`compute_model_usable` is
-applied once by the ``flag_model_usable`` pipeline step; every downstream
+applied once by the ``cascade_completeness`` pipeline step; every downstream
 consumer only *reads* the resulting flags.
 """
 
@@ -202,7 +202,7 @@ def flag_household_day_complete(tables: dict[str, pl.DataFrame | None]) -> None:
     -- keep their own ``complete`` (typically False), so they can never become
     usable travel days.
 
-    This runs after :func:`cascade_completeness`, so ``complete`` already
+    This runs after :func:`rollup_completeness`, so ``complete`` already
     reflects ancestry; the reduction then flows the other way, up from members to
     the shared date. Idempotent. Days without ``hh_id`` / ``travel_date`` (e.g.
     schema-only fixtures) fall back to each day's own ``complete``.
@@ -304,7 +304,7 @@ def _flag_person_usable(tables: dict[str, pl.DataFrame | None]) -> None:
     )
 
 
-def _flag_tours(tables: dict[str, pl.DataFrame | None], *, require_valid_tours: bool) -> None:
+def _flag_tours(tables: dict[str, pl.DataFrame | None]) -> None:
     """Stamp ``model_usable`` on tours, in place.
 
     A tour is usable when its structure is admissible *and* it sits on a coherent
@@ -323,7 +323,6 @@ def _flag_tours(tables: dict[str, pl.DataFrame | None], *, require_valid_tours: 
         return
 
     usable = _tour_model_usable_expr(
-        require_valid_tours=require_valid_tours,
         has_quality="tour_data_quality" in tours.columns,
         has_category="tour_category" in tours.columns,
     )
@@ -372,23 +371,21 @@ def _flag_subtours_from_parent(tours: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def _tour_model_usable_expr(
-    *, require_valid_tours: bool, has_quality: bool, has_category: bool
-) -> pl.Expr:
+def _tour_model_usable_expr(*, has_quality: bool, has_category: bool) -> pl.Expr:
     """model_usable expression for the tours table.
 
-    A tour is model-usable when its (cascaded) reporting is complete and, if
-    ``require_valid_tours``, its structure is admissible: VALID quality (not
-    single-trip, loop, missing-anchor, change-mode, spatial-gap, indeterminate)
-    AND COMPLETE category -- it departs from and returns to its own anchor. The
-    anchor is home for a home-based tour and the workplace for an at-work
-    subtour, so one criterion admits both. This matches the CT-RAMP / DaySim
-    drop criterion exactly.
+    A tour is model-usable when its (cascaded) reporting is complete and its
+    structure is admissible: VALID quality (not single-trip, loop,
+    missing-anchor, change-mode, spatial-gap, indeterminate) AND COMPLETE
+    category -- it departs from and returns to its own anchor. The anchor is
+    home for a home-based tour and the workplace for an at-work subtour, so one
+    criterion admits both. This matches the CT-RAMP / DaySim drop criterion
+    exactly.
     """
     usable = pl.col("complete").fill_null(value=False)
-    if require_valid_tours and has_quality:
+    if has_quality:
         usable = usable & (pl.col("tour_data_quality") == TourDataQuality.VALID.value)
-    if require_valid_tours and has_category:
+    if has_category:
         usable = usable & (pl.col("tour_category") == TourCategory.COMPLETE.value)
     return usable
 
@@ -494,12 +491,8 @@ def _flag_households(tables: dict[str, pl.DataFrame | None]) -> None:
     )
 
 
-def compute_model_usable(
-    tables: dict[str, pl.DataFrame | None],
-    *,
-    require_valid_tours: bool = True,
-) -> None:
-    """Stamp the ``model_usable`` gate on every table, in place.
+def compute_model_usable(tables: dict[str, pl.DataFrame | None]) -> None:
+    """Stamp ``model_usable`` on every table, in place.
 
     Runs the two completeness cascades then derives ``model_usable`` per level.
     See the module docstring for the flag definitions, the derivation-order
@@ -507,10 +500,6 @@ def compute_model_usable(
 
     Args:
         tables: Mutable dict of table_name -> DataFrame (or None).
-        require_valid_tours: If True (default), fold tour structural validity
-            into the gate. If False, ``model_usable`` reduces to reporting
-            completeness plus household-day coherence (invalid tours stay
-            usable).
     """
     # -- Completeness rolls UP from days (person = >=1 complete day) and each
     #    day-record inherits its day's complete.
@@ -523,7 +512,7 @@ def compute_model_usable(
     rollup_household_complete(tables)
 
     # -- Tours ---------------------------------------------------------------
-    _flag_tours(tables, require_valid_tours=require_valid_tours)
+    _flag_tours(tables)
     tours = tables.get("tours")
 
     # -- Days (needs a coherent household-date AND a usable tour) -------------
@@ -611,7 +600,7 @@ def _log_gate_summary(tables: dict[str, pl.DataFrame | None]) -> None:
         "tours": {"tour_id", "day_id", "complete"},
     },
 )
-def flag_model_usable(
+def cascade_completeness(
     households: pl.DataFrame | None = None,
     persons: pl.DataFrame | None = None,
     days: pl.DataFrame | None = None,
@@ -620,14 +609,26 @@ def flag_model_usable(
     joint_trips: pl.DataFrame | None = None,
     tours: pl.DataFrame | None = None,
     joint_tours: pl.DataFrame | None = None,
-    require_valid_tours: bool = True,
 ) -> dict[str, pl.DataFrame]:
-    """Stamp the canonical ``model_usable`` gate on every table.
+    """Cascade ``complete`` through the hierarchy and stamp ``model_usable``.
 
-    This is the single place the modelling gate is computed. Downstream steps
-    (weighting, the CT-RAMP/DaySim formatters) only *read* ``model_usable``; none
-    of them re-derive completeness or tour validity. Because the step is cached,
-    the flag is inspectable in the canonical output alongside ``complete``.
+    Walks both flags across every table so they are internally consistent with
+    whatever was set upstream (the vendor's day-level completeness, any manual
+    adjustments in the project cleaner, and the structural verdicts from tour
+    extraction):
+
+    * ``complete`` -- survey reporting completeness, cascaded hh <-> person <->
+      day <-> trip/tour. Never narrowed by model criteria.
+    * ``model_usable`` -- the subset of ``complete`` that is admissible to the
+      tour-based models (VALID tour structure, COMPLETE home-to-home category,
+      household-day coherence).
+
+    The step is parameterless by design: it computes one canonical set of
+    facts, and each downstream consumer chooses which flag to honour
+    (weighting via ``usability_flag_col``, the CT-RAMP/DaySim formatters via
+    ``drop_invalid_tours``). None of them re-derive completeness or tour
+    validity. Because the step is cached, both flags are inspectable in the
+    canonical output.
 
     See [`compute_model_usable`][processing.completeness.compute_model_usable]
     for the per-level rules.
@@ -641,12 +642,10 @@ def flag_model_usable(
         joint_trips: Aggregated joint trips.
         tours: Canonical tours (with ``tour_data_quality`` / ``tour_category``).
         joint_tours: Aggregated joint tours.
-        require_valid_tours: If True (default), fold strict tour structure into
-            the gate. If False, ``model_usable`` reduces to reporting
-            completeness, so partial/invalid tours stay model-usable.
 
     Returns:
-        The provided tables, each with a ``model_usable`` column added.
+        The provided tables, each with ``complete`` reconciled and a
+        ``model_usable`` column added.
     """
     tables: dict[str, pl.DataFrame | None] = {
         "households": households,
@@ -659,7 +658,7 @@ def flag_model_usable(
         "joint_tours": joint_tours,
     }
 
-    compute_model_usable(tables, require_valid_tours=require_valid_tours)
+    compute_model_usable(tables)
     _log_gate_summary(tables)
 
     return {name: df for name, df in tables.items() if df is not None}

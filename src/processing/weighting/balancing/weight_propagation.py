@@ -26,7 +26,7 @@ the propagation, the supplied-weight path and the checksum.
 # The distribution rule
 
 A record is admitted by a *usability flag* -- ``model_usable``, stamped once by
-the ``flag_model_usable`` step (see [`processing.completeness`]
+the ``cascade_completeness`` step (see [`processing.completeness`]
 [processing.completeness]), so the weighted sample matches the tours
 CT-RAMP/DaySim actually keep.  Pass ``complete`` instead to weight the whole
 valid survey, including partial and overnight tours.
