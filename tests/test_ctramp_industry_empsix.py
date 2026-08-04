@@ -10,7 +10,7 @@ import polars as pl
 
 from data_canon.codebook.ctramp import CTRAMPIndustry
 from data_canon.codebook.persons import Industry
-from processing.formatting.ctramp.mappings import add_industry_empsix
+from processing.formatting.ctramp.person_mappings import add_industry_empsix
 
 
 def test_structured_industry_maps_to_empsix():

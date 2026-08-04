@@ -262,8 +262,10 @@ class _Survey:
                 "ethnicity": eth,
                 "telework_freq": None,
                 "commute_freq": cf,
-                "commute_subsidy_use_3": NO,
-                "commute_subsidy_use_4": NO,
+                "commute_subsidy_provide_free_parking": NO,
+                "commute_subsidy_provide_discounted_parking": NO,
+                "commute_subsidy_use_free_parking": NO,
+                "commute_subsidy_use_discounted_parking": NO,
                 "transit_pass": tp,
                 "is_proxy": proxy,
                 "num_days_complete": ndays,
@@ -893,8 +895,11 @@ def _build_records():
             ntrav=3,
         )
 
-    # HH 24 - two children travel together to school with no adult ->
-    # joint composition CHILDREN_ONLY.
+    # HH 24 - two children travel together with no adult. The morning school run is
+    # a *mandatory* joint tour, which CT-RAMP cannot represent: it is reclassified to
+    # individual tours by identify_misclassified_joint_tours (negative control). The
+    # afternoon shop tour is non-mandatory and admissible, so it is what actually
+    # exercises joint composition CHILDREN_ONLY.
     s.household(24, "home_f", income=INC_75_100K, npeople=2, nworkers=0)
     for pn, pid in [(1, 2401), (2, 2402)]:
         s.person(
@@ -917,6 +922,16 @@ def _build_records():
             MT_WALK,
             ((8, 0), (8, 20)),
             ((15, 0), (15, 20)),
+            ntrav=2,
+            m1=MODE_WALK,
+        ).round_trip(
+            "home_f",
+            "shop_1",
+            PC_HOME,
+            PC_SHOP,
+            MT_WALK,
+            ((16, 0), (16, 20)),
+            ((17, 0), (17, 20)),
             ntrav=2,
             m1=MODE_WALK,
         )

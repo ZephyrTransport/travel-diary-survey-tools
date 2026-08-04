@@ -1,0 +1,218 @@
+# Processing Pipeline Configuration for BATS 2023
+# This config file demonstrates the full pipeline with DaySim and CTRAMP formatting
+
+# config.yaml
+
+# Define directory shorthands
+# I think this needs to use the Weighted Dataset because the Unweighted Dataset is from March 2024
+survey_dir: "M:/Data/HomeInterview/Bay Area Travel Study 2023/Data/Full Unweighted 2023 Dataset"
+weights_dir: "X:/survey_repos/ProjRoot_Tue-Thu20260616/WgtRoot_Tue-Thu20260616_nocommuteweighting_rmoveonly/output/"
+pums_dir: "M:/Data/Census/PUMS/2023_1yr"
+output_dir: "M:/Development/Travel Model One/Calibration/Version 1.7/2023_BATS_Summaries/pipeline_lmz_20260618_NoMon_rmo"
+TM1_shapefile_dir: "E:/GitHub/travel-model-one/utilities/geographies"
+log_file: "{{ output_dir }}/pipeline_2023.log" # If not set, logs just to console, if not absolute saves to .cache directory
+
+# Pipeline configuration
+steps:
+  - name: load_data
+    validate_input: false # This will override @step(validate=True/False) in the function definition
+    cache: true
+    params:
+      input_paths:
+        households: "{{ survey_dir }}/hh.csv"
+        persons: "{{ survey_dir }}/person.csv"
+        days: "{{ survey_dir }}/day.csv"
+        unlinked_trips: "{{ survey_dir }}/trip.csv"
+
+  - name: clean_2023_bats
+    validate_input: false
+    cache: true
+
+  - name: imputation
+    validate_input: false
+    cache: true
+    params:
+      impute_columns:
+        # KNN/RF: impute single columns using similar records
+        # RF tends to be better for categoricals, thus tends to be faster/better in this context.
+        # KNN/MICE tend to be better for numeric columns, but RF can still work well if you have good predictive features.
+        households:
+          - column: income_bin
+            method: rf
+            missing_values: [MISSING, PNTA]
+            categorical_features: [residence_type, residence_rent_own]
+            aggregate_from:
+              persons:
+                pivot_count: [employment, education, student, occupation, industry]
+
+        persons:
+          - column: gender
+            method: rf
+            missing_values: [TRANS, NON_BINARY, MISSING, OTHER, PNTA]  # Must conform to M/F for weighting (ACS only includes male/female, so the weighting approachreflects this constraint)
+            join_tables: [households]
+            # numeric_features: [age] # Optional if you have them.
+            numeric_features: [num_trips]
+            categorical_features: [age, relationship, employment, occupation, education, industry, student, can_drive, work_mode, income_bin, residence_type, residence_rent_own]
+
+          - method: rf
+            column: race
+            missing_values: [MISSING, PNTA]
+            join_tables: [households]
+            # numeric_features: [num_trips]
+            categorical_features: [age, relationship, employment, occupation, education, industry, student, can_drive, work_mode, income_bin, residence_type, residence_rent_own]
+
+          - method: rf
+            column: ethnicity
+            missing_values: [MISSING, PNTA]
+            join_tables: [households]
+            # numeric_features: [num_trips]
+            categorical_features: [age, relationship, employment, occupation, education, industry, student, can_drive, work_mode, income_bin, residence_type, residence_rent_own]
+
+          # # MICE: impute correlated column groups together
+          # - method: mice
+          #   columns: [race, ethnicity]
+          #   missing_values:
+          #     race: [MISSING, PNTA]
+          #     ethnicity: [MISSING, PNTA]
+          #   join_tables: [households]
+          #   numeric_features: [num_trips]
+          #   categorical_features: [age, relationship, employment, occupation, education, industry, student, can_drive, work_mode, income_bin, residence_type, residence_rent_own]
+          #   max_iter: 10
+
+      # Optional: create diagnostic flags (default: true)
+      create_flags: true
+      random_state: 42     # For reproducibility
+
+      # Optional: k-fold validation to assess quality
+      validate_imputation:
+        enabled: true
+        n_folds: 5           # Number of cross-validation folds
+        sample_pct: 5.0      # % of non-missing values to test
+        output_path: "{{ output_dir }}/imputation_validation.csv"
+        # Optional: benchmark every column against all three methods
+        compare_methods: false
+
+  - name: link_trips
+    validate_input: false
+    cache: true
+    params:
+      change_mode_enum: CHANGE_MODE
+      transit_mode_enums: [FERRY, TRANSIT, LONG_DISTANCE]
+      max_dwell_time: 180  # in minutes
+      dwell_buffer_distance: 100  # in meters
+
+  - name: detect_joint_trips
+    validate_input: false
+    cache: true
+    params:
+      config:
+        method: "mahalanobis"
+        # Covariance for Mahalanobis distance calculation
+        # Think of this as the standard deviation of measurement noise in each dimension
+        # Diagonal: [origin_var_m^2, dest_var_m^2, depart_var_min^2, arrive_var_min^2]
+        # Default [10000, 10000, 100, 100] = 100m, 100m, 10min, 10min std devs
+        covariance: [10000, 10000, 100, 100]
+        # Confidence level: Higher = stricter matching (fewer detections)
+        # 0.90 = 90% confidence (strict), 0.75 = moderate, 0.50 = permissive
+        confidence_level: 0.90
+
+        # Alternative: simpler buffer method with time/space thresholds
+        # method: "buffer"
+        # time_threshold_minutes: 15.0
+        # space_threshold_meters: 100.0
+
+  - name: extract_tours
+    validate_input: false
+    cache: true
+
+  # -- Existing weights (alternative to computing new weights) ----------
+  # Uncomment this block and comment out the 'weighting' step above
+  # to use pre-computed weights from an external source.
+  - name: add_existing_weights
+    validate_input: false
+    cache: false
+    params:
+      derive_missing_weights: true
+      weights:
+        household_weights:
+          weight_path: "{{ weights_dir }}/hh_weights.csv"
+        person_weights:
+          weight_path: "{{ weights_dir }}/person_weights.csv"
+        day_weights:
+          weight_path: "{{ weights_dir }}/day_weights.csv"
+        unlinked_trip_weights:
+          weight_id_col: "trip_id"  # Weight file uses 'trip_id' instead of canonical 'unlinked_trip_id'
+          weight_col: "trip_weight"  # Weight file uses 'trip_weight' instead of canonical 'unlinked_trip_weight'
+          weight_path: "{{ weights_dir }}/trip_weights.csv"
+          keep_name: false # Defaults to false, but you could keep original name if desired
+
+  - name: add_zone_ids
+    validate_input: false
+    cache: true
+    params:
+      projected_crs: "EPSG:26910"  # UTM Zone 10N (Bay Area metric CRS for nearest-zone fallback)
+      max_snap_distance: 500  # metres; points farther from all zone boundaries remain null (out-of-region)
+      zone_geographies:
+        # Add MTC travel model zones
+        - zone_name: "TAZ1454"
+          shapefile: "{{ TM1_shapefile_dir }}/bayarea_rtaz1454_rev1_WGS84.shp"
+          zone_id_field: "TAZ1454"
+
+  # - name: final_check
+  #   validate_input: true
+
+  # industry_empsix is now derived inside format_ctramp (from the canonical
+  # industry code), so no separate enrichment step is needed.
+
+  - name: format_ctramp
+    validate_input: false
+    cache: false
+    params:
+      # Income thresholds (in year 2000 dollars, per CT-RAMP convention).
+      # From MTC CT-RAMP INCOME_SEGMENT_DOLLAR_LIMITS = {30000, 60000, 100000, MAX}:
+      # https://github.com/BayAreaMetro/travel-model-one/blob/a1c6cfb48ed3397a436170d810db91c5f9474c08/core/projects/mtc/src/java/com/pb/mtc/ctramp/MtcModelStructure.java#L14
+      income_low_threshold: 30000  # below $30k -> 'work_low'
+      income_med_threshold: 60000  # below $60k -> 'work_med'
+      income_high_threshold: 100000  # below $100k -> 'work_high', at/above -> 'work_very high'
+
+      # Income conversion: survey income is in 2023 dollars, but CT-RAMP income
+      # categories are in year 2000 dollars. Multiply 2023 dollars by this factor to
+      # convert to 2000 dollars (= 1 / 1.88; 2000 -> 2023 inflation factor is 1.88).
+      # Source: https://github.com/BayAreaMetro/modeling-website/wiki/InflationAssumptions
+      income_survey_year_to_ctramp_year: 0.5319148936  # = 1 / 1.88
+
+      # Age thresholds
+      age_adult: 4  # AgeCategory.AGE_18_TO_24 - Adult threshold for joint tour composition
+
+      # Other parameters
+      # This is not optimal, but model requires a binary gender
+      gender_default_for_missing: "f"
+      taz_field: "TAZ1454"  # TAZ field to use for CTRAMP formatting
+      drop_missing_taz: true  # Drop households without valid TAZ
+      filter_zero_weight: true  # Drop households with null or zero survey weight
+
+
+  - name: write_data
+    validate_input: true
+    params:
+      # The "codebook" includes all the labeled enums used in the survey datamodel.
+      # This is useful to generate Tableau aliases and for summarization code.
+      enum_codebook_path: "{{ output_dir }}/survey/codebook.xlsx"
+      output_paths:
+        # Standard Survey Formats
+        households: "{{ output_dir }}/survey/households_2023.csv"
+        persons: "{{ output_dir }}/survey/persons_2023.csv"
+        days: "{{ output_dir }}/survey/days_2023.csv"
+        unlinked_trips: "{{ output_dir }}/survey/unlinked_trips_2023.csv"
+        linked_trips: "{{ output_dir }}/survey/linked_trips_2023.csv"
+        tours: "{{ output_dir }}/survey/tours_2023.csv"
+        joint_trips: "{{ output_dir }}/survey/joint_trips_2023.csv"
+
+        # CTRAMP Formats
+        households_ctramp: "{{ output_dir }}/ctramp_2023/householdData_BATS2023.csv"
+        persons_ctramp: "{{ output_dir }}/ctramp_2023/personData_BATS2023.csv"
+        mandatory_locations_ctramp: "{{ output_dir }}/ctramp_2023/wsLocResults_BATS2023.csv"
+        individual_tours_ctramp: "{{ output_dir }}/ctramp_2023/indivTourData_BATS2023.csv"
+        individual_trips_ctramp: "{{ output_dir }}/ctramp_2023/indivTripData_BATS2023.csv"
+        joint_tours_ctramp: "{{ output_dir }}/ctramp_2023/jointTourData_BATS2023.csv"
+        joint_trips_ctramp: "{{ output_dir }}/ctramp_2023/jointTripData_BATS2023.csv"

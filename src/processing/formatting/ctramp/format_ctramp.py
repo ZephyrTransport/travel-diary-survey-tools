@@ -193,7 +193,7 @@ import logging
 
 import polars as pl
 
-from data_canon.codebook.ctramp import CTRAMPEmploymentCategory
+from data_canon.codebook.ctramp import CTRAMPEmploymentCategory, CTRAMPPersonType
 from data_canon.models.ctramp import (
     AOResultsCTRAMPModel,
     CDAPResultsCTRAMPModel,
@@ -208,15 +208,17 @@ from data_canon.models.ctramp import (
 from pipeline.decoration import step
 
 from .ctramp_config import CTRAMPConfig
-from .filters import _drop_invalid_tours, _drop_missing_taz
+from .filters import _drop_invalid_tours, _drop_missing_taz, _drop_zero_weight
 from .format_ao import format_ao_results
 from .format_cdap import format_cdap_results
 from .format_households import format_households
+from .format_joint_trips import format_joint_trip
 from .format_mandatory_location import format_mandatory_location
 from .format_persons import enrich_persons_with_person_type, format_persons
 from .format_tours import format_individual_tour, format_joint_tour
-from .format_trips import format_individual_trip, format_joint_trip
-from .mappings import EMPLOYMENT_TO_CTRAMP, ctramp_student_category_expression
+from .format_trips import format_individual_trip
+from .person_mappings import EMPLOYMENT_TO_CTRAMP
+from .student_mappings import ctramp_student_category_expression
 
 logger = logging.getLogger(__name__)
 
@@ -252,14 +254,153 @@ def _drop_excess_fields(
     return df.drop(cols_to_drop)
 
 
+def _incorporate_day_into_ids(
+    households: pl.DataFrame,
+    persons: pl.DataFrame,
+    tours: pl.DataFrame,
+    linked_trips: pl.DataFrame,
+    joint_trips: pl.DataFrame,
+    days: pl.DataFrame,
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """Expand records to person-day level and encode the survey day into CTRAMP IDs.
+
+    CTRAMP treats each model run as a single day. Since BATS respondents have
+    multiple survey days, each person-day must appear as a distinct "household"
+    and "person" in the CTRAMP input files so tours and trips can be attributed
+    to the correct day without double-counting.
+
+    ID encoding (preserves the canonical hierarchical structure):
+        - CTRAMP hh_id  = hh_id * 100 + day_num   (unique per household-day)
+        - CTRAMP person_id = day_id                (unique per person-day)
+
+    Both formulas are invertible: the original IDs can always be recovered from
+    the CTRAMP IDs.
+
+    Args:
+        households: Canonical households (one row per household).
+        persons: Canonical persons (one row per person).
+        tours: Canonical tours (one row per tour, already has day_id).
+        linked_trips: Canonical linked trips (one row per trip, already has day_id).
+        joint_trips: Canonical joint trips (one row per joint trip, already has day_id).
+        days: Canonical person-days table with person_id, hh_id, day_id columns.
+
+    Returns:
+        Tuple of (households, persons, tours, linked_trips, joint_trips) where
+        each table is expanded to the person-day level and hh_id / person_id
+        reflect the day-encoded IDs.
+    """
+    # day_num is encoded in the last two digits of day_id
+    # hh_day_id = hh_id * 100 + day_num = hh_id * 100 + (day_id % 100)
+    day_id_col = pl.col("day_id")
+    day_num_expr = day_id_col % 100
+
+    # Build a person-day map: original person_id →
+    # (ctramp_person_id, ctramp_hh_id[, telecommute_time]).
+    # telecommute_time is carried through when present so format_persons can use
+    # it directly as the WFH indicator instead of relying on job_type alone.
+    _day_cols = [
+        pl.col("person_id"),
+        day_id_col.alias("ctramp_person_id"),
+        (pl.col("hh_id") * 100 + day_num_expr).alias("ctramp_hh_id"),
+    ]
+    if "telecommute_time" in days.columns:
+        _day_cols.append(pl.col("telecommute_time"))
+    person_day_map = days.select(_day_cols)
+
+    # Count survey days per household and per person for weight scaling.
+    # When a household/person is expanded to X day-records, each copy must
+    # carry weight W/X so the sum of weights is preserved across the expansion.
+    #
+    # NOTE: num_hh_days must count unique HOUSEHOLD-DAY combinations, not total
+    # person-day rows.  A 3-person household surveyed for 2 days has 6 rows in
+    # `days` but only 2 household-days, so we unique on (hh_id, ctramp_hh_id)
+    # before counting.
+    hh_day_unique = days.select(
+        pl.col("hh_id"),
+        (pl.col("hh_id") * 100 + day_num_expr).alias("ctramp_hh_id"),
+    ).unique(["hh_id", "ctramp_hh_id"])
+    hh_num_days = hh_day_unique.group_by("hh_id").agg(pl.len().alias("num_hh_days"))
+    person_num_days = days.group_by("person_id").agg(pl.len().alias("num_person_days"))
+
+    # Build a household-day map: original hh_id → [ctramp_hh_id, num_hh_days]
+    hh_day_map = hh_day_unique.join(hh_num_days, on="hh_id")
+
+    n_hh_before = len(households)
+    n_per_before = len(persons)
+
+    # Expand households: one row per household-day; scale hh_weight accordingly
+    households = (
+        households.join(hh_day_map, on="hh_id", how="inner")
+        .drop("hh_id")
+        .rename({"ctramp_hh_id": "hh_id"})
+    )
+    if "hh_weight" in households.columns:
+        households = households.with_columns(
+            (pl.col("hh_weight") / pl.col("num_hh_days")).alias("hh_weight")
+        )
+    households = households.drop("num_hh_days")
+
+    # Expand persons: one row per person-day; scale person_weight accordingly
+    persons = (
+        persons.join(person_day_map, on="person_id", how="inner")
+        .join(person_num_days, on="person_id", how="left")
+        .drop(["hh_id", "person_id"])
+        .rename({"ctramp_hh_id": "hh_id", "ctramp_person_id": "person_id"})
+    )
+    if "person_weight" in persons.columns:
+        persons = persons.with_columns(
+            (pl.col("person_weight") / pl.col("num_person_days")).alias("person_weight")
+        )
+    persons = persons.drop("num_person_days")
+
+    logger.info(
+        "Expanded to person-day level: %d households → %d household-days, "
+        "%d persons → %d person-days",
+        n_hh_before,
+        len(households),
+        n_per_before,
+        len(persons),
+    )
+
+    # The `days` table has already been filtered to valid (non-zero-weight) days
+    # (e.g. Mon-Thu only).  Tours, trips, and joint trips must also be restricted
+    # to those days so that every tour/trip record can be joined back to a person
+    # record.  Use a semi-join on day_id so we drop rows without adding columns.
+    valid_day_ids = days.select("day_id")
+
+    # Update tours: drop non-target days, then encode CTRAMP IDs
+    if len(tours) > 0 and "day_id" in tours.columns:
+        tours = tours.join(valid_day_ids, on="day_id", how="semi").with_columns(
+            (pl.col("hh_id") * 100 + pl.col("day_id") % 100).alias("hh_id"),
+            pl.col("day_id").alias("person_id"),
+        )
+
+    # Update linked_trips: drop non-target days, then encode CTRAMP IDs
+    if len(linked_trips) > 0 and "day_id" in linked_trips.columns:
+        linked_trips = linked_trips.join(valid_day_ids, on="day_id", how="semi").with_columns(
+            (pl.col("hh_id") * 100 + pl.col("day_id") % 100).alias("hh_id"),
+            pl.col("day_id").alias("person_id"),
+        )
+
+    # Update joint_trips: only hh_id changes (no person_id at joint-trip level)
+    if len(joint_trips) > 0 and "day_id" in joint_trips.columns:
+        joint_trips = joint_trips.join(valid_day_ids, on="day_id", how="semi").with_columns(
+            (pl.col("hh_id") * 100 + pl.col("day_id") % 100).alias("hh_id"),
+        )
+
+    return households, persons, tours, linked_trips, joint_trips
+
+
 @step(
     requires={
         "persons": {
             "person_num",
             "gender",
             "job_type",
-            "commute_subsidy_use_3",
-            "commute_subsidy_use_4",
+            "commute_subsidy_provide_free_parking",
+            "commute_subsidy_provide_discounted_parking",
+            "commute_subsidy_use_free_parking",
+            "commute_subsidy_use_discounted_parking",
         },
         "linked_trips": {
             "o_purpose",
@@ -268,22 +409,26 @@ def _drop_excess_fields(
             "egress_mode",
         },
         "tours": {"num_travelers"},
+        "days": {"person_id", "hh_id", "day_id"},
     },
 )
 def format_ctramp(  # noqa: PLR0913
     persons: pl.DataFrame,
     households: pl.DataFrame,
+    unlinked_trips: pl.DataFrame,
     linked_trips: pl.DataFrame,
     tours: pl.DataFrame,
     joint_trips: pl.DataFrame,
+    joint_tours: pl.DataFrame,
+    days: pl.DataFrame,
     income_low_threshold: int,
     income_med_threshold: int,
     income_high_threshold: int,
-    income_base_year_dollars: int,
-    joint_tours: pl.DataFrame | None = None,
+    income_survey_year_to_ctramp_year: float,
     taz_field: str = "taz",
     drop_missing_taz: bool = True,
     drop_invalid_tours: bool = True,
+    filter_zero_weight: bool = True,
 ) -> dict[str, pl.DataFrame]:
     """Format canonical survey data to CT-RAMP model specification.
 
@@ -305,22 +450,32 @@ def format_ctramp(  # noqa: PLR0913
             person_num, tour_category, tour_purpose, o_taz, d_taz, times,
             tour_mode, joint_tour_id, parent_tour_id.
         joint_tours: Aggregated joint tour data carrying ``joint_tour_weight``.
-            Optional; when absent the joint tour output simply carries no weight.
+            May be empty but must be provided.
+        unlinked_trips: Canonical unlinked trips used to derive detailed transit
+            submodes for formatted tours and trips. May be empty but must be provided.
         joint_trips: Aggregated joint trip data. Required columns: joint_trip_id,
             hh_id, num_joint_travelers.
+        days: Canonical person-days data. Required columns: person_id, hh_id,
+            day_id. Used to expand persons and households to the person-day
+            level and encode the survey day into CTRAMP hh_id / person_id so
+            that multi-day respondents produce one distinct CTRAMP record per
+            day rather than one record that conflates all survey days.
         income_low_threshold: Dollar value dividing low from medium income bracket.
             Must be less than income_med_threshold.
         income_med_threshold: Dollar value dividing medium from high income bracket.
             Must be between income_low_threshold and income_high_threshold.
         income_high_threshold: Dollar value dividing high from very high income
-            bracket. Must be greater than income_med_threshold.
-        income_base_year_dollars: Target year for income conversion (e.g., 2000,
-            2010). Categorical income values are converted to midpoint dollars in
-            this base year.
+            bracket (in year-2000 dollars). Must be greater than income_med_threshold.
+        income_survey_year_to_ctramp_year: Factor to convert survey-year dollars to
+            CT-RAMP-year dollars. Household income is multiplied by this factor (for
+            BATS 2023 -> CT-RAMP year 2000 the factor is 1 / 1.88 ~= 0.532).
         taz_field: Field name containing the TAZ ID for CTRAMP formatting
             (default: "taz").
         drop_missing_taz: If True, remove households without valid TAZ IDs. This
             cascades to persons, tours, and trips (default: True).
+        filter_zero_weight: If True, remove households with null or zero
+            hh_weight before formatting, cascading to persons, tours, and
+            trips (default: True).
         drop_invalid_tours: If True, remove tours that are not VALID (single-trip,
             loop, missing-anchor, change-mode, indeterminate) or not COMPLETE (do
             not start and end at home), mirroring the DaySim formatter (which drops
@@ -351,13 +506,16 @@ def format_ctramp(  # noqa: PLR0913
         result = format_ctramp(
             persons=canonical_persons,
             households=canonical_households,
+            unlinked_trips=canonical_unlinked_trips,
             linked_trips=canonical_linked_trips,
             tours=canonical_tours,
             joint_trips=canonical_joint_trips,
-            income_low_threshold=60000,          # $60k divides low from medium
-            income_med_threshold=150000,         # $150k divides medium from high
-            income_high_threshold=250000,        # $250k divides high from very high
-            income_base_year_dollars=2000,       # Convert income to $2000
+            joint_tours=canonical_joint_tours,
+            days=canonical_days,
+            income_low_threshold=30000,          # $30k divides low from medium ($2000)
+            income_med_threshold=60000,          # $60k divides medium from high ($2000)
+            income_high_threshold=100000,        # $100k divides high from very high ($2000)
+            income_survey_year_to_ctramp_year=0.5319148936,  # 1/1.88: convert 2023 income to $2000
             drop_missing_taz=True                # Remove households without TAZ
         )
 
@@ -376,8 +534,9 @@ def format_ctramp(  # noqa: PLR0913
         income_low_threshold=income_low_threshold,
         income_med_threshold=income_med_threshold,
         income_high_threshold=income_high_threshold,
-        income_base_year_dollars=income_base_year_dollars,
+        income_survey_year_to_ctramp_year=income_survey_year_to_ctramp_year,
         drop_missing_taz=drop_missing_taz,
+        filter_zero_weight=filter_zero_weight,
         drop_invalid_tours=drop_invalid_tours,
         taz_field=taz_field,
     )
@@ -391,6 +550,16 @@ def format_ctramp(  # noqa: PLR0913
     # Ensure TAZ columns are Int64 for filtering
     households = households.with_columns(pl.col(f"home_{config.taz_field}").cast(pl.Int64))
 
+    # Drop households with null or zero survey weight
+    if config.filter_zero_weight:
+        (
+            households,
+            persons,
+            tours,
+            linked_trips,
+            joint_trips,
+        ) = _drop_zero_weight(households, persons, tours, linked_trips, joint_trips)
+
     # Drop any households that do not have a TAZ assigned
     if config.drop_missing_taz:
         (
@@ -400,6 +569,29 @@ def format_ctramp(  # noqa: PLR0913
             linked_trips,
             joint_trips,
         ) = _drop_missing_taz(households, persons, tours, linked_trips, joint_trips, config)
+
+    # Filter days to those with a valid (non-zero) weight so that non-target
+    # days (e.g. weekends in a Mon-Thu weighting run) are excluded from the
+    # CTRAMP expansion.  If day_weight is absent we keep all days.
+    if "day_weight" in days.columns:
+        n_days_before = len(days)
+        days = days.filter(pl.col("day_weight").is_not_null() & (pl.col("day_weight") > 0))
+        logger.info(
+            "Filtered days by day_weight > 0: %d → %d day records",
+            n_days_before,
+            len(days),
+        )
+
+    # Expand to person-day level: each survey day becomes a distinct CTRAMP
+    # household/person so that tour and trip counts are correctly attributed
+    # to a single day rather than aggregated across all days.
+    (
+        households,
+        persons,
+        tours,
+        linked_trips,
+        joint_trips,
+    ) = _incorporate_day_into_ids(households, persons, tours, linked_trips, joint_trips, days)
 
     # Format each table ----------------------------------------------------
     # Format households first since it has no derived field dependencies
@@ -425,6 +617,21 @@ def format_ctramp(  # noqa: PLR0913
         )
     persons_with_type = enrich_persons_with_person_type(persons)
 
+    # Children under 16 get UNDER_16 employment category regardless of reported employment
+    persons_with_type = persons_with_type.with_columns(
+        pl.when(
+            pl.col("person_type").is_in(
+                [
+                    CTRAMPPersonType.CHILD_UNDER_5.value,
+                    CTRAMPPersonType.STUDENT_NON_DRIVING_AGE.value,
+                ]
+            )
+        )
+        .then(pl.lit(CTRAMPEmploymentCategory.UNDER_16.value))
+        .otherwise(pl.col("employment_category"))
+        .alias("employment_category")
+    )
+
     # Format tours - use empty DataFrame with proper schema if no tours exist
     if len(tours) == 0:
         individual_tours_ctramp = pl.DataFrame(
@@ -437,6 +644,7 @@ def format_ctramp(  # noqa: PLR0913
         individual_tours_ctramp = format_individual_tour(
             tours_canonical=tours,
             linked_trips_canonical=linked_trips,
+            unlinked_trips_canonical=unlinked_trips,
             persons_canonical=persons_with_type,
             households_ctramp=households_ctramp,
             config=config,
@@ -461,14 +669,16 @@ def format_ctramp(  # noqa: PLR0913
     joint_tours_ctramp = format_joint_tour(
         tours_canonical=tours,
         linked_trips_canonical=linked_trips,
+        unlinked_trips_canonical=unlinked_trips,
+        joint_tours_canonical=joint_tours,
         persons_canonical=persons,
         households_ctramp=households_ctramp,
         config=config,
-        joint_tours_canonical=joint_tours,
     )
 
     individual_trips_ctramp = format_individual_trip(
         linked_trips_canonical=linked_trips,
+        unlinked_trips_canonical=unlinked_trips,
         tours_ctramp=individual_tours_ctramp,
         persons_canonical=persons,
         households_ctramp=households_ctramp,
@@ -478,12 +688,11 @@ def format_ctramp(  # noqa: PLR0913
     joint_trips_ctramp = format_joint_trip(
         joint_trips_canonical=joint_trips,
         linked_trips_canonical=linked_trips,
+        unlinked_trips_canonical=unlinked_trips,
         tours_canonical=tours,
         households_ctramp=households_ctramp,
         config=config,
     )
-
-    logger.info("CT-RAMP formatting complete")
 
     # Prepare result dictionary and clean up temporary columns
     tables = {

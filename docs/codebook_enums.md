@@ -699,6 +699,16 @@ Quick lookup of categorical values and labels for codebook enum fields.
 | 4 | Full-time student, ONLY online classes |
 | 995 | Missing Response |
 
+## TNCType
+
+| Value | Label |
+| --- | --- |
+| 1 | Pooled/Shared Ridehail |
+| 2 | Regular |
+| 3 | Premium |
+| 995 | Missing Response |
+| 998 | Unknown TNC Service |
+
 ## TravelDow
 
 **Description:** Day of the week enumeration

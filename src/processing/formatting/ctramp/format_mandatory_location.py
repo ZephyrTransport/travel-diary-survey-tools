@@ -78,7 +78,7 @@ def calc_fixed_location_distances(
             "home_lon",
             f"{fixed_type}_lat",
             f"{fixed_type}_lon",
-            f"{fixed_type}_taz",
+            f"{fixed_type}_{config.taz_field}",
         ),
         on="person_id",
         how="right",
@@ -130,11 +130,11 @@ def calc_fixed_location_distances(
                 <= config.fixed_location_buffer_meters
             ).alias(f"dest_is_{fixed_type}"),
             # Calculate matching TAZs for origin/destination, used as fallback
-            (pl.col(f"o_{config.taz_field}") == pl.col(f"{fixed_type}_taz")).alias(
-                f"origin_is_{fixed_type}_taz"
+            (pl.col(f"o_{config.taz_field}") == pl.col(f"{fixed_type}_{config.taz_field}")).alias(
+                f"origin_is_{fixed_type}_{config.taz_field}"
             ),
-            (pl.col(f"d_{config.taz_field}") == pl.col(f"{fixed_type}_taz")).alias(
-                f"dest_is_{fixed_type}_taz"
+            (pl.col(f"d_{config.taz_field}") == pl.col(f"{fixed_type}_{config.taz_field}")).alias(
+                f"dest_is_{fixed_type}_{config.taz_field}"
             ),
         ]
     )
@@ -148,8 +148,8 @@ def calc_fixed_location_distances(
             | (pl.col(f"origin_is_{fixed_type}") & pl.col("dest_is_home"))
         )
         # Fallback to use matching TAZs
-        | (pl.col(f"origin_is_{fixed_type}_taz") & pl.col("dest_is_home"))
-        | (pl.col(f"dest_is_{fixed_type}_taz") & pl.col("origin_is_home"))
+        | (pl.col(f"origin_is_{fixed_type}_{config.taz_field}") & pl.col("dest_is_home"))
+        | (pl.col(f"dest_is_{fixed_type}_{config.taz_field}") & pl.col("origin_is_home"))
     )
 
     # Extract and average the distance field for these trips
@@ -221,7 +221,7 @@ def format_mandatory_location(
         households_ctramp: Formatted CT-RAMP households DataFrame with hh_id, income,
             home_taz (for HomeTAZ field)
         linked_trips_canonical: Canonical linked trips DataFrame for distance calculations
-        config: CT-RAMP configuration with income_base_year_dollars
+        config: CT-RAMP configuration
 
     Returns:
         DataFrame with CT-RAMP mandatory location fields:
@@ -233,7 +233,7 @@ def format_mandatory_location(
 
     Notes:
         - Excludes model-only fields (walk subzones)
-        - Filters to only persons with work OR school locations
+        - Includes ALL persons; WorkLocation and SchoolLocation default to 0 when not available
         - Uses pre-computed employment_category and student_category from persons_ctramp
     """
     logger.info("Formatting mandatory location data for CT-RAMP")
@@ -247,8 +247,7 @@ def format_mandatory_location(
         how="left",
     )
 
-    # Filter to only persons with work or school locations
-    # Add columns as null if they don't exist
+    # Add TAZ columns as null if they don't exist
     if f"work_{config.taz_field}" not in mandatory_loc.columns:
         mandatory_loc = mandatory_loc.with_columns(
             pl.lit(None).cast(pl.Int64).alias(f"work_{config.taz_field}")
@@ -257,17 +256,6 @@ def format_mandatory_location(
         mandatory_loc = mandatory_loc.with_columns(
             pl.lit(None).cast(pl.Int64).alias(f"school_{config.taz_field}")
         )
-
-    mandatory_loc = mandatory_loc.filter(
-        (
-            pl.col(f"work_{config.taz_field}").is_not_null()
-            & (pl.col(f"work_{config.taz_field}") > 0)
-        )
-        | (
-            pl.col(f"school_{config.taz_field}").is_not_null()
-            & (pl.col(f"school_{config.taz_field}") > 0)
-        )
-    )
 
     # Calculate fixed work/school distances for validation for persons that have fixed locations
     for fixed_type in ["work", "school"]:
@@ -288,7 +276,7 @@ def format_mandatory_location(
         [
             pl.col("hh_id").alias("HHID"),
             pl.col(f"home_{config.taz_field}").cast(pl.Int64).alias("HomeTAZ"),
-            (pl.col("income") / config.income_base_year_dollars).cast(pl.Int64).alias("Income"),
+            pl.col("income").cast(pl.Int64).alias("Income"),
             pl.col("person_id").alias("PersonID"),
             pl.col("person_num").alias("PersonNum"),
             pl.col("person_type").alias("PersonType"),

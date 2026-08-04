@@ -25,265 +25,33 @@ import logging
 import polars as pl
 
 from data_canon.codebook.ctramp import (
-    _INMF_MAXES,
-    _INMF_REVERSE_LOOKUP,
     CTRAMPEmploymentCategory,
     CTRAMPPersonType,
-    CTRAMPPurpose,
-    CTRAMPStudentCategory,
     FreeParkingChoice,
-    IMFChoice,
 )
 from data_canon.codebook.generic import BooleanYesNo
 from data_canon.codebook.persons import AgeCategory, Employment, JobType
 from utils.helpers import get_age_midpoint
 
 from .ctramp_config import CTRAMPConfig
-from .mappings import (
+from .person_mappings import (
     EMPLOYMENT_TO_CTRAMP,
     GENDER_MAP,
     add_industry_empsix,
+    bad_person_type_combinations,
     ctramp_person_type_expression,
-    ctramp_student_category_expression,
     log_person_type_warnings,
+)
+from .student_mappings import (
+    ctramp_student_category_expression,
     log_student_category_warnings,
 )
+from .tour_frequency_mappings import aggregate_tour_statistics
 
 logger = logging.getLogger(__name__)
 
 
 # Individual Mandatory/Non-Mandatory Frequency Mapping ------------------------
-def get_imf_choice_from_counts(work_count: int, school_count: int) -> int | None:
-    """Map mandatory tour counts to IMFChoice enum value.
-
-    Maps work and school tour counts to the appropriate IMFChoice enum value
-    using ceiling semantics: counts >= 2 are capped at 2.
-
-    Args:
-        work_count: Number of work tours (0, 1, 2+)
-        school_count: Number of school tours (0, 1, 2+)
-
-    Returns:
-        IMFChoice enum value (1-5), or None if both counts are 0
-
-    Mapping logic:
-        - 1 work, 0 school -> ONE_WORK (1)
-        - 2+ work, 0 school -> TWO_WORK (2)
-        - 0 work, 1 school -> ONE_SCHOOL (3)
-        - 0 work, 2+ school -> TWO_SCHOOL (4)
-        - 1+ work, 1+ school -> ONE_WORK_ONE_SCHOOL (5)
-        - 0 work, 0 school -> None
-    """
-    # No mandatory tours
-    if work_count == 0 and school_count == 0:
-        return None
-
-    # Both work and school tours present
-    if work_count >= 1 and school_count >= 1:
-        return IMFChoice.ONE_WORK_ONE_SCHOOL.value
-
-    # Only work tours
-    if work_count >= 1 and school_count == 0:
-        if work_count == 1:
-            return IMFChoice.ONE_WORK.value
-        # work_count >= 2
-        return IMFChoice.TWO_WORK.value
-
-    # Only school tours (work_count == 0)
-    if school_count == 1:
-        return IMFChoice.ONE_SCHOOL.value
-    # school_count >= 2
-    return IMFChoice.TWO_SCHOOL.value
-
-
-def get_inmf_code_from_counts(
-    escort: int,
-    shopping: int,
-    othmaint: int,
-    othdiscr: int,
-    eatout: int,
-    social: int,
-) -> int:
-    """Map per-purpose non-mandatory tour counts to INMF alternative code.
-
-    Maps individual non-mandatory tour counts to the CT-RAMP alternative code
-    (1-96) using ceiling semantics: counts exceeding the codebook maximum are
-    capped to the maximum before lookup.
-
-    Args:
-        escort: Number of escort tours (0..2+, capped to 2)
-        shopping: Number of shopping tours (0..1+, capped to 1)
-        othmaint: Number of other maintenance tours (0..1+, capped to 1)
-        othdiscr: Number of other discretionary tours (0..1+, capped to 1)
-        eatout: Number of eating out tours (0..1+, capped to 1)
-        social: Number of social tours (0..1+, capped to 1)
-
-    Returns:
-        Alternative code (1-96), or 0 if all counts are 0
-    """
-    # Special case: no non-mandatory tours
-    if (
-        escort == 0
-        and shopping == 0
-        and othmaint == 0
-        and othdiscr == 0
-        and eatout == 0
-        and social == 0
-    ):
-        return 0
-
-    # Cap each count to the codebook maximum (ceiling semantics)
-    capped_escort = min(escort, _INMF_MAXES["escort"])
-    capped_shopping = min(shopping, _INMF_MAXES["shopping"])
-    capped_othmaint = min(othmaint, _INMF_MAXES["othmaint"])
-    capped_othdiscr = min(othdiscr, _INMF_MAXES["othdiscr"])
-    capped_eatout = min(eatout, _INMF_MAXES["eatout"])
-    capped_social = min(social, _INMF_MAXES["social"])
-
-    # Lookup the code
-    key = (
-        capped_escort,
-        capped_shopping,
-        capped_othmaint,
-        capped_othdiscr,
-        capped_eatout,
-        capped_social,
-    )
-    code = _INMF_REVERSE_LOOKUP.get(key)
-
-    if code is None:
-        # Defensive fallback (shouldn't happen if capping is correct)
-        return 0
-
-    return code
-
-
-def aggregate_tour_statistics(
-    tours: pl.DataFrame,
-) -> pl.DataFrame:
-    """Aggregate tour statistics by person for activity patterns.
-
-    Computes:
-    - activity_pattern: M (mandatory), N (non-mandatory), H (no tours)
-    - imf_choice: IMF alternative code (1-5) or 0 if no mandatory tours
-    - inmf_choice: INMF alternative code (1-96) or 0 if no non-mandatory tours
-
-    Args:
-        tours: DataFrame with tour_purpose field (CTRAMP formatted)
-
-    Returns:
-        DataFrame with person_id and aggregated statistics
-    """
-    # Handle empty tours DataFrame
-    if len(tours) == 0:
-        return pl.DataFrame(
-            schema={
-                "person_id": pl.Int64,
-                "imf_choice": pl.Int64,
-                "inmf_choice": pl.Int64,
-                "activity_pattern": pl.String,
-            }
-        )
-
-    # Define purpose categories for aggregation
-    work_purposes = [
-        CTRAMPPurpose.WORK_LOW.value,
-        CTRAMPPurpose.WORK_MED.value,
-        CTRAMPPurpose.WORK_HIGH.value,
-        CTRAMPPurpose.WORK_VERY_HIGH.value,
-    ]
-    school_purposes = [
-        CTRAMPPurpose.SCHOOL_GRADE.value,
-        CTRAMPPurpose.SCHOOL_HIGH.value,
-        CTRAMPPurpose.UNIVERSITY.value,
-    ]
-
-    # Define escort purposes (includes both segmented variants)
-    escort_purposes = [
-        CTRAMPPurpose.ESCORT_KIDS.value,
-        CTRAMPPurpose.ESCORT_NO_KIDS.value,
-    ]
-
-    # Classify each tour into purpose-specific flags
-    tour_stats = tours.with_columns(
-        [
-            pl.col("tour_purpose").is_in(work_purposes).alias("is_work"),
-            pl.col("tour_purpose").is_in(school_purposes).alias("is_school"),
-            pl.col("tour_purpose").is_in(escort_purposes).alias("is_escort"),
-            pl.col("tour_purpose").eq("shopping").alias("is_shopping"),
-            pl.col("tour_purpose").eq("othmaint").alias("is_othmaint"),
-            pl.col("tour_purpose").eq("othdiscr").alias("is_othdiscr"),
-            pl.col("tour_purpose").eq("eatout").alias("is_eatout"),
-            pl.col("tour_purpose").eq("social").alias("is_social"),
-        ]
-    )
-
-    # Aggregate counts by person
-    person_stats = tour_stats.group_by("person_id").agg(
-        [
-            pl.col("is_work").sum().alias("work_count"),
-            pl.col("is_school").sum().alias("school_count"),
-            pl.col("is_escort").sum().alias("escort_count"),
-            pl.col("is_shopping").sum().alias("shopping_count"),
-            pl.col("is_othmaint").sum().alias("othmaint_count"),
-            pl.col("is_othdiscr").sum().alias("othdiscr_count"),
-            pl.col("is_eatout").sum().alias("eatout_count"),
-            pl.col("is_social").sum().alias("social_count"),
-        ]
-    )
-
-    # Map counts to IMF and INMF alternative codes
-    person_stats = person_stats.with_columns(
-        [
-            pl.struct(["work_count", "school_count"])
-            .map_elements(
-                lambda row: get_imf_choice_from_counts(row["work_count"], row["school_count"]) or 0,
-                return_dtype=pl.Int64,
-            )
-            .alias("imf_choice"),
-            pl.struct(
-                [
-                    "escort_count",
-                    "shopping_count",
-                    "othmaint_count",
-                    "othdiscr_count",
-                    "eatout_count",
-                    "social_count",
-                ]
-            )
-            .map_elements(
-                lambda row: get_inmf_code_from_counts(
-                    escort=row["escort_count"],
-                    shopping=row["shopping_count"],
-                    othmaint=row["othmaint_count"],
-                    othdiscr=row["othdiscr_count"],
-                    eatout=row["eatout_count"],
-                    social=row["social_count"],
-                ),
-                return_dtype=pl.Int64,
-            )
-            .alias("inmf_choice"),
-        ]
-    )
-
-    # Determine activity pattern based on presence of mandatory/non-mandatory tours
-    person_stats = person_stats.with_columns(
-        pl.when(pl.col("imf_choice") > 0)
-        .then(pl.lit("M"))  # Mandatory
-        .when(pl.col("inmf_choice") > 0)
-        .then(pl.lit("N"))  # Non-mandatory
-        .otherwise(pl.lit("H"))  # Home (no tours)
-        .alias("activity_pattern")
-    )
-
-    return person_stats.select(
-        [
-            "person_id",
-            "activity_pattern",
-            "imf_choice",
-            "inmf_choice",
-        ]
-    )
 
 
 def enrich_persons_with_person_type(
@@ -386,7 +154,11 @@ def format_persons(
 
     Args:
         persons_canonical: Canonical persons DataFrame with derived person_type field
-            (free parking), commute_subsidy_use_4 (discounted parking), value_of_time
+            commute_subsidy_provide_free_parking (employer provides free parking),
+            commute_subsidy_provide_discounted_parking (employer provides discounted parking),
+            commute_subsidy_use_free_parking (respondent uses free parking),
+            commute_subsidy_use_discounted_parking (respondent uses discounted parking),
+            value_of_time
         tours_ctramp: Formatted CT-RAMP tours DataFrame with person_id and tour_purpose
             (CTRAMP-formatted purpose strings like 'work_low', 'school_grade', etc.)
         config: CT-RAMP configuration with age thresholds
@@ -411,7 +183,21 @@ def format_persons(
         - activity_pattern: M=mandatory tours, N=non-mandatory only, H=no tours
         - imf_choice: Count of mandatory tours (work/school)
         - inmf_choice: Count of non-mandatory tours
-        - wfh_choice: Work from home indicator (currently always 0)
+        - wfh_choice: 1 if employed, job_type=WFH, and no work tours
+            (binary: WFH or commute, not both)
+        - employment_category: derived from the BATS `employment` field via
+          [`EMPLOYMENT_TO_CTRAMP`][processing.formatting.ctramp.person_mappings.EMPLOYMENT_TO_CTRAMP]:
+
+          | BATS employment value | CT-RAMP EmploymentCategory |
+          |---|---|
+          | `EMPLOYED_FULLTIME` | Full-time worker |
+          | `EMPLOYED_SELF` | Full-time worker (self-employed treated as full-time) |
+          | `EMPLOYED_PARTTIME` | Part-time worker |
+          | `EMPLOYED_UNPAID` | Part-time worker (unpaid work treated as part-time) |
+          | all others (not employed, retired, student, etc.) | Not employed |
+
+          Children classified as `CHILD_UNDER_5` or `STUDENT_NON_DRIVING_AGE` by person type
+          are overridden to `Under age 16` regardless of reported employment.
     """
     logger.info("Formatting person data for CT-RAMP")
 
@@ -452,6 +238,21 @@ def format_persons(
     # Uses pre-derived student_category and employment_category for consistency
     persons_with_type = enrich_persons_with_person_type(persons_with_cats)
 
+    # Children under 16 get UNDER_16 employment category regardless of reported employment
+    persons_with_type = persons_with_type.with_columns(
+        pl.when(
+            pl.col("person_type").is_in(
+                [
+                    CTRAMPPersonType.CHILD_UNDER_5.value,
+                    CTRAMPPersonType.STUDENT_NON_DRIVING_AGE.value,
+                ]
+            )
+        )
+        .then(pl.lit(CTRAMPEmploymentCategory.UNDER_16.value))
+        .otherwise(pl.col("employment_category"))
+        .alias("employment_category")
+    )
+
     # Convert age category to continuous midpoint
     persons_ctramp = persons_with_type.with_columns(
         pl.col("age")
@@ -471,12 +272,14 @@ def format_persons(
     )
 
     # Determine free parking eligibility
-    # Person can park for free if they use free or discounted parking
-    # (commute_subsidy_use_3 or commute_subsidy_use_4 == 1)
+    # Person parks for free if employer provides free/discounted parking
+    # OR if the respondent uses free/discounted parking
     persons_ctramp = persons_ctramp.with_columns(
         pl.when(
-            (pl.col("commute_subsidy_use_3") == BooleanYesNo.YES.value)
-            | (pl.col("commute_subsidy_use_4") == BooleanYesNo.YES.value)
+            (pl.col("commute_subsidy_provide_free_parking") == BooleanYesNo.YES.value)
+            | (pl.col("commute_subsidy_provide_discounted_parking") == BooleanYesNo.YES.value)
+            | (pl.col("commute_subsidy_use_free_parking") == BooleanYesNo.YES.value)
+            | (pl.col("commute_subsidy_use_discounted_parking") == BooleanYesNo.YES.value)
         )
         .then(pl.lit(FreeParkingChoice.PARK_FOR_FREE.value))
         .otherwise(pl.lit(FreeParkingChoice.PAY_TO_PARK.value))
@@ -492,28 +295,38 @@ def format_persons(
             pl.col("activity_pattern").fill_null("H"),  # Home if no tours
             pl.col("imf_choice").fill_null(0),  # 0 mandatory tours
             pl.col("inmf_choice").fill_null(0),  # 0 non-mandatory tours
+            pl.col("work_count").fill_null(0),  # 0 work tours
         ]
     )
 
-    # Derive wfh_choice from job_type and employment status
-    # WFH = 1 only for employed workers (full-time, part-time, self-employed) AND job_type = WFH
-    persons_ctramp = persons_ctramp.with_columns(
-        pl.when(
-            pl.col("employment").is_in(
-                [
-                    Employment.EMPLOYED_FULLTIME.value,
-                    Employment.EMPLOYED_PARTTIME.value,
-                    Employment.EMPLOYED_SELF.value,
-                ]
-            )
-            & (pl.col("job_type") == JobType.WFH.value)
-        )
-        .then(pl.lit(1))
-        .otherwise(pl.lit(0))
-        .alias("wfh_choice")
+    # Derive wfh_choice from employment status, observed telecommute time, and work tours.
+    # This reflects the travel model's binary treatment: a person either WFH or commutes on a day.
+    #
+    # When telecommute_time is available (carried from the days table during expansion):
+    #   wfh = 1 if employed AND telecommute_time > 0 AND no work tours that day.
+    #   job_type is intentionally NOT used: any job type counts as long as the person
+    #   actually reported telecommuting and did not make a work tour.
+    #
+    # Fallback when telecommute_time is absent: use job_type ∈ {WFH, HYBRID} as proxy.
+    employed_cond = pl.col("employment").is_in(
+        [
+            Employment.EMPLOYED_FULLTIME.value,
+            Employment.EMPLOYED_PARTTIME.value,
+            Employment.EMPLOYED_SELF.value,
+        ]
     )
-
-    # Note: employment_category was already computed before person_type derivation
+    no_work_tour_cond = pl.col("work_count") == 0
+    if "telecommute_time" in persons_ctramp.columns:
+        wfh_cond = employed_cond & (pl.col("telecommute_time") > 0) & no_work_tour_cond
+    else:
+        wfh_cond = (
+            employed_cond
+            & pl.col("job_type").is_in([JobType.WFH.value, JobType.HYBRID.value])
+            & no_work_tour_cond
+        )
+    persons_ctramp = persons_ctramp.with_columns(
+        pl.when(wfh_cond).then(pl.lit(1)).otherwise(pl.lit(0)).alias("wfh_choice")
+    )
 
     # Derive industry_empsix (CT-RAMP empsix employment sector) from the canonical
     # industry code, filling from free-text industry_other where available.
@@ -538,6 +351,30 @@ def format_persons(
             .otherwise(None)
             .alias("sampleRate")
         )
+
+    # Reorder columns to the canonical CT-RAMP person output order.
+    # Only include columns that are actually present in the DataFrame.
+    column_order = [
+        "hh_id",
+        "person_id",
+        "person_num",
+        "age",
+        "gender",
+        "type",
+        "value_of_time",
+        "fp_choice",
+        "activity_pattern",
+        "imf_choice",
+        "inmf_choice",
+        "workDCLogsum",
+        "schoolDCLogsum",
+        "sampleRate",
+        "wfh_choice",
+        "industry",
+    ]
+    ordered = [c for c in column_order if c in persons_ctramp.columns]
+    remaining = [c for c in persons_ctramp.columns if c not in ordered]
+    persons_ctramp = persons_ctramp.select(ordered + remaining)
 
     logger.info("Formatted %d persons for CT-RAMP", len(persons_ctramp))
     debug_ptype(persons_ctramp)
@@ -575,7 +412,7 @@ def debug_ptype(persons_ctramp: pl.DataFrame) -> None:
 
     # Flag known bad combos by joining a rules table onto the freq distribution.
     # Rows matching a rule get an 'expected' value; clean rows stay empty.
-    bad_combo_rules = _bad_combo_rules()
+    bad_combo_rules = bad_person_type_combinations()
     join_keys = ["person_type", "student_category", "employment_category", "age_bin"]
     freq_dist = freq_dist.join(bad_combo_rules, on=join_keys, how="left").with_columns(
         pl.col("expected").fill_null(pl.lit(""))
@@ -598,65 +435,3 @@ def debug_ptype(persons_ctramp: pl.DataFrame) -> None:
             total_bad,
             len(flagged),
         )
-
-
-def _bad_combo_rules() -> pl.DataFrame:
-    """Return a lookup table of known bad person_type / attribute combinations.
-
-    Each row describes a (person_type, student_category, employment_category,
-    age_bin) combo that should not occur, along with the expected correct
-    person_type classification.  Used by ``debug_ptype`` to flag rows in the
-    frequency distribution table.
-
-    Bad combos (from BATS 2023 analysis):
-    │ Full-time worker           ┆ College or higher    ┆ Part-time employed  ┆ 18-64  │ → university student
-    │ Full-time worker           ┆ Grade or high school ┆ Full-time employed  ┆ 5-17   │ → child of non-driving age
-    │ Full-time worker           ┆ Grade or high school ┆ Part-time employed  ┆ 5-17   │ → child type by age
-    │ Full-time worker           ┆ Not a student        ┆ Part-time employed  ┆ 18-64  │ → part-time worker
-    │ Nonworker                  ┆ College or higher    ┆ Not employed        ┆ 18-64  │ → university student
-    │ Part-time worker           ┆ College or higher    ┆ Part-time employed  ┆ 18-64  │ → university student
-    │ Retired                    ┆ College or higher    ┆ Full-time employed  ┆ 65+    │ → full-time worker
-    │ Retired                    ┆ College or higher    ┆ Part-time employed  ┆ 65+    │ → part-time worker
-    │ Retired                    ┆ Not a student        ┆ Full-time employed  ┆ 65+    │ → full-time worker
-    │ Retired                    ┆ Not a student        ┆ Part-time employed  ┆ 65+    │ → part-time worker
-    │ University student         ┆ College or higher    ┆ Full-time employed  ┆ 18-64  │ → full-time worker
-    │ University student         ┆ Not a student        ┆ Not employed        ┆ 18-64  │ → nonworker
-    │ University student         ┆ Not a student        ┆ Part-time employed  ┆ 18-64  │ → part-time worker
-    │ Child of driving age       ┆ Not a student        ┆ Not employed        ┆ 18-64  │ → nonworker
-
-    Note: rows 2-3 share the same join key (driving vs non-driving depends on
-    exact age within 5-17); consolidated as "child type by age" in the rules.
-
-    Returns:
-        DataFrame with columns (person_type, student_category,
-        employment_category, age_bin, expected).
-    """  # noqa: E501
-    pt = CTRAMPPersonType
-    ec = CTRAMPEmploymentCategory
-    sc = CTRAMPStudentCategory
-
-    # fmt: off
-    # (person_type_label, student_category, employment_category, age_bin, expected)
-    rows = [
-        (pt.FULL_TIME_WORKER.label,   sc.COLLEGE_OR_HIGHER.value,    ec.PART_TIME_EMPLOYED.value, "18-64", "university student"),  # noqa: E501
-        (pt.FULL_TIME_WORKER.label,   sc.GRADE_OR_HIGH_SCHOOL.value, ec.FULL_TIME_EMPLOYED.value, "5-17",  "child type by age"),  # noqa: E501
-        (pt.FULL_TIME_WORKER.label,   sc.GRADE_OR_HIGH_SCHOOL.value, ec.PART_TIME_EMPLOYED.value, "5-17",  "child type by age"),  # noqa: E501
-        (pt.FULL_TIME_WORKER.label,   sc.NOT_STUDENT.value,          ec.PART_TIME_EMPLOYED.value, "18-64", "part-time worker"),  # noqa: E501
-        (pt.NON_WORKER.label,         sc.COLLEGE_OR_HIGHER.value,    ec.NOT_EMPLOYED.value,       "18-64", "university student"),  # noqa: E501
-        (pt.PART_TIME_WORKER.label,   sc.COLLEGE_OR_HIGHER.value,    ec.PART_TIME_EMPLOYED.value, "18-64", "university student"),  # noqa: E501
-        (pt.RETIRED.label,            sc.COLLEGE_OR_HIGHER.value,    ec.FULL_TIME_EMPLOYED.value, "65+",   "full-time worker"),  # noqa: E501
-        (pt.RETIRED.label,            sc.COLLEGE_OR_HIGHER.value,    ec.PART_TIME_EMPLOYED.value, "65+",   "part-time worker"),  # noqa: E501
-        (pt.RETIRED.label,            sc.NOT_STUDENT.value,          ec.FULL_TIME_EMPLOYED.value, "65+",   "full-time worker"),  # noqa: E501
-        (pt.RETIRED.label,            sc.NOT_STUDENT.value,          ec.PART_TIME_EMPLOYED.value, "65+",   "part-time worker"),  # noqa: E501
-        (pt.UNIVERSITY_STUDENT.label, sc.COLLEGE_OR_HIGHER.value,    ec.FULL_TIME_EMPLOYED.value, "18-64", "full-time worker"),  # noqa: E501
-        (pt.UNIVERSITY_STUDENT.label, sc.NOT_STUDENT.value,          ec.NOT_EMPLOYED.value,       "18-64", "nonworker"),  # noqa: E501
-        (pt.UNIVERSITY_STUDENT.label, sc.NOT_STUDENT.value,          ec.PART_TIME_EMPLOYED.value, "18-64", "part-time worker"),  # noqa: E501
-        (pt.CHILD_DRIVING_AGE.label,  sc.NOT_STUDENT.value,          ec.NOT_EMPLOYED.value,       "18-64", "nonworker"),  # noqa: E501
-    ]
-    # fmt: on
-
-    return pl.DataFrame(
-        rows,
-        schema=["person_type", "student_category", "employment_category", "age_bin", "expected"],
-        orient="row",
-    )

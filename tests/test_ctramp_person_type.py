@@ -17,7 +17,7 @@ from data_canon.codebook.persons import (
     SchoolType,
     Student,
 )
-from processing.formatting.ctramp.mappings import ctramp_person_type_expression
+from processing.formatting.ctramp.person_mappings import ctramp_person_type_expression
 
 
 class TestPersonTypeClassification:
@@ -38,8 +38,8 @@ class TestPersonTypeClassification:
                 Employment.UNEMPLOYED_NOT_LOOKING,
                 Student.NONSTUDENT,
                 SchoolType.MISSING,
-                CTRAMPPersonType.CHILD_DRIVING_AGE,
-                "BUG FIX: Age 16-17, not student/not employed → CHILD_DRIVING_AGE",
+                CTRAMPPersonType.STUDENT_DRIVING_AGE,
+                "BUG FIX: Age 16-17, not student/not employed → STUDENT_DRIVING_AGE",
             ),
             (
                 AgeCategory.AGE_16_TO_17,
@@ -63,8 +63,8 @@ class TestPersonTypeClassification:
                 Employment.UNEMPLOYED_NOT_LOOKING,
                 Student.FULLTIME_INPERSON,
                 SchoolType.HIGH_SCHOOL,
-                CTRAMPPersonType.CHILD_DRIVING_AGE,
-                "Age 18-24, high school → CHILD_DRIVING_AGE",
+                CTRAMPPersonType.STUDENT_DRIVING_AGE,
+                "Age 18-24, high school → STUDENT_DRIVING_AGE",
             ),
             (
                 AgeCategory.AGE_18_TO_24,
@@ -149,7 +149,7 @@ class TestPersonTypeClassification:
                 Employment.UNEMPLOYED_NOT_LOOKING,
                 Student.FULLTIME_INPERSON,
                 SchoolType.ELEMENTARY,
-                CTRAMPPersonType.CHILD_NON_DRIVING_AGE,
+                CTRAMPPersonType.STUDENT_NON_DRIVING_AGE,
                 "Elementary student",
             ),
             (
@@ -256,7 +256,7 @@ class TestPersonTypeClassification:
 
         When a young adult is marked as a student but school_type is MISSING,
         we assume they are university students rather than letting them fall through
-        to CHILD_DRIVING_AGE catch-all.
+        to STUDENT_DRIVING_AGE catch-all.
         """
         age_cat = AgeCategory.AGE_18_TO_24
 
@@ -423,7 +423,7 @@ class TestPersonTypeClassification:
     ):
         """Property: Non-employed non-students default by age.
 
-        - 16-17 → CHILD_DRIVING_AGE
+        - 16-17 → STUDENT_DRIVING_AGE
         - 18-24 → NON_WORKER
         """
         df = pl.DataFrame(
@@ -441,8 +441,8 @@ class TestPersonTypeClassification:
         person_type = result["literal"][0]
 
         if age == AgeCategory.AGE_16_TO_17:
-            assert person_type == CTRAMPPersonType.CHILD_DRIVING_AGE.value, (
-                f"Age 16-17, unemployed, non-student must be CHILD_DRIVING_AGE, got {person_type}"
+            assert person_type == CTRAMPPersonType.STUDENT_DRIVING_AGE.value, (
+                f"Age 16-17, unemployed, non-student must be STUDENT_DRIVING_AGE, got {person_type}"
             )
         else:
             assert person_type == CTRAMPPersonType.NON_WORKER.value, (
@@ -462,8 +462,8 @@ class TestPersonTypeClassification:
 
         Exceptions:
         - Age < 5 → CHILD_UNDER_5
-        - Age 5-15 → CHILD_NON_DRIVING_AGE
-        - Age 16-17 grade/high school students → CHILD_DRIVING_AGE
+        - Age 5-15 → STUDENT_NON_DRIVING_AGE
+        - Age 16-17 grade/high school students → STUDENT_DRIVING_AGE
         - EMPLOYED_UNPAID is treated as part-time
         """
         # Skip if age forces different classification
@@ -491,7 +491,7 @@ class TestPersonTypeClassification:
         result = df.with_columns(ctramp_person_type_expression())
         person_type = result["literal"][0]
 
-        # Exception: 16-17 grade/high school students are CHILD_DRIVING_AGE
+        # Exception: 16-17 grade/high school students are STUDENT_DRIVING_AGE
         is_high_school_type = school_type in [
             SchoolType.HIGH_SCHOOL,
             SchoolType.HOME_SCHOOL,
@@ -504,8 +504,8 @@ class TestPersonTypeClassification:
         ]
 
         if age == AgeCategory.AGE_16_TO_17 and is_high_school_type and is_student_status:
-            assert person_type == CTRAMPPersonType.CHILD_DRIVING_AGE.value, (
-                f"16-17 grade/HS student must be CHILD_DRIVING_AGE "
+            assert person_type == CTRAMPPersonType.STUDENT_DRIVING_AGE.value, (
+                f"16-17 grade/HS student must be STUDENT_DRIVING_AGE "
                 f"regardless of employment, got {person_type}"
             )
         else:
@@ -638,7 +638,7 @@ class TestPersonTypeClassification:
         if age == AgeCategory.AGE_16_TO_17:
             assert person_type not in [
                 CTRAMPPersonType.CHILD_UNDER_5.value,
-                CTRAMPPersonType.CHILD_NON_DRIVING_AGE.value,
+                CTRAMPPersonType.STUDENT_NON_DRIVING_AGE.value,
                 CTRAMPPersonType.RETIRED.value,
             ], f"Age 16-17 cannot be young children or retired, got {person_type}"
 
@@ -650,23 +650,23 @@ class TestPersonTypeClassification:
             AgeCategory.AGE_45_TO_54,
             AgeCategory.AGE_55_TO_64,
         ]:
-            # Exception: 18-24 can be CHILD_DRIVING_AGE if they're in high school
+            # Exception: 18-24 can be STU_DRIVING_AGE if they're in high school
             if (
                 age == AgeCategory.AGE_18_TO_24
-                and person_type == CTRAMPPersonType.CHILD_DRIVING_AGE.value
+                and person_type == CTRAMPPersonType.STUDENT_DRIVING_AGE.value
             ):
                 # This is allowed for high school students
                 pass
             else:
                 assert person_type not in [
                     CTRAMPPersonType.CHILD_UNDER_5.value,
-                    CTRAMPPersonType.CHILD_NON_DRIVING_AGE.value,
+                    CTRAMPPersonType.STUDENT_NON_DRIVING_AGE.value,
                     CTRAMPPersonType.RETIRED.value,
                 ], f"Age {age.name} cannot be young children or retired, got {person_type}"
 
                 if age != AgeCategory.AGE_18_TO_24:
-                    assert person_type != CTRAMPPersonType.CHILD_DRIVING_AGE.value, (
-                        f"Age {age.name} cannot be CHILD_DRIVING_AGE, got {person_type}"
+                    assert person_type != CTRAMPPersonType.STUDENT_DRIVING_AGE.value, (
+                        f"Age {age.name} cannot be STUDENT_DRIVING_AGE, got {person_type}"
                     )
 
         # Age 65+: RETIRED unless employed (then worker types)
@@ -731,7 +731,7 @@ class TestPersonTypeClassification:
         # (if they do, age-based rules should override)
         if person_type in [
             CTRAMPPersonType.CHILD_UNDER_5.value,
-            CTRAMPPersonType.CHILD_NON_DRIVING_AGE.value,
+            CTRAMPPersonType.STUDENT_NON_DRIVING_AGE.value,
         ]:
             # These types should never have been workers - age overrides employment
             assert age in [AgeCategory.AGE_UNDER_5, AgeCategory.AGE_5_TO_15], (
@@ -829,7 +829,7 @@ class TestPersonTypeClassification:
             SchoolType.COLLEGE_4YEAR,
         ] and person_type in [
             CTRAMPPersonType.CHILD_UNDER_5.value,
-            CTRAMPPersonType.CHILD_NON_DRIVING_AGE.value,
+            CTRAMPPersonType.STUDENT_NON_DRIVING_AGE.value,
         ]:
             # This means age overrode the impossible school type
             assert age in [AgeCategory.AGE_UNDER_5, AgeCategory.AGE_5_TO_15], (
@@ -861,7 +861,7 @@ class TestPersonTypeClassification:
 
         This validates that students with ambiguous/missing school type data
         are classified as university students rather than falling through to
-        age-based catch-alls (CHILD_DRIVING_AGE for 18-24, NON_WORKER for 25+).
+        age-based catch-alls (STUDENT_DRIVING_AGE for 18-24, NON_WORKER for 25+).
         """
         df = pl.DataFrame(
             [
@@ -897,7 +897,7 @@ class TestPersonTypeClassification:
                 "employment": Employment.UNEMPLOYED_NOT_LOOKING.value,
                 "student": Student.FULLTIME_INPERSON.value,
                 "school_type": SchoolType.HIGH_SCHOOL.value,
-                "expected": CTRAMPPersonType.CHILD_DRIVING_AGE.value,
+                "expected": CTRAMPPersonType.STUDENT_DRIVING_AGE.value,
             },
             {
                 "age": AgeCategory.AGE_35_TO_44.value,
@@ -911,7 +911,7 @@ class TestPersonTypeClassification:
                 "employment": Employment.UNEMPLOYED_NOT_LOOKING.value,
                 "student": Student.FULLTIME_INPERSON.value,
                 "school_type": SchoolType.ELEMENTARY.value,
-                "expected": CTRAMPPersonType.CHILD_NON_DRIVING_AGE.value,
+                "expected": CTRAMPPersonType.STUDENT_NON_DRIVING_AGE.value,
             },
             {
                 "age": AgeCategory.AGE_65_TO_74.value,

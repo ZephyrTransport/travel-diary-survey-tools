@@ -11,7 +11,13 @@ from typing import get_args
 import polars as pl
 from pydantic import BaseModel
 
-from data_canon.models.survey import LinkedTripModel, TourModel
+from data_canon.models.survey import (
+    JointTourModel,
+    LinkedTripModel,
+    PersonDayModel,
+    TourModel,
+    UnlinkedTripModel,
+)
 
 
 def model_to_polars_schema(model: type[BaseModel]) -> dict[str, type]:
@@ -119,6 +125,62 @@ def empty_tours() -> pl.DataFrame:
         Empty DataFrame with TourModel schema
     """
     return pl.DataFrame(schema=model_to_polars_schema(TourModel))
+
+
+def empty_unlinked_trips() -> pl.DataFrame:
+    """Create empty unlinked_trips DataFrame with complete schema.
+
+    Returns:
+        Empty DataFrame with UnlinkedTripModel schema
+    """
+    return pl.DataFrame(schema=model_to_polars_schema(UnlinkedTripModel))
+
+
+def empty_joint_tours() -> pl.DataFrame:
+    """Create empty joint_tours DataFrame with complete schema.
+
+    Returns:
+        Empty DataFrame with JointTourModel schema
+    """
+    return pl.DataFrame(schema=model_to_polars_schema(JointTourModel))
+
+
+def empty_days() -> pl.DataFrame:
+    """Create empty person-days DataFrame with complete schema.
+
+    Returns:
+        Empty DataFrame with PersonDayModel schema
+    """
+    return pl.DataFrame(schema=model_to_polars_schema(PersonDayModel))
+
+
+def days_for_persons(persons: pl.DataFrame, day_num: int = 1) -> pl.DataFrame:
+    """Build a single-day person-day table covering every person given.
+
+    ``format_ctramp`` expands households and persons to person-day rows with an
+    *inner* join on the ``days`` table, and restricts tours/trips to those days
+    with a semi-join. A test that passes a ``days`` table therefore gets empty
+    CT-RAMP output for every person not represented here.
+
+    ``day_id`` is a person-day key and must be unique, so it follows the same
+    convention as the pipeline and the e2e toy data: ``person_id * 100 + day_num``.
+    CT-RAMP ids derive from it, so a person's CT-RAMP ``person_id`` becomes that
+    ``day_id`` and its household becomes ``hh_id * 100 + day_num``.
+
+    Args:
+        persons: Canonical persons DataFrame with person_id and hh_id
+        day_num: Day number within the survey period
+
+    Returns:
+        One row per person, or an empty day frame if there are no persons
+    """
+    if persons.is_empty():
+        return empty_days()
+    return persons.select(
+        (pl.col("person_id") * 100 + day_num).cast(pl.Int64).alias("day_id"),
+        pl.col("person_id"),
+        pl.col("hh_id"),
+    ).unique()
 
 
 def empty_joint_trips() -> pl.DataFrame:

@@ -12,9 +12,10 @@ from data_canon.core.labeled_enum import LabeledEnum
 class CTRAMPEmploymentCategory(StrEnum):
     """Enumeration for employment category."""
 
-    FULL_TIME_EMPLOYED = "Full-time employed"
-    PART_TIME_EMPLOYED = "Part-time employed"
+    FULL_TIME_EMPLOYED = "Full-time worker"
+    PART_TIME_EMPLOYED = "Part-time worker"
     NOT_EMPLOYED = "Not employed"
+    UNDER_16 = "Under age 16"
 
 
 class CTRAMPStudentCategory(StrEnum):
@@ -22,7 +23,7 @@ class CTRAMPStudentCategory(StrEnum):
 
     COLLEGE_OR_HIGHER = "College or higher"
     GRADE_OR_HIGH_SCHOOL = "Grade or high school"
-    NOT_STUDENT = "Not a student"
+    NOT_STUDENT = "Not student"
 
 
 class CTRAMPIndustry(StrEnum):
@@ -66,17 +67,54 @@ class WalkToTransitSubZone(LabeledEnum):
     LONG_WALK = 2, "long-walk"
 
 
+class CTRAMPCounty(LabeledEnum):
+    """Enumeration for Bay Area counties used in CT-RAMP."""
+
+    SAN_FRANCISCO = 1, "San Francisco"
+    SAN_MATEO = 2, "San Mateo"
+    SANTA_CLARA = 3, "Santa Clara"
+    ALAMEDA = 4, "Alameda"
+    CONTRA_COSTA = 5, "Contra Costa"
+    SOLANO = 6, "Solano"
+    NAPA = 7, "Napa"
+    SONOMA = 8, "Sonoma"
+    MARIN = 9, "Marin"
+
+
 class CTRAMPPersonType(LabeledEnum):
-    """Enumeration for person type categories."""
+    """Enumeration for person type categories.
+
+    See: https://github.com/BayAreaMetro/modeling-website/wiki/Person
+    """
 
     FULL_TIME_WORKER = 1, "Full-time worker"
     PART_TIME_WORKER = 2, "Part-time worker"
     UNIVERSITY_STUDENT = 3, "University student"
-    NON_WORKER = 4, "Nonworker"
+    NON_WORKER = 4, "Non-worker"
     RETIRED = 5, "Retired"
-    CHILD_NON_DRIVING_AGE = 6, "Child of non-driving age"
-    CHILD_DRIVING_AGE = 7, "Child of driving age"
+    STUDENT_DRIVING_AGE = 6, "Student of driving age"
+    STUDENT_NON_DRIVING_AGE = 7, "Student of non-driving age"
     CHILD_UNDER_5 = 8, "Child too young for school"
+
+
+class CTRAMPTransitMode(StrEnum):
+    """Enumeration for transit sub-mode groupings used in CT-RAMP skims."""
+
+    LOCAL = "Local"
+    EXPRESS = "Express"
+    HEAVY_RAIL = "HeavyRail"
+    COMM_RAIL = "CommRail"
+    WLK_LRT = "Light Rail - Walk"
+    DRV_LRT = "Light Rail - Drive"
+    WLK_FERRY = "Ferry - Walk"
+    DRV_FERRY = "Ferry - Drive"
+
+
+class IndivJoint(StrEnum):
+    """Enumeration for individual vs. joint tour/trip designation."""
+
+    INDIV = "indiv"
+    JOINT = "joint"
 
 
 class CTRAMPModeType(LabeledEnum):
@@ -109,7 +147,7 @@ class CTRAMPTourCategory(LabeledEnum):
     """Enumeration for tour category."""
 
     MANDATORY = "MANDATORY", "Mandatory tour"
-    INDIVIDUAL_NON_MANDATORY = "NON_MANDATORY", "Individual non-mandatory tour"
+    INDIVIDUAL_NON_MANDATORY = "INDIVIDUAL_NON_MANDATORY", "Individual non-mandatory tour"
     JOINT_NON_MANDATORY = "JOINT_NON_MANDATORY", "Joint non-mandatory tour"
     AT_WORK = "AT_WORK", "At-work subtour"
 
@@ -122,7 +160,18 @@ class CTRAMPActivityPattern(LabeledEnum):
     HOME = "H", "Home"
 
 
-class CTRAMPPurpose(LabeledEnum):
+class CTRAMPSimplePurpose(StrEnum):
+    """Simplified tour purpose groupings."""
+
+    WORK = "work"
+    UNIVERSITY = "university"
+    SCHOOL = "school"
+    ATWORK = "atwork"
+    IND_DISC = "ind_disc"
+    IND_MAINT = "ind_maint"
+
+
+class CTRAMPTourPurpose(LabeledEnum):
     """Enumeration for tour purpose."""
 
     HOME = "Home", "Home"
@@ -143,6 +192,62 @@ class CTRAMPPurpose(LabeledEnum):
     SOCIAL = "social", "Social/recreational"
     OTHMAINT = "othmaint", "Other maintenance"
     OTHDISCR = "othdiscr", "Other discretionary"
+
+    @property
+    def simple_purpose(self) -> "CTRAMPSimplePurpose | None":
+        """Map detailed purpose to simplified category."""
+        mapping = {
+            self.ATWORK_BUSINESS: CTRAMPSimplePurpose.ATWORK,
+            self.ATWORK_EAT: CTRAMPSimplePurpose.ATWORK,
+            self.ATWORK_MAINT: CTRAMPSimplePurpose.ATWORK,
+            self.EATOUT: CTRAMPSimplePurpose.IND_DISC,
+            self.ESCORT_KIDS: CTRAMPSimplePurpose.IND_MAINT,
+            self.ESCORT_NO_KIDS: CTRAMPSimplePurpose.IND_MAINT,
+            self.OTHDISCR: CTRAMPSimplePurpose.IND_DISC,
+            self.OTHMAINT: CTRAMPSimplePurpose.IND_MAINT,
+            self.SCHOOL_GRADE: CTRAMPSimplePurpose.SCHOOL,
+            self.SCHOOL_HIGH: CTRAMPSimplePurpose.SCHOOL,
+            self.SHOPPING: CTRAMPSimplePurpose.IND_MAINT,
+            self.SOCIAL: CTRAMPSimplePurpose.IND_DISC,
+            self.UNIVERSITY: CTRAMPSimplePurpose.UNIVERSITY,
+            self.WORK_HIGH: CTRAMPSimplePurpose.WORK,
+            self.WORK_LOW: CTRAMPSimplePurpose.WORK,
+            self.WORK_MED: CTRAMPSimplePurpose.WORK,
+            self.WORK_VERY_HIGH: CTRAMPSimplePurpose.WORK,
+        }
+        return mapping.get(self)
+
+
+class CTRAMPTripPurpose(LabeledEnum):
+    """Enumeration for trip purpose.
+
+    Initially identical to CTRAMPTourPurpose; to be simplified/refined separately.
+    """
+
+    HOME = "Home", "Home"
+    WORK = "work", "Work - All incomes"
+    UNIVERSITY = "university", "University"
+    SCHOOL = "school", "School - High school or grade school"
+    ATWORK = "atwork", "At-work"
+    EATOUT = "eatout", "Eating out"
+    ESCORT = "escort", "Escort"
+    SHOPPING = "shopping", "Shopping"
+    SOCIAL = "social", "Social/recreational"
+    OTHMAINT = "othmaint", "Other maintenance"
+    OTHDISCR = "othdiscr", "Other discretionary"
+
+
+class AtWorkFreq(LabeledEnum):
+    """Enumeration for at-work subtours."""
+
+    NONE_NOT_WORK = 0, "No subtour since tour is not at work"
+    NO_SUBTOUR = 1, "No at-work subtour"
+    ONE_EAT = 2, "1 eating out"
+    ONE_BUSINESS = 3, "1 business"
+    ONE_MAINT = 4, "1 maintenance"
+    TWO_BUSINESS = 5, "2 business"
+    ONE_EAT_ONE_BUSINESS = 6, "1 eat, 1 business"
+    OTHER = 7, "Other combo of at-work subtour not included in CTRAMP definition"
 
 
 class JTFChoice(LabeledEnum):

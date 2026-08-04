@@ -58,8 +58,10 @@ Each tab shows the fields for one canonical table. Only steps that reference the
     | `ethnicity` | Ethnicity or None |  |  |  |  |  |
     | `telework_freq` | CommuteFreq or None |  |  |  |  |  |
     | `commute_freq` | CommuteFreq or None |  |  |  |  |  |
-    | `commute_subsidy_use_3` | BooleanYesNo or None |  |  |  | ✓ |  |
-    | `commute_subsidy_use_4` | BooleanYesNo or None |  |  |  | ✓ |  |
+    | `commute_subsidy_provide_free_parking` | BooleanYesNo or None |  |  |  | ✓ |  |
+    | `commute_subsidy_provide_discounted_parking` | BooleanYesNo or None |  |  |  | ✓ |  |
+    | `commute_subsidy_use_free_parking` | BooleanYesNo or None |  |  |  | ✓ |  |
+    | `commute_subsidy_use_discounted_parking` | BooleanYesNo or None |  |  |  | ✓ |  |
     | `is_proxy` | bool or None |  |  |  |  | ✓ |
     | `surveyable` | bool or None |  |  |  |  |  |
     | `num_days_complete` | int | ≥ 0 |  |  |  |  |
@@ -69,18 +71,18 @@ Each tab shows the fields for one canonical table. Only steps that reference the
 
 === "days"
 
-    | Field | Type | Constraints | cascade_completeness | format_daysim |
-    | --- | --- | --- | --- | --- |
-    | `person_id` | int | ≥ 1, FK → `persons.person_id`, REQ_CHILD |  |  |
-    | `day_id` | int | ≥ 1, UNIQUE | ✓ |  |
-    | `hh_id` | int | ≥ 1, FK → `households.hh_id` | ✓ |  |
-    | `travel_date` | datetime |  | ✓ |  |
-    | `travel_dow` | TravelDow |  |  | ✓ |
-    | `complete` | bool or None |  | ✓ |  |
-    | `hh_day_complete` | bool or None |  |  |  |
-    | `hh_day_usable` | bool or None |  |  |  |
-    | `model_usable` | bool or None |  |  |  |
-    | `day_weight` | float or None | ≥ 0 |  |  |
+    | Field | Type | Constraints | cascade_completeness | format_ctramp | format_daysim |
+    | --- | --- | --- | --- | --- | --- |
+    | `person_id` | int | ≥ 1, FK → `persons.person_id`, REQ_CHILD |  | ✓ |  |
+    | `day_id` | int | ≥ 1, UNIQUE | ✓ | ✓ |  |
+    | `hh_id` | int | ≥ 1, FK → `households.hh_id` | ✓ | ✓ |  |
+    | `travel_date` | datetime |  | ✓ |  |  |
+    | `travel_dow` | TravelDow |  |  |  | ✓ |
+    | `complete` | bool or None |  | ✓ |  |  |
+    | `hh_day_complete` | bool or None |  |  |  |  |
+    | `hh_day_usable` | bool or None |  |  |  |  |
+    | `model_usable` | bool or None |  |  |  |  |
+    | `day_weight` | float or None | ≥ 0 |  |  |  |
 
 === "unlinked_trips"
 
@@ -105,6 +107,7 @@ Each tab shows the fields for one canonical table. Only steps that reference the
     | `mode_2` | Mode or None |  |  |  |  |  |
     | `mode_3` | Mode or None |  |  |  |  |  |
     | `mode_4` | Mode or None |  |  |  |  |  |
+    | `tnc_type` | TNCType or None |  |  |  |  |  |
     | `duration_minutes` | float | ≥ 0 |  |  |  |  |
     | `distance_meters` | float | ≥ 0 |  |  |  |  |
     | `depart_time` | datetime or None |  | ✓ | ✓ |  |  |

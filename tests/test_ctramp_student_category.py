@@ -15,8 +15,8 @@ import pytest
 from data_canon.codebook.ctramp import CTRAMPStudentCategory
 from data_canon.codebook.persons import AgeCategory, Employment, SchoolType, Student
 from processing.formatting.ctramp.ctramp_config import CTRAMPConfig
-from processing.formatting.ctramp.mappings import (
-    ctramp_person_type_expression,
+from processing.formatting.ctramp.person_mappings import ctramp_person_type_expression
+from processing.formatting.ctramp.student_mappings import (
     ctramp_student_category_expression,
     log_student_category_warnings,
 )
@@ -26,10 +26,10 @@ from processing.formatting.ctramp.mappings import (
 def standard_config():
     """Standard test configuration."""
     return CTRAMPConfig(
-        income_low_threshold=60000,
-        income_med_threshold=150000,
-        income_high_threshold=240000,
-        income_base_year_dollars=2023,
+        income_low_threshold=30000,
+        income_med_threshold=60000,
+        income_high_threshold=100000,
+        income_survey_year_to_ctramp_year=0.5319148936,
     )
 
 

@@ -19,7 +19,7 @@ from datetime import datetime
 import polars as pl
 import pytest
 
-from data_canon.codebook.ctramp import CTRAMPTourCategory
+from data_canon.codebook.ctramp import AtWorkFreq, CTRAMPTourCategory
 from data_canon.codebook.days import TravelDow
 from data_canon.codebook.persons import AgeCategory, Employment, Student
 from data_canon.codebook.tours import (
@@ -157,7 +157,7 @@ def standard_config():
         income_low_threshold=60000,
         income_med_threshold=150000,
         income_high_threshold=240000,
-        income_base_year_dollars=2023,
+        income_survey_year_to_ctramp_year=0.5319148936,
         age_adult=4,
     )
 
@@ -366,7 +366,14 @@ class TestSubtourReachesCtramp:
             ]
         )
         households_ctramp = format_households(households, persons, tours, config)
-        return format_individual_tour(tours, trips, persons, households_ctramp, config)
+        return format_individual_tour(
+            tours_canonical=tours,
+            linked_trips_canonical=trips,
+            unlinked_trips_canonical=pl.DataFrame(),
+            persons_canonical=persons,
+            households_ctramp=households_ctramp,
+            config=config,
+        )
 
     def test_subtour_gets_its_own_ctramp_tour_id(self, standard_config):
         """CT-RAMP tour_id is unique within the person.
@@ -393,11 +400,11 @@ class TestSubtourReachesCtramp:
         assert by_id[11010] == CTRAMPTourCategory.AT_WORK.value
 
     def test_parent_tour_reports_its_subtour_frequency(self, standard_config):
-        """``atWork_freq`` counts the parent's subtours -- it was always 0 before."""
+        """``atWork_freq`` classifies the parent's subtours -- it was always 0 before."""
         result = self._formatted(standard_config)
         by_id = dict(zip(*result.select("_tour_id_canonical", "atWork_freq"), strict=True))
-        assert by_id[11000] == 1, "the work tour has one at-work subtour"
-        assert by_id[11010] == 0, "a subtour has no subtours of its own"
+        assert by_id[11000] == AtWorkFreq.ONE_EAT.value
+        assert by_id[11010] == AtWorkFreq.NONE_NOT_WORK.value
 
 
 class TestSubtourReachesDaysim:

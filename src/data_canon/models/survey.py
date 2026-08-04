@@ -53,6 +53,7 @@ from data_canon.codebook.trips import (
     ModeType,
     Purpose,
     PurposeCategory,
+    TNCType,
 )
 from data_canon.core.schema_field import schema_field
 
@@ -111,11 +112,22 @@ class PersonModel(BaseModel):
     ethnicity: Ethnicity | None = schema_field(default=None)
     telework_freq: CommuteFreq | None = schema_field(default=None)
     commute_freq: CommuteFreq | None = schema_field(default=None)
-    # NOTE: These commute subsidy fields are only used in CTRAMP format
-    # But might be useful elsewhere, consider standardizing to be less vague
-    # and/or moved into a data model extension.
-    commute_subsidy_use_3: BooleanYesNo | None = schema_field(default=None)
-    commute_subsidy_use_4: BooleanYesNo | None = schema_field(default=None)
+    # Employer *provides* commute subsidy: Free (fully subsidized) parking at work
+    commute_subsidy_provide_free_parking: BooleanYesNo | None = schema_field(
+        default=None, required_in_steps=["format_ctramp"]
+    )
+    # Employer *provides* commute subsidy: Discounted (partially subsidized) parking at work
+    commute_subsidy_provide_discounted_parking: BooleanYesNo | None = schema_field(
+        default=None, required_in_steps=["format_ctramp"]
+    )
+    # Uses commute subsidy: Free (fully subsidized) parking at work
+    commute_subsidy_use_free_parking: BooleanYesNo | None = schema_field(
+        default=None, required_in_steps=["format_ctramp"]
+    )
+    # Uses commute subsidy: Discounted (partially subsidized) parking at work
+    commute_subsidy_use_discounted_parking: BooleanYesNo | None = schema_field(
+        default=None, required_in_steps=["format_ctramp"]
+    )
     # NOTE: is proxy is vague.
     # Better and more flexible would be to have proxy_person_id on the proxied person
     # This allows for multiple proxy reporters and is more explicit.
@@ -216,6 +228,7 @@ class UnlinkedTripModel(BaseModel):
     mode_2: Mode | None
     mode_3: Mode | None
     mode_4: Mode | None
+    tnc_type: TNCType | None
     duration_minutes: float = schema_field(ge=0)
     distance_meters: float = schema_field(ge=0)
     depart_time: datetime | None = schema_field()

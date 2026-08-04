@@ -63,9 +63,13 @@ from .scenario_builders import (
 
 # Re-export schema utilities
 from .schema_utils import (
+    days_for_persons,
+    empty_days,
+    empty_joint_tours,
     empty_joint_trips,
     empty_linked_trips,
     empty_tours,
+    empty_unlinked_trips,
     model_to_polars_schema,
 )
 
@@ -111,9 +115,13 @@ __all__ = [
     "create_transit_commute_processed",
     "create_university_student_household",
     "create_unlinked_trip",
+    "days_for_persons",
+    "empty_days",
+    "empty_joint_tours",
     "empty_joint_trips",
     "empty_linked_trips",
     "empty_tours",
+    "empty_unlinked_trips",
     "get_tour_schema",
     "lookup_location",
     "model_to_polars_schema",

@@ -477,3 +477,13 @@ class AccessEgressMode(LabeledEnum):
     DROPOFF_OTHER = (10, "Got dropped off in another vehicle (or motorcycle)")
     MISSING = (995, "Missing Response")
     OTHER = (997, "Other")
+
+
+class TNCType(LabeledEnum):
+    """TNC service type."""
+
+    POOLED = (1, "Pooled/Shared Ridehail")
+    REGULAR = (2, "Regular")
+    PREMIUM = (3, "Premium")
+    MISSING = (995, "Missing Response")
+    UNKNOWN = (998, "Unknown TNC Service")

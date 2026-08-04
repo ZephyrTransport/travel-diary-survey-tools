@@ -14,9 +14,10 @@ from data_canon.codebook.ctramp import (
     CTRAMPIndustry,
     CTRAMPModeType,
     CTRAMPPersonType,
-    CTRAMPPurpose,
     CTRAMPStudentCategory,
     CTRAMPTourCategory,
+    CTRAMPTourPurpose,
+    CTRAMPTripPurpose,
     FreeParkingChoice,
     IMFChoice,
     TourComposition,
@@ -203,7 +204,11 @@ class MandatoryLocationCTRAMPModel(BaseModel):
     )
     PersonAge: int = Field(ge=0, description="Person age")
     EmploymentCategory: CTRAMPEmploymentCategory = Field(
-        description='Employment category ("Full-time worker", "Part-time worker", "Not employed")'
+        description=(
+            "Employment category derived from the BATS `employment` field. "
+            "See [`format_persons`][processing.formatting.ctramp.format_persons.format_persons] "
+            "for the full mapping from BATS employment values to CT-RAMP categories."
+        )
     )
     StudentCategory: CTRAMPStudentCategory = Field(
         description='Student category ("College or higher", "Grade or high school", "Not student")'
@@ -264,7 +269,7 @@ class IndividualTourCTRAMPModel(BaseModel):
     tour_category: CTRAMPTourCategory = Field(
         description='Type of tour ("MANDATORY", "INDIVIDUAL_NON_MANDATORY", "AT_WORK")'
     )
-    tour_purpose: CTRAMPPurpose = Field(
+    tour_purpose: CTRAMPTourPurpose = Field(
         description=(
             'Tour purpose, given the type of tour ("work_low", "work_med", "work_high", "work_very_high", '
             '"university", "school_high", "school_grade", "atwork_business", "atwork_eat", "atwork_maint", '
@@ -352,32 +357,33 @@ class IndividualTripCTRAMPModel(BaseModel):
         )
     )
     stop_id: int = Field(
-        description="Stop number unique to half tour; in order of trips; -1 if this is a half tour"
+        description=(
+            "Trip number within the half tour, 0-based in order of trips; "
+            "-1 if the half-tour leg has no intermediate stop (a single trip)"
+        )
     )
     inbound: int = Field(
         ge=0,
         le=1,
         description="Inbound stop indicator (1 if the trip is on the inbound leg of the tour, 0 otherwise)",
     )
-    tour_purpose: CTRAMPPurpose = Field(
+    tour_purpose: CTRAMPTourPurpose = Field(
         description=(
             'Tour purpose, given the type of tour ("work_low", "work_med", "work_high", "work_very high", '
             '"university", "school_high", "school_grade", "atwork_business", "atwork_eat", "atwork_maint", '
             '"eatout", "escort_kids", "escort_no kids", "othdiscr", "othmaint", "shopping", "social")'
         )
     )
-    orig_purpose: CTRAMPPurpose = Field(
+    orig_purpose: CTRAMPTripPurpose = Field(
         description=(
-            'Purpose at the origin end of the trip ("Home", "work_low", "work_med", "work_high", "work_very high", '
-            '"university", "school_high", "school_grade", "atwork_business", "atwork_eat", "atwork_maint", '
-            '"eatout", "escort_kids", "escort_no kids", "othdiscr", "othmaint", "shopping", "social")'
+            'Purpose at the origin end of the trip ("Home", "work", "university", "school", "atwork", '
+            '"eatout", "escort", "othdiscr", "othmaint", "shopping", "social")'
         )
     )
-    dest_purpose: CTRAMPPurpose = Field(
+    dest_purpose: CTRAMPTripPurpose = Field(
         description=(
-            'Purpose at the destination end of the trip ("Home", "work_low", "work_med", "work_high", "work_very high", '
-            '"university", "school_high", "school_grade", "atwork_business", "atwork_eat", "atwork_maint", '
-            '"eatout", "escort_kids", "escort_no kids", "othdiscr", "othmaint", "shopping", "social")'
+            'Purpose at the destination end of the trip ("Home", "work", "university", "school", "atwork", '
+            '"eatout", "escort", "othdiscr", "othmaint", "shopping", "social")'
         )
     )
     orig_taz: int = Field(ge=1, le=1454, description="Origin transportation analysis zone")
@@ -445,8 +451,10 @@ class JointTourCTRAMPModel(BaseModel):
         ge=0,
         description="Joint tour number unique to the household (0=first joint tour, 1=second, etc.)",
     )
-    tour_category: str = Field(description='Type of joint tour ("JOINT_NON_MANDATORY")')
-    tour_purpose: str = Field(
+    tour_category: CTRAMPTourCategory = Field(
+        description='Type of joint tour ("JOINT_NON_MANDATORY")'
+    )
+    tour_purpose: CTRAMPTourPurpose = Field(
         description='Purpose of the joint tour ("eatout", "othdiscr", "othmaint", "shopping", "social")'
     )
     tour_composition: TourComposition = Field(
@@ -503,20 +511,23 @@ class JointTripCTRAMPModel(BaseModel):
         description="Joint tour number unique to the household (0=first joint tour, 1=second, etc.)",
     )
     stop_id: int = Field(
-        description="Stop number unique to half tour; in order of trips; -1 if this is a half tour"
+        description=(
+            "Trip number within the half tour, 0-based in order of trips; "
+            "-1 if the half-tour leg has no intermediate stop (a single trip)"
+        )
     )
     inbound: int = Field(
         ge=0,
         le=1,
         description="Inbound stop indicator (1 if the stop is on the inbound leg of the tour, 0 otherwise)",
     )
-    tour_purpose: str = Field(
+    tour_purpose: CTRAMPTourPurpose = Field(
         description='Purpose of the joint tour ("eatout", "othdiscr", "othmaint", "shopping", "social")'
     )
-    orig_purpose: str = Field(
+    orig_purpose: CTRAMPTripPurpose = Field(
         description='Purpose at the origin end of the trip ("Home", "eatout", "othdiscr", "othmaint", "shopping", "social")'
     )
-    dest_purpose: str = Field(
+    dest_purpose: CTRAMPTripPurpose = Field(
         description='Purpose at the destination end of the trip ("Home", "eatout", "othdiscr", "othmaint", "shopping", "social")'
     )
     orig_taz: int = Field(ge=1, le=1454, description="Origin transportation analysis zone")
@@ -538,7 +549,7 @@ class JointTripCTRAMPModel(BaseModel):
     tour_mode: CTRAMPModeType = Field(
         description="Primary travel mode for the tour (see TravelModes#tour-and-trip-modes)"
     )
-    tour_category: str = Field(description='Tour category ("JOINT_NON_MANDATORY")')
+    tour_category: CTRAMPTourCategory = Field(description='Tour category ("JOINT_NON_MANDATORY")')
     # NOTE: Derivable from survey weights when available.
     sampleRate: float | None = Field(
         default=None,

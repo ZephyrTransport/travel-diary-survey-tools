@@ -370,13 +370,18 @@ steps:
     validate_input: false
     cache: false
     params:
-      # Income thresholds (in absolute dollars)
-      income_low_threshold: 60000  # $60k - below this is 'work_low'
-      income_med_threshold: 150000  # $150k - below this is 'work_med'
-      income_high_threshold: 240000  # $240k - below this is 'work_high', above is 'work_very high'
+      # Income thresholds (in year 2000 dollars, per CT-RAMP convention).
+      # From MTC CT-RAMP INCOME_SEGMENT_DOLLAR_LIMITS = {30000, 60000, 100000, MAX}:
+      # https://github.com/BayAreaMetro/travel-model-one/blob/a1c6cfb48ed3397a436170d810db91c5f9474c08/core/projects/mtc/src/java/com/pb/mtc/ctramp/MtcModelStructure.java#L14
+      income_low_threshold: 30000  # below $30k -> 'work_low'
+      income_med_threshold: 60000  # below $60k -> 'work_med'
+      income_high_threshold: 100000  # below $100k -> 'work_high', at/above -> 'work_very high'
 
-      # Income conversion parameters
-      income_base_year_dollars: 2023  # Base year for income dollar units
+      # Income conversion: survey income is in 2023 dollars, but CT-RAMP income
+      # categories are in year 2000 dollars. Multiply 2023 dollars by this factor to
+      # convert to 2000 dollars (= 1 / 1.88; 2000 -> 2023 inflation factor is 1.88).
+      # Source: https://github.com/BayAreaMetro/modeling-website/wiki/InflationAssumptions
+      income_survey_year_to_ctramp_year: 0.5319148936  # = 1 / 1.88
 
       # Age thresholds
       age_adult: 4  # AgeCategory.AGE_18_TO_24 - Adult threshold for joint tour composition

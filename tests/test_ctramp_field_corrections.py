@@ -43,9 +43,12 @@ from tests.fixtures import (
     create_linked_trip,
     create_person,
     create_tour,
+    days_for_persons,
+    empty_joint_tours,
     empty_joint_trips,
     empty_linked_trips,
     empty_tours,
+    empty_unlinked_trips,
     get_tour_schema,
 )
 
@@ -75,10 +78,10 @@ def get_required_non_null_fields(model):
 def standard_config():
     """Standard test configuration with explicit parameters."""
     return CTRAMPConfig(
-        income_low_threshold=60000,  # $60k
-        income_med_threshold=150000,  # $150k
-        income_high_threshold=240000,  # $240k
-        income_base_year_dollars=2023,
+        income_low_threshold=30000,  # $30k ($2000, MTC)
+        income_med_threshold=60000,  # $60k ($2000, MTC)
+        income_high_threshold=100000,  # $100k ($2000, MTC)
+        income_survey_year_to_ctramp_year=0.5319148936,
         age_adult=4,  # AGE_18_TO_24 = category 4 (18+ are adults)
     )
 
@@ -131,6 +134,7 @@ class TestHouseholdFieldCorrections:
                     tour_id=1001,
                     hh_id=1,
                     person_id=101,
+                    day_id=10101,
                     joint_tour_id=9001,
                     tour_purpose=PurposeCategory.SHOP,
                 ),
@@ -138,6 +142,7 @@ class TestHouseholdFieldCorrections:
                     tour_id=1002,
                     hh_id=1,
                     person_id=102,
+                    day_id=10201,
                     joint_tour_id=9001,
                     tour_purpose=PurposeCategory.SHOP,
                 ),
@@ -145,6 +150,7 @@ class TestHouseholdFieldCorrections:
                     tour_id=1003,
                     hh_id=1,
                     person_id=101,
+                    day_id=10101,
                     joint_tour_id=9002,
                     tour_purpose=PurposeCategory.SHOP,
                 ),
@@ -152,6 +158,7 @@ class TestHouseholdFieldCorrections:
                     tour_id=1004,
                     hh_id=1,
                     person_id=102,
+                    day_id=10201,
                     joint_tour_id=9002,
                     tour_purpose=PurposeCategory.SHOP,
                 ),
@@ -169,6 +176,7 @@ class TestHouseholdFieldCorrections:
                     linked_trip_id=10001,
                     tour_id=1001,
                     person_id=101,
+                    day_id=10101,
                     tour_direction=TourDirection.OUTBOUND,
                     joint_tour_id=9001,
                 ),
@@ -176,6 +184,7 @@ class TestHouseholdFieldCorrections:
                     linked_trip_id=10002,
                     tour_id=1002,
                     person_id=102,
+                    day_id=10201,
                     tour_direction=TourDirection.OUTBOUND,
                     joint_tour_id=9001,
                 ),
@@ -183,6 +192,7 @@ class TestHouseholdFieldCorrections:
                     linked_trip_id=10003,
                     tour_id=1003,
                     person_id=101,
+                    day_id=10101,
                     tour_direction=TourDirection.OUTBOUND,
                     joint_tour_id=9002,
                 ),
@@ -190,6 +200,7 @@ class TestHouseholdFieldCorrections:
                     linked_trip_id=10004,
                     tour_id=1004,
                     person_id=102,
+                    day_id=10201,
                     tour_direction=TourDirection.OUTBOUND,
                     joint_tour_id=9002,
                 ),
@@ -202,10 +213,13 @@ class TestHouseholdFieldCorrections:
             linked_trips=trips,
             tours=tours,
             joint_trips=empty_joint_trips(),
+            unlinked_trips=empty_unlinked_trips(),
+            joint_tours=empty_joint_tours(),
+            days=days_for_persons(persons),
             income_low_threshold=standard_config.income_low_threshold,
             income_med_threshold=standard_config.income_med_threshold,
             income_high_threshold=standard_config.income_high_threshold,
-            income_base_year_dollars=standard_config.income_base_year_dollars,
+            income_survey_year_to_ctramp_year=standard_config.income_survey_year_to_ctramp_year,
         )
 
         households_ctramp = result["households_ctramp"]
@@ -225,10 +239,13 @@ class TestHouseholdFieldCorrections:
             linked_trips=empty_linked_trips(),
             tours=empty_tours(),
             joint_trips=empty_joint_trips(),
+            unlinked_trips=empty_unlinked_trips(),
+            joint_tours=empty_joint_tours(),
+            days=days_for_persons(persons),
             income_low_threshold=standard_config.income_low_threshold,
             income_med_threshold=standard_config.income_med_threshold,
             income_high_threshold=standard_config.income_high_threshold,
-            income_base_year_dollars=standard_config.income_base_year_dollars,
+            income_survey_year_to_ctramp_year=standard_config.income_survey_year_to_ctramp_year,
         )
 
         households_ctramp = result["households_ctramp"]
@@ -379,7 +396,12 @@ class TestPersonFieldCorrections:
             ]
         )
         tours_formatted = format_individual_tour(
-            tours, trips, persons, households_formatted, standard_config
+            tours_canonical=tours,
+            linked_trips_canonical=trips,
+            unlinked_trips_canonical=pl.DataFrame(),
+            persons_canonical=persons,
+            households_ctramp=households_formatted,
+            config=standard_config,
         )
 
         result = format_persons(persons, tours_formatted, standard_config)
@@ -437,7 +459,12 @@ class TestPersonFieldCorrections:
             ]
         )
         tours_formatted = format_individual_tour(
-            tours, trips, persons, households_formatted, standard_config
+            tours_canonical=tours,
+            linked_trips_canonical=trips,
+            unlinked_trips_canonical=pl.DataFrame(),
+            persons_canonical=persons,
+            households_ctramp=households_formatted,
+            config=standard_config,
         )
         result = format_persons(persons, tours_formatted, standard_config)
 
@@ -482,7 +509,12 @@ class TestPersonFieldCorrections:
             ]
         )
         tours_formatted = format_individual_tour(
-            tours, trips, persons, households_formatted, standard_config
+            tours_canonical=tours,
+            linked_trips_canonical=trips,
+            unlinked_trips_canonical=pl.DataFrame(),
+            persons_canonical=persons,
+            households_ctramp=households_formatted,
+            config=standard_config,
         )
         result = format_persons(persons, tours_formatted, standard_config)
 
@@ -538,7 +570,12 @@ class TestPersonFieldCorrections:
             ]
         )
         tours_formatted = format_individual_tour(
-            tours, trips, persons, households_formatted, standard_config
+            tours_canonical=tours,
+            linked_trips_canonical=trips,
+            unlinked_trips_canonical=pl.DataFrame(),
+            persons_canonical=persons,
+            households_ctramp=households_formatted,
+            config=standard_config,
         )
         result = format_persons(persons, tours_formatted, standard_config)
 
@@ -581,7 +618,12 @@ class TestPersonFieldCorrections:
             ]
         )
         tours_formatted = format_individual_tour(
-            tours, trips, persons, households_formatted, standard_config
+            tours_canonical=tours,
+            linked_trips_canonical=trips,
+            unlinked_trips_canonical=pl.DataFrame(),
+            persons_canonical=persons,
+            households_ctramp=households_formatted,
+            config=standard_config,
         )
         result = format_persons(persons, tours_formatted, standard_config)
 
@@ -637,7 +679,12 @@ class TestPersonFieldCorrections:
             ]
         )
         tours_formatted = format_individual_tour(
-            tours, trips, persons, households_formatted, standard_config
+            tours_canonical=tours,
+            linked_trips_canonical=trips,
+            unlinked_trips_canonical=pl.DataFrame(),
+            persons_canonical=persons,
+            households_ctramp=households_formatted,
+            config=standard_config,
         )
 
         result = format_persons(persons, tours_formatted, standard_config)
@@ -679,10 +726,20 @@ class TestIndividualTripFieldCorrections:
 
         households_formatted = format_households(households, persons, tours, standard_config)
         tours_formatted = format_individual_tour(
-            tours, trips, persons, households_formatted, config=standard_config
+            tours_canonical=tours,
+            linked_trips_canonical=trips,
+            unlinked_trips_canonical=pl.DataFrame(),
+            persons_canonical=persons,
+            households_ctramp=households_formatted,
+            config=standard_config,
         )
         result = format_individual_trip(
-            trips, tours_formatted, persons, households_formatted, config=standard_config
+            linked_trips_canonical=trips,
+            unlinked_trips_canonical=pl.DataFrame(),
+            tours_ctramp=tours_formatted,
+            persons_canonical=persons,
+            households_ctramp=households_formatted,
+            config=standard_config,
         )
 
         assert "depart_hour" in result.columns, "depart_hour field should be present"
@@ -719,11 +776,21 @@ class TestIndividualTripFieldCorrections:
         households_formatted = format_households(households, persons, tours, standard_config)
         # Format tours first to get CTRAMP-formatted tours
         tours_formatted = format_individual_tour(
-            tours, trips, persons, households_formatted, standard_config
+            tours_canonical=tours,
+            linked_trips_canonical=trips,
+            unlinked_trips_canonical=pl.DataFrame(),
+            persons_canonical=persons,
+            households_ctramp=households_formatted,
+            config=standard_config,
         )
         # Now pass formatted tours to format_individual_trip
         result = format_individual_trip(
-            trips, tours_formatted, persons, households_formatted, config=standard_config
+            linked_trips_canonical=trips,
+            unlinked_trips_canonical=pl.DataFrame(),
+            tours_ctramp=tours_formatted,
+            persons_canonical=persons,
+            households_ctramp=households_formatted,
+            config=standard_config,
         )
 
         assert isinstance(result["tour_purpose"][0], str), "tour_purpose should be string"
@@ -766,7 +833,12 @@ class TestIndividualTourFieldCorrections:
 
         households_formatted = format_households(households, persons, tours, standard_config)
         result = format_individual_tour(
-            tours, trips, persons, households_formatted, standard_config
+            tours_canonical=tours,
+            linked_trips_canonical=trips,
+            unlinked_trips_canonical=pl.DataFrame(),
+            persons_canonical=persons,
+            households_ctramp=households_formatted,
+            config=standard_config,
         )
 
         assert isinstance(result["person_type"][0], int), "person_type should be integer enum"
@@ -815,7 +887,12 @@ class TestIndividualTourFieldCorrections:
 
         households_formatted = format_households(households, persons, tours, standard_config)
         result = format_individual_tour(
-            tours, trips, persons, households_formatted, standard_config
+            tours_canonical=tours,
+            linked_trips_canonical=trips,
+            unlinked_trips_canonical=pl.DataFrame(),
+            persons_canonical=persons,
+            households_ctramp=households_formatted,
+            config=standard_config,
         )
 
         assert result["tour_category"][0] == CTRAMPTourCategory.MANDATORY.value, (
@@ -856,7 +933,12 @@ class TestIndividualTourFieldCorrections:
 
         households_formatted = format_households(households, persons, tours, standard_config)
         result = format_individual_tour(
-            tours, trips, persons, households_formatted, standard_config
+            tours_canonical=tours,
+            linked_trips_canonical=trips,
+            unlinked_trips_canonical=pl.DataFrame(),
+            persons_canonical=persons,
+            households_ctramp=households_formatted,
+            config=standard_config,
         )
 
         # Check various purposes are mapped correctly
@@ -912,7 +994,12 @@ class TestIndividualTourFieldCorrections:
 
         households_formatted = format_households(households, persons, tours, standard_config)
         result = format_individual_tour(
-            tours, trips, persons, households_formatted, standard_config
+            tours_canonical=tours,
+            linked_trips_canonical=trips,
+            unlinked_trips_canonical=pl.DataFrame(),
+            persons_canonical=persons,
+            households_ctramp=households_formatted,
+            config=standard_config,
         )
 
         # Stops = trips - 1 for each direction

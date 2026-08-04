@@ -102,8 +102,10 @@ def create_person(
     student: Student = Student.NONSTUDENT,
     school_type: SchoolType = SchoolType.MISSING,
     job_type: int | None = None,
-    commute_subsidy_use_3: BooleanYesNo = BooleanYesNo.NO,
-    commute_subsidy_use_4: BooleanYesNo = BooleanYesNo.NO,
+    commute_subsidy_provide_free_parking: BooleanYesNo = BooleanYesNo.NO,
+    commute_subsidy_provide_discounted_parking: BooleanYesNo = BooleanYesNo.NO,
+    commute_subsidy_use_free_parking: BooleanYesNo = BooleanYesNo.NO,
+    commute_subsidy_use_discounted_parking: BooleanYesNo = BooleanYesNo.NO,
     value_of_time: float = 15.0,
     person_weight: float = 1.0,
     # Optional location fields
@@ -141,8 +143,11 @@ def create_person(
         student: Student status enum
         school_type: Type of school enum (if student)
         job_type: Job type enum (if employed).
-        commute_subsidy_use_3: Free parking used (BooleanYesNo)
-        commute_subsidy_use_4: Discounted parking used (BooleanYesNo)
+        commute_subsidy_provide_free_parking: Employer provides free parking (BooleanYesNo)
+        commute_subsidy_provide_discounted_parking: Employer provides discounted parking
+            (BooleanYesNo)
+        commute_subsidy_use_free_parking: Free parking used (BooleanYesNo)
+        commute_subsidy_use_discounted_parking: Discounted parking used (BooleanYesNo)
         value_of_time: Value of time in $/hour
         person_weight: Person expansion factor
         home_lat: Home latitude (optional)
@@ -175,8 +180,12 @@ def create_person(
         "employment": employment.value,
         "student": student.value,
         "school_type": school_type.value,
-        "commute_subsidy_use_3": commute_subsidy_use_3.value,
-        "commute_subsidy_use_4": commute_subsidy_use_4.value,
+        "commute_subsidy_provide_free_parking": commute_subsidy_provide_free_parking.value,
+        "commute_subsidy_provide_discounted_parking": (
+            commute_subsidy_provide_discounted_parking.value
+        ),
+        "commute_subsidy_use_free_parking": commute_subsidy_use_free_parking.value,
+        "commute_subsidy_use_discounted_parking": commute_subsidy_use_discounted_parking.value,
         "value_of_time": value_of_time,
         "person_weight": person_weight,
     }

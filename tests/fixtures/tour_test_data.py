@@ -102,7 +102,7 @@ class TestDataBuilder:
             school_type = None
         elif person_type in [
             PersonType.UNIVERSITY_STUDENT,
-            PersonType.CHILD_DRIVING_AGE,
+            PersonType.STUDENT_DRIVING_AGE,
         ]:
             employment = Employment.UNEMPLOYED_NOT_LOOKING
             student = Student.FULLTIME_INPERSON

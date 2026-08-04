@@ -216,7 +216,7 @@ def _step_blocks(data_dir: Path, output_dir: Path, enabled: frozenset) -> dict:
                 "income_low_threshold": 60000,
                 "income_med_threshold": 150000,
                 "income_high_threshold": 240000,
-                "income_base_year_dollars": 2023,
+                "income_survey_year_to_ctramp_year": 0.5319148936,  # 1/1.88: $2023 -> $2000
                 "age_adult": 4,
                 "gender_default_for_missing": "f",
                 "taz_field": "taz",

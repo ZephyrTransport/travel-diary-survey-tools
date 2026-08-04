@@ -25,7 +25,7 @@ import polars as pl
 from data_canon.codebook.ctramp import JTFChoice
 from data_canon.codebook.households import IncomeBroad
 from data_canon.codebook.persons import Employment
-from processing.formatting.ctramp.mappings import PURPOSECATEGORY_TO_JTF_GROUP
+from processing.formatting.ctramp.purpose_mappings import PURPOSECATEGORY_TO_JTF_GROUP
 from utils.helpers import get_income_midpoint
 
 from .ctramp_config import CTRAMPConfig
@@ -227,6 +227,14 @@ def format_households(
             income=pl.coalesce(pl.col("income"), income_bin_expr)
         )
 
+    # Convert nominal survey-year income to CT-RAMP year-2000 dollars.
+    households_ctramp = households_ctramp.with_columns(
+        (pl.col("income") * config.income_survey_year_to_ctramp_year)
+        .round()
+        .cast(pl.Int64)
+        .alias("income")
+    )
+
     # Compute jtf_choice for all households
     if tours_canonical is None:
         msg = "Tours data is required to compute jtf_choice"
@@ -257,6 +265,49 @@ def format_households(
     households_ctramp = households_ctramp.with_columns(
         pl.col(f"home_{config.taz_field}").alias("taz")
     )
+
+    # Reorder columns to the canonical CT-RAMP household output order.
+    # Only include columns that are actually present in the DataFrame.
+    column_order = [
+        "hh_id",
+        "taz",
+        "walk_subzone",
+        "income",
+        "autos",
+        "cdap_pattern",
+        "jtf_choice",
+        "jtf_pattern",
+        "size",
+        "workers",
+        "auto_suff",
+        "ao_rn",
+        "fp_rn",
+        "cdap_rn",
+        "imtf_rn",
+        "imtod_rn",
+        "immc_rn",
+        "jtf_rn",
+        "jtl_rn",
+        "jtod_rn",
+        "jmc_rn",
+        "inmtf_rn",
+        "inmtl_rn",
+        "inmtod_rn",
+        "inmmc_rn",
+        "awf_rn",
+        "awl_rn",
+        "awtod_rn",
+        "awmc_rn",
+        "stf_rn",
+        "stl_rn",
+        "humanVehicles",
+        "autonomousVehicles",
+        "sampleRate",
+        "pct_of_poverty",
+    ]
+    ordered = [c for c in column_order if c in households_ctramp.columns]
+    remaining = [c for c in households_ctramp.columns if c not in ordered]
+    households_ctramp = households_ctramp.select(ordered + remaining)
 
     logger.info("Formatted %d households for CT-RAMP", len(households_ctramp))
 
