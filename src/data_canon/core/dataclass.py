@@ -264,7 +264,6 @@ class CanonicalData:
             return
 
         parent_col = unique_fields[0]
-        parent_ids = set(df[parent_col].to_list())
 
         # Find all child tables that have required_child FK to this table
         for child_table_name, child_model in self.models.items():
@@ -273,10 +272,30 @@ class CanonicalData:
             for child_fk_col, (
                 parent_table,
                 _,
+                when_col,
             ) in required_child_fields.items():
                 # Check if this FK references current table
                 if parent_table != table_name:
                     continue
+
+                # With required_child_when, only parent rows where that column
+                # is true need a child -- e.g. only *surveyable* persons must
+                # have days; unrelated household members are enumerated but
+                # file no travel. A missing column or a null value still needs
+                # a child, so the constraint can never weaken by accident.
+                must_have_children = df
+                if when_col and when_col in df.columns:
+                    must_have_children = df.filter(
+                        pl.col(when_col).cast(pl.Boolean).fill_null(value=True)
+                    )
+                elif when_col:
+                    logger.warning(
+                        "required_child_when column '%s' not in '%s'; "
+                        "requiring children for every row",
+                        when_col,
+                        table_name,
+                    )
+                parent_ids = set(must_have_children[parent_col].to_list())
 
                 child_table = child_table_name
                 child_df = getattr(self, child_table)
@@ -306,10 +325,11 @@ class CanonicalData:
                     sample_str = ", ".join(str(v) for v in sample)
                     has_more = len(parents_without_children) > max_display
                     ellipsis = " ..." if has_more else ""
+                    when_note = f" (only rows where {when_col} is true)" if when_col else ""
                     msg = (
                         f"Found {len(parents_without_children)} "
                         f"'{table_name}' records with no '{child_table}' "
-                        f"children. Sample: {sample_str}{ellipsis}"
+                        f"children{when_note}. Sample: {sample_str}{ellipsis}"
                     )
                     raise DataValidationError(
                         table=table_name,

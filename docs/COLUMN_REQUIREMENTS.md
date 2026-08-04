@@ -61,6 +61,7 @@ Each tab shows the fields for one canonical table. Only steps that reference the
     | `commute_subsidy_use_3` | BooleanYesNo or None |  |  |  | ✓ |  |
     | `commute_subsidy_use_4` | BooleanYesNo or None |  |  |  | ✓ |  |
     | `is_proxy` | bool or None |  |  |  |  | ✓ |
+    | `surveyable` | bool or None |  |  |  |  |  |
     | `num_days_complete` | int | ≥ 0 |  |  |  |  |
     | `complete` | bool or None |  |  |  |  |  |
     | `model_usable` | bool or None |  |  |  |  |  |

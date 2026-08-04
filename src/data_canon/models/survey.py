@@ -120,6 +120,19 @@ class PersonModel(BaseModel):
     # Better and more flexible would be to have proxy_person_id on the proxied person
     # This allows for multiple proxy reporters and is more explicit.
     is_proxy: bool | None = schema_field(default=None)
+    surveyable: bool | None = schema_field(
+        default=None,
+        description=(
+            "The survey could collect this person's travel at all. Unrelated "
+            "household members (e.g. roommates) are enumerated for household "
+            "composition and weighting but file no travel, and the vendor gives "
+            "them no day rows whatsoever. Read by the completeness cascade, "
+            "which excludes them from the household-day reductions so they "
+            "cannot veto a date they were never asked about, and by the "
+            "persons->days required-child constraint. Null counts as "
+            "surveyable."
+        ),
+    )
     num_days_complete: int = schema_field(ge=0, default=0)
     complete: bool | None = schema_field(default=None)
     model_usable: bool | None = schema_field(
@@ -141,6 +154,11 @@ class PersonDayModel(BaseModel):
         ge=1,
         fk_to="persons.person_id",
         required_child=True,
+        # Only surveyable persons must have a day. Unrelated household members
+        # file no travel and the vendor gives them no day rows, so requiring
+        # one of them can only be satisfied by fabricating a day that reads as
+        # a genuine no-travel day.
+        required_child_when="surveyable",
     )
     day_id: int = schema_field(ge=1, unique=True)
     hh_id: int = schema_field(ge=1, fk_to="households.hh_id")

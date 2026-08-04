@@ -5,6 +5,7 @@ from datetime import datetime
 import polars as pl
 import pytest
 
+from data_canon.codebook.days import TravelDow
 from data_canon.codebook.persons import AgeCategory, Gender
 from data_canon.codebook.tours import TourDataQuality
 from data_canon.codebook.trips import ModeType, Purpose, PurposeCategory
@@ -273,6 +274,71 @@ class TestRequiredChildren:
         )
         with pytest.raises(DataValidationError) as exc:
             data.validate("households", step="link_trips")
+        assert exc.value.rule == "required_children"
+
+
+class TestRequiredChildrenWhen:
+    """Only surveyable persons need a day (``required_child_when``).
+
+    Unrelated household members are enumerated for household composition and
+    weighting, but the survey never asks for their travel and the vendor gives
+    them no day rows. Requiring a day of them could only be satisfied by
+    fabricating one, which reads downstream as a genuine no-travel day.
+    """
+
+    def _data(self, *, surveyable_values: list[bool | None], with_days: list[int]):
+        data = CanonicalData()
+        data.households = pl.DataFrame(
+            [create_household(hh_id=1, home_taz=100, income=50000, num_people=2, num_vehicles=1)]
+        )
+        data.persons = pl.DataFrame(
+            [
+                create_person(
+                    person_id=101 + i,
+                    hh_id=1,
+                    age=AgeCategory.AGE_35_TO_44,
+                    gender=Gender.FEMALE,
+                )
+                for i in range(len(surveyable_values))
+            ]
+        ).with_columns(pl.Series("surveyable", surveyable_values, dtype=pl.Boolean))
+        data.days = pl.DataFrame(
+            {
+                "day_id": [1000 + p for p in with_days],
+                "person_id": with_days,
+                "hh_id": [1] * len(with_days),
+                "travel_date": [datetime(2024, 1, 17)] * len(with_days),
+                "travel_dow": [TravelDow.WEDNESDAY.value] * len(with_days),
+            }
+        )
+        return data
+
+    def test_unsurveyable_person_may_have_no_days(self):
+        """A person marked unsurveyable is legitimately childless."""
+        data = self._data(surveyable_values=[True, False], with_days=[101])
+        data.validate("persons", step="write_data")
+
+    def test_surveyable_person_without_days_still_fails(self):
+        """The constraint keeps its teeth where it is meaningful."""
+        data = self._data(surveyable_values=[True, True], with_days=[101])
+        with pytest.raises(DataValidationError) as exc:
+            data.validate("persons", step="write_data")
+        assert exc.value.rule == "required_children"
+        assert "surveyable" in str(exc.value)
+
+    def test_null_surveyable_counts_as_surveyable(self):
+        """Null must not silently exempt a row from the constraint."""
+        data = self._data(surveyable_values=[True, None], with_days=[101])
+        with pytest.raises(DataValidationError) as exc:
+            data.validate("persons", step="write_data")
+        assert exc.value.rule == "required_children"
+
+    def test_missing_when_column_requires_children_for_all(self):
+        """Without the column the constraint applies to every row, not none."""
+        data = self._data(surveyable_values=[True, True], with_days=[101])
+        data.persons = data.persons.drop("surveyable")
+        with pytest.raises(DataValidationError) as exc:
+            data.validate("persons", step="write_data")
         assert exc.value.rule == "required_children"
 
 

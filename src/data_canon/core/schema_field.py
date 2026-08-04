@@ -10,6 +10,7 @@ def schema_field(
     unique: bool = False,
     fk_to: str | None = None,
     required_child: bool = False,
+    required_child_when: str | None = None,
     **field_kwargs: Any,  # noqa: ANN401
 ) -> Any:  # noqa: ANN401
     """Create a Pydantic Field with relational schema metadata.
@@ -27,6 +28,12 @@ def schema_field(
         required_child: If True, marks this FK as requiring the parent
                        record to have at least one child record (bidirectional
                        FK constraint). Only valid when fk_to is specified.
+        required_child_when: Name of a boolean column on the *parent* table.
+                       Only parent rows where it is true need a child; rows
+                       where it is false are legitimately childless. A missing
+                       column or a null value still needs a child, so the
+                       constraint never weakens silently. Only valid with
+                       required_child=True.
         **field_kwargs: All other Field parameters (ge, le, default, etc.)
 
     Returns:
@@ -64,5 +71,11 @@ def schema_field(
             msg = "required_child=True requires fk_to to be specified"
             raise ValueError(msg)
         field_kwargs["json_schema_extra"]["required_child"] = True
+
+    if required_child_when:
+        if not required_child:
+            msg = "required_child_when requires required_child=True"
+            raise ValueError(msg)
+        field_kwargs["json_schema_extra"]["required_child_when"] = required_child_when
 
     return Field(**field_kwargs)
