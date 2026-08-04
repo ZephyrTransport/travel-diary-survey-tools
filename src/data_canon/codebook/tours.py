@@ -43,11 +43,18 @@ class TourCategory(LabeledEnum):
 
 
 class TourDirection(LabeledEnum):
-    """Half-tour classification."""
+    """Half-tour classification.
+
+    Every tour has exactly two halves relative to its own anchor and primary
+    destination, at-work subtours included. Subtour *membership* is a property
+    of the tour (``parent_tour_id`` / ``subtour_num`` / ``tour_type``), not a
+    direction, so it is deliberately not represented here: encoding it as a
+    third direction discarded the real direction that DaySim (``half``) and
+    CT-RAMP (``inbound``) both require.
+    """
 
     OUTBOUND = (1, "Outbound half-tour")
     INBOUND = (2, "Inbound half-tour")
-    SUBTOUR = (3, "Subtour")
 
 
 class TourDataQuality(LabeledEnum):

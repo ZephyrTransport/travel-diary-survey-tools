@@ -207,7 +207,16 @@ def _step_blocks(data_dir: Path, output_dir: Path, enabled: frozenset) -> dict:
                 "drop_missing_taz": True,
             },
         },
-        "format_daysim": {"name": "format_daysim", "validate_input": False, "cache": False},
+        # validate_output mirrors the shipping bats_2023 config. The DaySim row
+        # models pin the output schema (e.g. half must be 1 or 2), so a trip
+        # carrying an internal sentinel instead of a real value fails here
+        # rather than in a production run.
+        "format_daysim": {
+            "name": "format_daysim",
+            "validate_input": False,
+            "validate_output": True,
+            "cache": False,
+        },
         "write_data": {
             "name": "write_data",
             "validate_input": False,

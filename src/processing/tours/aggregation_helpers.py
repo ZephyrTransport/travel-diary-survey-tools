@@ -414,7 +414,15 @@ def _assign_half_tour(
     Classifies each trip as:
     - OUTBOUND: Trips before first arrival at primary destination
     - INBOUND: Trips after final departure from primary destination
-    - SUBTOUR: Work-based subtour trips
+
+    Every tour has exactly two halves relative to its *own* anchor and primary
+    destination. That includes at-work subtours: a subtour is a separate tour
+    row with its own ``tour_id``, so its ``dest_arrive_time`` /
+    ``dest_depart_time`` already describe the subtour's own destination (e.g.
+    the lunch stop), and the same before/after rule splits it into outbound and
+    inbound. Direction and subtour membership are orthogonal facts -- membership
+    is carried by ``parent_tour_id`` / ``subtour_num`` / ``tour_type`` -- so
+    direction never encodes "this is a subtour".
 
     Args:
         linked_trips: Linked trips with tour_id assignments
@@ -444,16 +452,16 @@ def _assign_half_tour(
     # primary destination arrival/departure
     linked_trips = linked_trips.with_columns(
         [
-            # Subtours are identified by subtour_num > 0
-            pl.when(pl.col("subtour_num") > 0)
-            .then(pl.lit(TourDirection.SUBTOUR))
             # Outbound: trip arrives before or at first arrival at primary dest
-            .when(pl.col("arrive_time") <= pl.col("dest_arrive_time"))
+            pl.when(pl.col("arrive_time") <= pl.col("dest_arrive_time"))
             .then(pl.lit(TourDirection.OUTBOUND))
             # Inbound: trip departs after final departure from primary dest
             .when(pl.col("depart_time") >= pl.col("dest_depart_time"))
             .then(pl.lit(TourDirection.INBOUND))
-            # Default to outbound if times are null (shouldn't happen)
+            # Single-trip tours have no non-last trip, so they have no primary
+            # destination and the times above are null. They are flagged
+            # SINGLE_TRIP and dropped by the formatters, so the direction is
+            # never read; outbound is the harmless default.
             .otherwise(pl.lit(TourDirection.OUTBOUND))
             .alias("tour_direction"),
         ]

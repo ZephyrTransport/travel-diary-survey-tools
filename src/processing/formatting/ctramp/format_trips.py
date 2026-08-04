@@ -100,11 +100,9 @@ def format_individual_trip(
     # Map tour_direction enum to string for easier handling
     individual_trips = (
         individual_trips.with_columns(
-            pl.when(pl.col("tour_direction") == TourDirection.OUTBOUND.value)
-            .then(pl.lit("outbound"))
-            .when(pl.col("tour_direction") == TourDirection.INBOUND.value)
+            pl.when(pl.col("tour_direction") == TourDirection.INBOUND.value)
             .then(pl.lit("inbound"))
-            .otherwise(pl.lit("subtour"))
+            .otherwise(pl.lit("outbound"))
             .alias("tour_direction_str")
         )
         .sort(["tour_id", "tour_direction_str", "depart_time"])

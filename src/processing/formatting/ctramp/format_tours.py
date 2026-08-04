@@ -533,10 +533,6 @@ def format_joint_tour(
                     )
                     .clip(lower_bound=0)
                     .alias("num_ib_stops"),
-                    pl.when(pl.col("tour_direction") == TourDirection.SUBTOUR.value)
-                    .then(1)
-                    .sum()
-                    .alias("num_subtour_stops"),
                 ]
             )
         )
@@ -547,7 +543,6 @@ def format_joint_tour(
             [
                 pl.col("num_ob_stops").fill_null(0),
                 pl.col("num_ib_stops").fill_null(0),
-                pl.col("num_subtour_stops").fill_null(0),
             ]
         )
     else:
@@ -556,7 +551,6 @@ def format_joint_tour(
                 pl.lit(None).cast(pl.Int64).alias("num_travelers"),
                 pl.lit(0).alias("num_ob_stops"),
                 pl.lit(0).alias("num_ib_stops"),
-                pl.lit(0).alias("num_subtour_stops"),
             ]
         )
 

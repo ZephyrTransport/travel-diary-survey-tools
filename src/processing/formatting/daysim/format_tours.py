@@ -7,7 +7,7 @@ import polars as pl
 from data_canon.codebook.tours import TourDirection, TourType
 from data_canon.codebook.trips import ModeType
 
-from .mappings import PURPOSE_MAP, determine_tour_mode
+from .mappings import PURPOSE_MAP, daysim_tour_number, determine_tour_mode
 
 logger = logging.getLogger(__name__)
 
@@ -56,17 +56,13 @@ def format_tours(
         how="left",
     )
 
-    # Number the tours within each person-day. tour_num cannot be used directly:
-    # a work-based subtour carries its parent's tour_num (subtour_num is what
-    # separates them), so the two would collide on DaySim's (hhno, pno, day,
-    # tour) key. The canonical tour_id already packs day / tour_num /
-    # subtour_num in travel order, so ranking it puts each parent immediately
-    # ahead of its own subtours.
+    # Number the tours within each person-day. See daysim_tour_number: the trips
+    # file must derive the same number or its trips point at the wrong tour.
     tours_daysim = tours_daysim.with_columns(
         hhno=pl.col("hh_id"),
         pno=pl.col("person_num"),
         day=pl.col("travel_dow"),
-        tour=pl.col("tour_id").rank("dense").over(["person_id", "day_id"]).cast(pl.Int16),
+        tour=daysim_tour_number(),
     )
 
     # Point each subtour at its parent's DaySim tour number. Home-based tours

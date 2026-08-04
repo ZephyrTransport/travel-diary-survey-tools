@@ -281,3 +281,20 @@ def determine_tour_mode(tours: pl.DataFrame, linked_trips: pl.DataFrame) -> pl.D
     )
 
     return tours
+
+
+def daysim_tour_number() -> pl.Expr:
+    """DaySim's ``tour`` sequence number within a person-day.
+
+    ``tour_num`` cannot be used directly: a work-based subtour carries its
+    *parent's* ``tour_num`` (``subtour_num`` is what separates them), so parent
+    and subtour would collide on DaySim's ``(hhno, pno, day, tour)`` key. The
+    canonical ``tour_id`` already packs day / tour_num / subtour_num in travel
+    order, so ranking it puts each parent immediately ahead of its own subtours.
+
+    The tours file and the trips file must agree on this number or trips point
+    at a tour record they do not belong to, so both derive it from here rather
+    than restating the rule. Both frames are filtered by the same drop cascade
+    before formatting, so they rank over the same set of tours.
+    """
+    return pl.col("tour_id").rank("dense").over(["person_id", "day_id"]).cast(pl.Int16)

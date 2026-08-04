@@ -16,12 +16,13 @@ Two kinds of tests:
 """
 
 from pathlib import Path
+from typing import ClassVar
 
 import polars as pl
 import pytest
 
 from data_canon.codebook.ctramp import CTRAMPTourCategory
-from data_canon.codebook.tours import TourCategory, TourDataQuality, TourType
+from data_canon.codebook.tours import TourCategory, TourDataQuality, TourDirection, TourType
 from tests.e2e.assertions import assert_referential_integrity, assert_tables_non_empty
 
 pytestmark = [pytest.mark.e2e, pytest.mark.slow]
@@ -158,6 +159,48 @@ class TestTourExtraction:
             "a work tour and its at-work subtour must not share a CT-RAMP tour_id"
         )
         assert hh6["atWork_freq"].max() == 1, "the parent work tour should report one subtour"
+
+    def test_subtour_trips_have_a_real_direction(self, full_result):
+        # A subtour is split into halves against its own anchor (the workplace),
+        # like any other tour. Stamping both legs with a "subtour" sentinel threw
+        # the direction away, which DaySim (half) and CT-RAMP (inbound) require.
+        subtour_trips = full_result.linked_trips.filter(pl.col("subtour_num") > 0).sort(
+            "depart_time"
+        )
+        assert subtour_trips.height == 2
+        assert subtour_trips["tour_direction"].to_list() == [
+            TourDirection.OUTBOUND.value,
+            TourDirection.INBOUND.value,
+        ]
+
+
+class TestDaysimTourLinkage:
+    """DaySim trips must reference the tour records they belong to.
+
+    Schema validation alone does not cover this: a subtour trip filed under its
+    parent's tour number is individually well-formed, it just points at the
+    wrong tour. These assertions are what catch that.
+    """
+
+    _KEY: ClassVar[list[str]] = ["hhno", "pno", "day", "tour"]
+
+    def test_no_trip_references_a_missing_tour(self, full_result):
+        tour_keys = full_result.tours_daysim.select(self._KEY).unique()
+        trip_keys = full_result.linked_trips_daysim.select(self._KEY).unique()
+        orphans = trip_keys.join(tour_keys, on=self._KEY, how="anti")
+        assert orphans.height == 0, f"trips reference non-existent tours:\n{orphans}"
+
+    def test_no_tour_is_left_without_trips(self, full_result):
+        # The subtour's own tour record went trip-less when its trips were
+        # numbered by tour_num (shared with the parent) instead of tour_id.
+        tour_keys = full_result.tours_daysim.select(self._KEY).unique()
+        trip_keys = full_result.linked_trips_daysim.select(self._KEY).unique()
+        childless = tour_keys.join(trip_keys, on=self._KEY, how="anti")
+        assert childless.height == 0, f"tour records with no trips:\n{childless}"
+
+    def test_half_is_only_ever_outbound_or_inbound(self, full_result):
+        halves = set(full_result.linked_trips_daysim["half"].unique().to_list())
+        assert halves <= {1, 2}, f"DaySim half must be 1 or 2, got {sorted(halves)}"
 
 
 # ── Imputation (full profile) ─────────────────────────────────────────

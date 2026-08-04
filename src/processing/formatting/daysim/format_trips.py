@@ -19,6 +19,7 @@ from data_canon.codebook.trips import (
 from .mappings import (
     DROVE_ACCESS_EGRESS,
     PURPOSE_MAP,
+    daysim_tour_number,
 )
 
 logger = logging.getLogger(__name__)
@@ -420,17 +421,21 @@ def _prepare_basic_fields(linked_trips: pl.DataFrame, persons: pl.DataFrame) -> 
     )
 
     # Compute Daysim trip identification fields:
-    # - tour: tour sequence number within person-day (from tour_num)
+    # - tour: tour sequence number within person-day (see daysim_tour_number)
     # - half: half-tour direction (1=OUTBOUND, 2=INBOUND, from tour_direction)
     # - tseg: trip sequence within half-tour (ranked by departure then arrival)
     # - tsvid: travel survey trip ID (use linked_trip_id)
     # - tripno: sequential trip number per person-day (bonus field)
+    #
+    # tour and tseg key off tour_id, not tour_num: a work-based subtour shares
+    # its parent's tour_num, so numbering trips by tour_num filed every subtour
+    # trip under its parent's tour -- leaving the subtour's own tour record with
+    # no trips, and double-counting the parent's half-tours.
     trips = trips.with_columns(
         [
-            # Use tour_num if it exists, otherwise create it
-            pl.col("tour_num").alias("tour")
-            if "tour_num" in linked_trips.columns
-            else pl.lit(1).alias("tour"),
+            daysim_tour_number().alias("tour")
+            if "tour_id" in linked_trips.columns
+            else pl.lit(1).cast(pl.Int16).alias("tour"),
             # Map tour_direction to half (1=OUTBOUND, 2=INBOUND)
             pl.col("tour_direction").alias("half")
             if "tour_direction" in linked_trips.columns
@@ -443,11 +448,11 @@ def _prepare_basic_fields(linked_trips: pl.DataFrame, persons: pl.DataFrame) -> 
             pl.col("depart_time")
             .rank(method="ordinal")
             .over(
-                ["hh_id", "person_id", "day_id", "tour_num", "tour_direction"],
+                ["hh_id", "person_id", "day_id", "tour_id", "tour_direction"],
                 order_by=["depart_time", "arrive_time"],
             )
             .alias("tseg")
-            if "tour_num" in linked_trips.columns and "tour_direction" in linked_trips.columns
+            if "tour_id" in linked_trips.columns and "tour_direction" in linked_trips.columns
             else pl.col("depart_time")
             .rank(method="ordinal")
             .over(
