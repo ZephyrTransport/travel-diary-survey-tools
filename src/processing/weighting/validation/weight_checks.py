@@ -12,6 +12,7 @@ from processing.weighting.controls.base import ControlLevel
 from processing.weighting.controls.registry import CONTROLS
 from processing.weighting.core.hierarchy import (
     LEVELS,
+    Agg,
     Flow,
     levels_with_flow,
 )
@@ -71,6 +72,7 @@ def weight_sanity_checks(
         )
 
     _check_hierarchy(tables)
+    _check_joint_sums(tables)
 
 
 # ---------------------------------------------------------------------------
@@ -172,6 +174,85 @@ def _compare_and_log(
 
 # Rows of a failing scope to name in the error before summarising the rest.
 _MAX_REPORTED = 5
+
+
+def _check_joint_sums(
+    tables: dict[str, pl.DataFrame], usability_flag_col: str = "model_usable"
+) -> None:
+    """Verify each SUM grouping equals its members' combined weight, or raise.
+
+    The joint levels carry person-trips rather than events (see [`Agg.SUM`]
+    [processing.weighting.core.hierarchy.Agg]), which buys a
+    conservation identity the mean levels cannot have::
+
+        joint_trip_weight == sum(linked_trip_weight of its member trips)
+
+    Unusable groupings are excluded: [`_aggregate_up`]
+    [processing.weighting.core.propagation] zeroes them regardless of
+    what their members carry, so they are not expected to reconcile.
+
+    Args:
+        tables: Weighted canonical tables.
+        usability_flag_col: Flag marking which records may carry weight.
+
+    Raises:
+        ValueError: If any grouping's weight is not its members' total.
+    """
+    for level in levels_with_flow(Flow.UP):
+        if level.agg is not Agg.SUM:
+            continue
+        target, source = tables.get(level.table), tables.get(level.parent)  # type: ignore[arg-type]
+        if target is None or source is None:
+            continue
+        src_weight = LEVELS[level.parent].weight_col  # type: ignore[index]
+        if level.weight_col not in target.columns or src_weight not in source.columns:
+            continue
+        if level.key not in source.columns:
+            continue
+
+        members = (
+            source.filter(pl.col(level.key).is_not_null() & pl.col(src_weight).is_not_null())
+            .group_by(level.key)
+            .agg(pl.col(src_weight).sum().alias("member_sum"))
+        )
+        checked = target.filter(pl.col(level.weight_col).is_not_null())
+        if usability_flag_col in checked.columns:
+            checked = checked.filter(pl.col(usability_flag_col).fill_null(value=False))
+
+        merged = checked.select(level.key, level.weight_col).join(
+            members, on=level.key, how="inner"
+        )
+        if merged.is_empty():
+            logger.info("  Joint sum %s → %s: OK (nothing to check)", level.parent, level.table)
+            continue
+
+        failures = merged.filter(
+            (pl.col(level.weight_col) - pl.col("member_sum")).abs() > _HIERARCHY_ABS_TOL
+        )
+        if failures.is_empty():
+            logger.info(
+                "  Joint sum %s → %s: OK (%d groupings)", level.parent, level.table, merged.height
+            )
+            continue
+
+        rows = "\n".join(
+            f"  {row[level.key]:<16} {row[level.weight_col]:>14.4f} {row['member_sum']:>14.4f}"
+            for row in failures.head(_MAX_REPORTED).iter_rows(named=True)
+        )
+        more = (
+            f"\n  ... and {failures.height - _MAX_REPORTED} more"
+            if failures.height > _MAX_REPORTED
+            else ""
+        )
+        msg = (
+            f"Joint weight is not its members' total: {failures.height} "
+            f"{level.table} record(s) whose {level.weight_col} does not equal "
+            f"sum({src_weight}) over their member {level.parent}.\n"
+            f"  {level.key:<16} {level.weight_col:>14} {'member_sum':>14}\n"
+            f"{rows}{more}"
+        )
+        logger.error(msg)
+        raise ValueError(msg)
 
 
 def _check_hierarchy(

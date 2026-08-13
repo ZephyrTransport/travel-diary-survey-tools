@@ -245,8 +245,8 @@ def add_zone_ids(
             ("linked_trips", "linked_trip_id", "d_lon", "d_lat", "d"),
             ("tours", "tour_id", "o_lon", "o_lat", "o"),
             ("tours", "tour_id", "d_lon", "d_lat", "d"),
-            ("joint_trips", "joint_trip_id", "o_lon_mean", "o_lat_mean", "o"),
-            ("joint_trips", "joint_trip_id", "d_lon_mean", "d_lat_mean", "d"),
+            # joint_trips holds no coordinates of its own: it is a linking table,
+            # and its members are zoned above.
         ]
 
         # Apply this zone geography to all standard locations
@@ -288,4 +288,42 @@ def add_zone_ids(
                 max_snap_distance=max_snap_distance,
             )
 
+            if table == "linked_trips":
+                _log_joint_members_split_across_zones(results[table], output_col, zone_name)
+
     return results
+
+
+def _log_joint_members_split_across_zones(
+    linked_trips: pl.DataFrame, zone_col: str, zone_name: str
+) -> None:
+    """Report joint trips whose members did not all land in the same zone.
+
+    Members of a joint trip were in the same place, so a few metres of survey
+    and geocoding noise is all that separates them -- but near a boundary that
+    is enough to put them in different zones. The reading is genuine, not a
+    fault to repair: they really were either side of the line.
+
+    It is reported because anything that has to name one zone for the group must
+    choose, and the choice is invisible in the result. Reported per zone system,
+    since a boundary that splits a group in one need not exist in another.
+    """
+    if "joint_trip_id" not in linked_trips.columns or zone_col not in linked_trips.columns:
+        return
+
+    members = linked_trips.filter(pl.col("joint_trip_id").is_not_null())
+    if members.is_empty():
+        return
+
+    per_group = members.group_by("joint_trip_id").agg(pl.col(zone_col).n_unique().alias("_n_zones"))
+    split = per_group.filter(pl.col("_n_zones") > 1).height
+    if split:
+        logger.warning(
+            "%d of %d joint trips (%.2f%%) have members in more than one %s zone at %s; "
+            "any single zone reported for the group is a choice between them.",
+            split,
+            per_group.height,
+            100 * split / per_group.height,
+            zone_name.upper(),
+            zone_col,
+        )

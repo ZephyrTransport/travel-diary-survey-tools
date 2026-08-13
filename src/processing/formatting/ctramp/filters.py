@@ -427,14 +427,13 @@ def _drop_missing_taz(
         logger.info("Removed all %d tours because no valid trips exist", len(tours))
         tours = tours.head(0)
 
-    # Step 5: Filter joint trips by linked trips and TAZ fields
+    # Step 5: Filter joint trips by household and by their surviving members.
+    # A joint trip carries no location of its own -- it is a linking table -- so
+    # it is admissible exactly while its member trips are, which the TAZ filter
+    # above has already decided.
     if len(joint_trips) > 0:
         # First filter by household
         joint_trips = joint_trips.filter(pl.col("hh_id").is_in(valid_hh_ids))
-
-        # Filter by TAZ fields if they exist in joint_trips
-        if all(col in joint_trips.columns for col in (o_taz, d_taz)):
-            joint_trips = joint_trips.filter(_valid_taz(o_taz) & _valid_taz(d_taz))
 
         # Keep only joint trips that have corresponding linked trips
         if len(linked_trips) > 0 and "joint_trip_id" in linked_trips.columns:

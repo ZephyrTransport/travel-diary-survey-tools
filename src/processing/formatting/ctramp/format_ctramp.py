@@ -195,6 +195,8 @@ import polars as pl
 
 from data_canon.codebook.ctramp import CTRAMPEmploymentCategory, CTRAMPPersonType
 from data_canon.models.ctramp import (
+    AllTourCTRAMPModel,
+    AllTripCTRAMPModel,
     AOResultsCTRAMPModel,
     CDAPResultsCTRAMPModel,
     HouseholdCTRAMPModel,
@@ -233,6 +235,8 @@ MODEL_MAP = {
     "joint_tours_ctramp": JointTourCTRAMPModel,
     "cdap_results_ctramp": CDAPResultsCTRAMPModel,
     "ao_results_ctramp": AOResultsCTRAMPModel,
+    "all_tours_ctramp": AllTourCTRAMPModel,
+    "all_trips_ctramp": AllTripCTRAMPModel,
 }
 
 
@@ -694,6 +698,31 @@ def format_ctramp(  # noqa: PLR0913
         config=config,
     )
 
+    # The unified tables: the same formatting over the whole tour set, so a joint
+    # tour appears as its participants' own per-person tours. Nothing is exploded
+    # and no weight is rescaled -- those rows already exist in the canonical data.
+    if len(tours) == 0:
+        all_tours_ctramp = individual_tours_ctramp
+        all_trips_ctramp = individual_trips_ctramp
+    else:
+        all_tours_ctramp = format_individual_tour(
+            tours_canonical=tours,
+            linked_trips_canonical=linked_trips,
+            unlinked_trips_canonical=unlinked_trips,
+            persons_canonical=persons_with_type,
+            households_ctramp=households_ctramp,
+            config=config,
+            include_joint=True,
+        )
+        all_trips_ctramp = format_individual_trip(
+            linked_trips_canonical=linked_trips,
+            unlinked_trips_canonical=unlinked_trips,
+            tours_ctramp=all_tours_ctramp,
+            persons_canonical=persons,
+            households_ctramp=households_ctramp,
+            config=config,
+        )
+
     # Prepare result dictionary and clean up temporary columns
     tables = {
         "households_ctramp": households_ctramp,
@@ -703,6 +732,8 @@ def format_ctramp(  # noqa: PLR0913
         "joint_trips_ctramp": joint_trips_ctramp,
         "joint_tours_ctramp": joint_tours_ctramp,
         "mandatory_locations_ctramp": mandatory_location_ctramp,
+        "all_tours_ctramp": all_tours_ctramp,
+        "all_trips_ctramp": all_trips_ctramp,
     }
 
     # Derive cdapResults / aoResults from the formatted persons/households before

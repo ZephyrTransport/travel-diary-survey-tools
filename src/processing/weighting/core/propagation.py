@@ -58,6 +58,7 @@ from processing.weighting.core.hierarchy import (
     HIERARCHY,
     LEVELS,
     TABLE_NAMES,
+    Agg,
     Flow,
     Level,
 )
@@ -330,14 +331,14 @@ def _aggregate_up(
         raise ValueError(msg)
 
     src_weight = has_weight[level.parent]  # type: ignore[index]
-    logger.info("Deriving %s from mean of %s", level.weight_col, src_weight)
+    logger.info("Deriving %s from %s of %s", level.weight_col, level.agg.name.lower(), src_weight)
 
     # Members that carried weight in. A zero-weight member was already re-homed
     # onto its own scope's usable records, so it is neither averaged nor counted.
     carried = pl.col(src_weight).filter(
         pl.col(src_weight).is_not_null() & (pl.col(src_weight) != 0)
     )
-    combine = carried.mean()
+    combine = carried.sum() if level.agg is Agg.SUM else carried.mean()
 
     agg = source_df.group_by(level.key).agg(combine.fill_null(0).alias(level.weight_col))
     target_df = safe_join_weight(target_df, agg, level.key)  # type: ignore[arg-type]

@@ -39,12 +39,6 @@ def _create_empty_results(
             "hh_id": pl.Int64,
             "day_id": pl.Int64,
             "num_joint_travelers": pl.Int64,
-            "o_lat_mean": pl.Float64,
-            "o_lon_mean": pl.Float64,
-            "d_lat_mean": pl.Float64,
-            "d_lon_mean": pl.Float64,
-            "min_depart_time": pl.Datetime,
-            "max_arrive_time": pl.Datetime,
         }
     )
     return {

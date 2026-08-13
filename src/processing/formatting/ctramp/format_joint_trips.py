@@ -10,6 +10,12 @@ from data_canon.codebook.tours import TourDirection
 from data_canon.codebook.trips import TNCType
 
 from .ctramp_config import CTRAMPConfig
+from .format_joint_tours import (
+    ctramp_joint_tour_numbers,
+    identify_misclassified_joint_tours,
+    joint_weight_columns,
+)
+from .joint_representative import log_members_spanning_zones, select_representative_members
 from .mode_mappings import aggregate_transit_submode, ctramp_mode_expression
 from .purpose_mappings import ctramp_purpose_category_expression
 
@@ -53,6 +59,9 @@ def format_joint_trip(
         - Deduplicates to one row per joint_trip_id
     """
     logger.info("Formatting joint trip data for CT-RAMP")
+    # Same admissibility rule as the tour formatters; without it a reclassified
+    # group lands in both trip tables and points at an unwritten joint tour.
+    tours_canonical = identify_misclassified_joint_tours(tours_canonical)
 
     if len(joint_trips_canonical) == 0:
         logger.info("No joint trips found")
@@ -68,15 +77,14 @@ def format_joint_trip(
 
     joint_trip_context = joint_linked_trips.group_by("joint_trip_id").agg(
         [
+            # Member trips behind the weight -- the divisor back to a per-person rate,
+            # and what CT-RAMP multiplies by to recover person-trips.
+            pl.len().cast(pl.Int64).alias("_n_members"),
             pl.col("tour_id").first(),
             pl.col("o_purpose_category").first(),
             pl.col("d_purpose_category").first(),
             pl.col("mode_type").first(),
-            pl.col("depart_time").first(),
-            pl.col("arrive_time").first(),
             pl.col("num_travelers").first(),
-            pl.col(f"o_{config.taz_field}").first(),
-            pl.col(f"d_{config.taz_field}").first(),
             pl.col("tour_direction").first(),
             pl.col("access_mode").first(),
             pl.col("egress_mode").first(),
@@ -87,6 +95,21 @@ def format_joint_trip(
         joint_trip_context,
         on="joint_trip_id",
         how="left",
+    )
+
+    # A joint trip carries no location or time of its own, so one member stands
+    # for the group -- the same member across every leg of its joint tour, and
+    # for both the zones and the clock, so the record describes one real trip.
+    log_members_spanning_zones(joint_linked_trips, config.taz_field)
+    representative = select_representative_members(joint_linked_trips).select(
+        "joint_trip_id",
+        f"o_{config.taz_field}",
+        f"d_{config.taz_field}",
+        "depart_time",
+        "arrive_time",
+    )
+    joint_trips_formatted = joint_trips_formatted.join(
+        representative, on="joint_trip_id", how="left"
     )
 
     # Derive the transit submode per joint trip from detailed unlinked-trip modes,
@@ -115,8 +138,9 @@ def format_joint_trip(
         trip_submode_expr = None
         tnc_type = None
 
-    # Join with tour context
-    joint_trips_formatted = joint_trips_formatted.join(
+    # Drop any carried joint_tour_id first: otherwise the join suffixes the tour
+    # copy and the filter below reads the stale, un-reclassified value.
+    joint_trips_formatted = joint_trips_formatted.drop("joint_tour_id", strict=False).join(
         tours_canonical.select(["tour_id", "joint_tour_id", "tour_purpose", "tour_mode"]),
         on="tour_id",
         how="left",
@@ -150,17 +174,15 @@ def format_joint_trip(
         tour_tnc_type = pl.col("tour_tnc_type")
     else:
         tour_submode_expr = None
-        tour_tnc_type = None  # Derive tour-level transit submode / TNC type per joint tour,
+        tour_tnc_type = None
 
     # Filter to only trips on joint tours
     joint_trips_formatted = joint_trips_formatted.filter(pl.col("joint_tour_id").is_not_null())
 
-    # Join with households
-    hh_cols = ["hh_id", "income"]
-    if "hh_weight" in households_ctramp.columns:
-        hh_cols.append("hh_weight")
+    # Income only: a joint record's weight and rate come from its own columns, never
+    # from hh_weight, which the cascade has since split and redistributed.
     joint_trips_formatted = joint_trips_formatted.join(
-        households_ctramp.select(hh_cols),
+        households_ctramp.select(["hh_id", "income"]),
         on="hh_id",
         how="left",
     )
@@ -269,24 +291,15 @@ def format_joint_trip(
         .drop("_stop_seq")
     )
 
-    # CT-RAMP joint tour_id is 0-based per household (0=first joint tour, ...).
-    joint_trips_formatted = joint_trips_formatted.with_columns(
-        (pl.col("joint_tour_id").rank("dense").over("hh_id") - 1)
-        .cast(pl.Int64)
-        .alias("_ctramp_joint_tour_id")
+    # Numbered from the tours, not from the joint trips present here: the two
+    # files must agree on it even when one of them has lost a joint tour.
+    joint_trips_formatted = joint_trips_formatted.join(
+        ctramp_joint_tour_numbers(tours_canonical), on="joint_tour_id", how="left"
     )
 
-    # The joint trip weight comes from the cascade on joint_trips_canonical; carry
-    # it through and express it as a sample rate, as individual trips do.
-    weight_cols: list[pl.Expr] = []
-    if "joint_trip_weight" in joint_trips_formatted.columns:
-        weight_cols = [
-            pl.col("joint_trip_weight"),
-            pl.when(pl.col("joint_trip_weight") > 0)
-            .then(pl.col("joint_trip_weight").pow(-1))
-            .otherwise(None)
-            .alias("sampleRate"),
-        ]
+    weight_cols = joint_weight_columns(
+        joint_trips_formatted.columns, "joint_trip_weight", pl.col("_n_members")
+    )
 
     # Select final columns with snake_case names
     select_cols = [
@@ -307,7 +320,10 @@ def format_joint_trip(
         pl.col("tour_mode_ctramp").alias("tour_mode"),
         # All joint tours are JOINT_NON_MANDATORY.
         pl.lit(CTRAMPTourCategory.JOINT_NON_MANDATORY.value).alias("tour_category"),
-        pl.col("num_joint_travelers").cast(pl.Int64).alias("num_participants"),
+        # CT-RAMP multiplies this record by num_participants to recover person-trips,
+        # so it is the count of weighted member trips, not the reported party size.
+        # Occupancy is unaffected: trip_mode already encodes SHARED2 vs SHARED3+.
+        pl.col("_n_members").alias("num_participants"),
         pl.col("depart_hour").cast(pl.Int64),
         pl.col("trip_time"),
         *weight_cols,

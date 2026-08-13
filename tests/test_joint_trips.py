@@ -21,6 +21,7 @@ from processing.joint_trips import (
     JointTripConfig,
     detect_joint_trips,
 )
+from processing.joint_trips.aggregation import build_joint_trips_table
 from processing.joint_trips.similarity import (
     apply_buffer_filter,
     apply_mahalanobis_filter,
@@ -439,3 +440,57 @@ def test_empty_input():
     # Should handle gracefully
     assert len(result["linked_trips"]) == 0
     assert len(result["joint_trips"]) == 0
+
+
+class TestGroupingMembership:
+    """A joint trip is its member trips, so it needs two people behind it.
+
+    The weighting sums over those members and CT-RAMP multiplies the record by
+    their count, so a grouping standing for one person misstates both.
+    """
+
+    @staticmethod
+    def _members(person_ids: list[int]) -> tuple[pl.DataFrame, pl.DataFrame]:
+        """Linked trips and assignments putting every trip in one joint group."""
+        n = len(person_ids)
+        linked_trips = pl.DataFrame(
+            {
+                "linked_trip_id": list(range(1, n + 1)),
+                "person_id": person_ids,
+                "hh_id": [1] * n,
+                "day_id": [1] * n,
+                "o_lat": [37.7] * n,
+                "o_lon": [-122.4] * n,
+                "d_lat": [37.8] * n,
+                "d_lon": [-122.5] * n,
+                "depart_time": [datetime(2023, 5, 1, 8, 0)] * n,
+                "arrive_time": [datetime(2023, 5, 1, 8, 30)] * n,
+            }
+        )
+        assignments = pl.DataFrame(
+            {"linked_trip_id": list(range(1, n + 1)), "joint_trip_id": [500] * n}
+        )
+        return linked_trips, assignments
+
+    def test_two_participants_are_accepted(self):
+        """The control: a genuine pair aggregates without complaint."""
+        linked_trips, assignments = self._members([101, 102])
+
+        result = build_joint_trips_table(linked_trips, assignments)
+
+        assert len(result) == 1
+        assert result["num_joint_travelers"][0] == 2
+
+    def test_one_person_travelling_twice_is_not_a_group(self):
+        """Two trips, one person: counting rows would call this joint, counting people does not."""
+        linked_trips, assignments = self._members([101, 101])
+
+        with pytest.raises(ValueError, match="fewer than 2 distinct participants"):
+            build_joint_trips_table(linked_trips, assignments)
+
+    def test_a_lone_member_is_rejected(self):
+        """A group of one is not joint travel."""
+        linked_trips, assignments = self._members([101])
+
+        with pytest.raises(ValueError, match="fewer than 2 distinct participants"):
+            build_joint_trips_table(linked_trips, assignments)

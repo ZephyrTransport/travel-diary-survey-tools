@@ -436,3 +436,9 @@ steps:
         individual_trips_ctramp: "{{ output_dir }}/ctramp_2023/IndivTripData.csv"
         joint_tours_ctramp: "{{ output_dir }}/ctramp_2023/JointTourData.csv"
         joint_trips_ctramp: "{{ output_dir }}/ctramp_2023/JointTripData.csv"
+        cdap_results_ctramp: "{{ output_dir }}/ctramp_2023/cdapResults.csv"
+        ao_results_ctramp: "{{ output_dir }}/ctramp_2023/aoResults.csv"
+        # Not CT-RAMP files: individual and joint travel unified into one row per
+        # person-record, so a total needs no reconciling across the two files above.
+        all_tours_ctramp: "{{ output_dir }}/ctramp_2023/AllTourData.csv"
+        all_trips_ctramp: "{{ output_dir }}/ctramp_2023/AllTripData.csv"

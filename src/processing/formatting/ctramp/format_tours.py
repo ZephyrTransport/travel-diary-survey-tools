@@ -45,8 +45,15 @@ def _prepare_individual_tours(
     persons: pl.DataFrame,
     households_ctramp: pl.DataFrame,
     config: CTRAMPConfig,
+    *,
+    include_joint: bool = False,
 ) -> pl.DataFrame:
-    """Select individual tours and add person, income, purpose, and category fields."""
+    """Select individual tours and add person, income, purpose, and category fields.
+
+    With *include_joint*, joint-tour members are kept as the per-person tours they
+    already are, for the unified All* output. Nothing is exploded: a joint tour's
+    participants each hold their own tour row and their own ``tour_weight``.
+    """
     tours = identify_misclassified_joint_tours(tours)
     if "person_type" not in persons.columns or "type" not in persons.columns:
         logger.info("Deriving person_type for tour formatting")
@@ -67,18 +74,15 @@ def _prepare_individual_tours(
             )
         persons = enrich_persons_with_person_type(persons)
 
-    individual_tours = (
-        tours.filter(pl.col("joint_tour_id").is_null())
-        .join(
-            persons.select(["person_id", "person_num", "person_type", "school_type"]),
-            on="person_id",
-            how="left",
-        )
-        .join(
-            households_ctramp.select(["hh_id", "income"]),
-            on="hh_id",
-            how="left",
-        )
+    selected = tours if include_joint else tours.filter(pl.col("joint_tour_id").is_null())
+    individual_tours = selected.join(
+        persons.select(["person_id", "person_num", "person_type", "school_type"]),
+        on="person_id",
+        how="left",
+    ).join(
+        households_ctramp.select(["hh_id", "income"]),
+        on="hh_id",
+        how="left",
     )
 
     parent_tour_purposes = individual_tours.select(
@@ -321,6 +325,8 @@ def format_individual_tour(
     persons_canonical: pl.DataFrame,
     households_ctramp: pl.DataFrame,
     config: CTRAMPConfig,
+    *,
+    include_joint: bool = False,
 ) -> pl.DataFrame:
     """Format individual tours to CT-RAMP specification.
 
@@ -352,6 +358,10 @@ def format_individual_tour(
             but re-derived if missing or invalid
         households_ctramp: Formatted CT-RAMP households DataFrame with hh_id, income
         config: CT-RAMP configuration with income thresholds
+        include_joint: Keep joint-tour members as their own per-person tours,
+            producing the unified All* set instead of the individual-only one.
+            Each participant already holds a tour row carrying its own
+            ``tour_weight``, so nothing is exploded or reweighted.
 
     Returns:
         DataFrame with CT-RAMP individual tour fields:
@@ -365,13 +375,20 @@ def format_individual_tour(
             - num_ob_stops, num_ib_stops
 
     Notes:
-        - Excludes joint tours (joint_tour_id IS NULL)
+        - Excludes joint tours unless *include_joint*
         - Excludes all model-only fields (random numbers, wait times, logsums)
     """
-    logger.info("Formatting individual tour data for CT-RAMP")
+    logger.info(
+        "Formatting %s tour data for CT-RAMP",
+        "all (incl. joint)" if include_joint else "individual",
+    )
 
     individual_tours = _prepare_individual_tours(
-        tours_canonical, persons_canonical, households_ctramp, config
+        tours_canonical,
+        persons_canonical,
+        households_ctramp,
+        config,
+        include_joint=include_joint,
     )
 
     individual_tours = _add_at_work_frequency(individual_tours)

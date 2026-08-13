@@ -119,6 +119,8 @@ def identify_joint_tours(
         how="left",
     )
 
+    _validate_joint_tours_have_joint_trips(linked_trips)
+
     joint_tours = tours.filter(pl.col("joint_tour_id").is_not_null())
     logger.info(
         "Identified %d individual tours as joint (%d unique joint tour groups)",
@@ -127,6 +129,48 @@ def identify_joint_tours(
     )
 
     return linked_trips, tours
+
+
+def _validate_joint_tours_have_joint_trips(linked_trips: pl.DataFrame) -> None:
+    """Raise when a tour is marked joint but holds no joint trip at all.
+
+    ``joint_tour_id`` is only meaningful as a claim about shared travel, so a
+    tour carrying one while none of its trips was shared is self-contradictory
+    however the id is defined.
+
+    Deliberately weaker than the rule this module currently assigns ids under.
+    Step 1 admits a tour only when *every* trip is joint, which suits a model
+    that has no way to express a half-shared tour, but a survey does: a parent
+    who drops a child and drives on to work made one tour, part of it together.
+    Should ``joint_tour_id`` later be widened to cover those, this check still
+    holds -- so it does not have to be revisited to make that change, and
+    consumers needing the stricter reading enforce it themselves.
+
+    Raises:
+        ValueError: If any joint tour has no joint trip among its trips.
+    """
+    required = {"joint_tour_id", "joint_trip_id"}
+    if not required.issubset(linked_trips.columns):
+        return
+
+    empty_tours = (
+        linked_trips.filter(pl.col("joint_tour_id").is_not_null())
+        .group_by("joint_tour_id")
+        .agg(pl.col("joint_trip_id").is_not_null().any().alias("_has_joint_trip"))
+        .filter(~pl.col("_has_joint_trip"))
+    )
+    if empty_tours.is_empty():
+        return
+
+    tour_ids = empty_tours["joint_tour_id"].to_list()
+    preview = tour_ids[:10]
+    msg = (
+        f"{len(tour_ids)} tour(s) carry a joint_tour_id but hold no joint trip; "
+        f"a tour cannot be shared travel when none of its trips was shared. "
+        f"Joint tour IDs: {preview}"
+        f"{'...' if len(tour_ids) > len(preview) else ''}"
+    )
+    raise ValueError(msg)
 
 
 def build_joint_tours_table(tours: pl.DataFrame) -> pl.DataFrame:

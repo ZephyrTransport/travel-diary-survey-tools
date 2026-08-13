@@ -1,6 +1,7 @@
 """Format canonical joint tours for CT-RAMP."""
 
 import logging
+from collections.abc import Collection
 
 import polars as pl
 
@@ -14,6 +15,7 @@ from data_canon.codebook.tours import TourDirection
 from data_canon.codebook.trips import PurposeCategory
 
 from .ctramp_config import CTRAMPConfig
+from .joint_representative import representative_person_per_tour
 from .mode_mappings import (
     aggregate_transit_submode,
     ctramp_mode_expression,
@@ -50,19 +52,21 @@ def format_joint_tour(
         on="person_id",
         how="left",
     )
-    participants_agg = joint_tours.group_by("joint_tour_id").agg(
+    group_agg = joint_tours.group_by("joint_tour_id").agg(
         [
             pl.col("hh_id").first(),
             pl.col("person_num").sort().cast(pl.Utf8).str.join(" ").alias("Participants"),
-            pl.col("tour_category").first(),
-            pl.col("tour_purpose").first(),
-            pl.col(f"o_{config.taz_field}").first(),
-            pl.col(f"d_{config.taz_field}").first(),
-            pl.col("origin_depart_time").first(),
-            pl.col("origin_arrive_time").first(),
-            pl.col("tour_mode").first(),
-            pl.col("subtour_num").first(),
+            # Member tours behind the weight -- the divisor back to a per-tour rate.
+            pl.len().cast(pl.Int64).alias("_n_members"),
         ]
+    )
+
+    # Everything tour-shaped comes from the member the joint trip file also uses,
+    # so the two describe one member's outing rather than two members' halves.
+    participants_agg = group_agg.join(
+        _representative_tour(joint_tours, linked_trips_canonical, config),
+        on="joint_tour_id",
+        how="left",
     )
 
     participants_with_ages = joint_tours.join(
@@ -93,11 +97,10 @@ def format_joint_tour(
         how="left",
     )
 
-    hh_cols = ["hh_id", "income"]
-    if "hh_weight" in households_ctramp.columns:
-        hh_cols.append("hh_weight")
+    # Income only: a joint record's weight and rate come from its own columns, never
+    # from hh_weight, which the cascade has since split and redistributed.
     joint_tours_formatted = joint_tours_formatted.join(
-        households_ctramp.select(hh_cols),
+        households_ctramp.select(["hh_id", "income"]),
         on="hh_id",
         how="left",
     )
@@ -196,11 +199,10 @@ def format_joint_tour(
     )
 
     _validate_joint_tours_have_trips(joint_tours_formatted, linked_trips_canonical)
+    _validate_joint_tours_are_wholly_joint(linked_trips_canonical)
 
-    joint_tours_formatted = joint_tours_formatted.with_columns(
-        (pl.col("joint_tour_id").rank("dense").over("hh_id") - 1)
-        .cast(pl.Int64)
-        .alias("_ctramp_joint_tour_id")
+    joint_tours_formatted = joint_tours_formatted.join(
+        ctramp_joint_tour_numbers(tours_canonical), on="joint_tour_id", how="left"
     )
 
     weight_cols: list[pl.Expr] = []
@@ -210,13 +212,9 @@ def format_joint_tour(
             on="joint_tour_id",
             how="left",
         )
-        weight_cols = [
-            pl.col("joint_tour_weight"),
-            pl.when(pl.col("joint_tour_weight") > 0)
-            .then(pl.col("joint_tour_weight").pow(-1))
-            .otherwise(None)
-            .alias("sampleRate"),
-        ]
+        weight_cols = joint_weight_columns(
+            joint_tours_formatted.columns, "joint_tour_weight", pl.col("_n_members")
+        )
 
     return joint_tours_formatted.select(
         [
@@ -239,6 +237,124 @@ def format_joint_tour(
             *weight_cols,
         ]
     )
+
+
+def _representative_tour(
+    joint_tours: pl.DataFrame, linked_trips_canonical: pl.DataFrame, config: CTRAMPConfig
+) -> pl.DataFrame:
+    """Reduce each joint tour's member tours to the representative member's.
+
+    Falls back to the lowest person number when the member trips needed to choose
+    a representative are absent, so a caller passing tours alone still gets one
+    member's tour rather than whichever row happened to sort first.
+    """
+    columns = [
+        "tour_category",
+        "tour_purpose",
+        f"o_{config.taz_field}",
+        f"d_{config.taz_field}",
+        "origin_depart_time",
+        "origin_arrive_time",
+        "tour_mode",
+        "subtour_num",
+    ]
+
+    joint_members = (
+        linked_trips_canonical.filter(
+            pl.col("joint_trip_id").is_not_null() & pl.col("joint_tour_id").is_not_null()
+        )
+        if not linked_trips_canonical.is_empty()
+        and {"joint_trip_id", "joint_tour_id"}.issubset(linked_trips_canonical.columns)
+        else linked_trips_canonical.clear()
+    )
+
+    chosen = representative_person_per_tour(joint_members)
+    if chosen.is_empty():
+        return (
+            joint_tours.sort(["joint_tour_id", "person_id"])
+            .unique(subset="joint_tour_id", keep="first", maintain_order=True)
+            .select(["joint_tour_id", *columns])
+        )
+
+    representative = joint_tours.join(chosen, on=["joint_tour_id", "person_id"], how="semi")
+    # Any joint tour whose representative is missing here keeps a member anyway.
+    remainder = joint_tours.join(representative, on="joint_tour_id", how="anti")
+    return (
+        pl.concat([representative, remainder])
+        .sort(["joint_tour_id", "person_id"])
+        .unique(subset="joint_tour_id", keep="first", maintain_order=True)
+        .select(["joint_tour_id", *columns])
+    )
+
+
+def ctramp_joint_tour_numbers(tours_canonical: pl.DataFrame) -> pl.DataFrame:
+    """Number each household's joint tours from zero, as CT-RAMP identifies them.
+
+    Both joint files carry this number, so it is derived once from the tours --
+    the only table holding every admitted joint tour. Ranking it separately over
+    each file's own rows agrees only while the two files cover the same joint
+    tours; let one lose a tour and the rest silently shift down onto their
+    neighbours' numbers, which no referential check can see because the number
+    landed on does exist.
+
+    Args:
+        tours_canonical: Canonical tours, already passed through
+            [`identify_misclassified_joint_tours`]
+            [processing.formatting.ctramp.format_joint_tours.identify_misclassified_joint_tours].
+
+    Returns:
+        One row per joint tour: ``joint_tour_id`` and its 0-based
+        ``_ctramp_joint_tour_id`` within the household.
+    """
+    return (
+        tours_canonical.filter(pl.col("joint_tour_id").is_not_null())
+        .select("hh_id", "joint_tour_id")
+        .unique()
+        .with_columns(
+            (pl.col("joint_tour_id").rank("dense").over("hh_id") - 1)
+            .cast(pl.Int64)
+            .alias("_ctramp_joint_tour_id")
+        )
+        .select("joint_tour_id", "_ctramp_joint_tour_id")
+    )
+
+
+def joint_weight_columns(
+    available: Collection[str], weight_col: str, member_count: pl.Expr
+) -> list[pl.Expr]:
+    """Carry a joint weight through, expressed as a per-member sample rate.
+
+    A joint weight is the SUM over its members, so its inverse is *not* a sample
+    rate: CT-RAMP re-applies the party multiplier itself
+    (``num_participants/sampleRate``), and inverting the sum would count the party
+    twice. The per-member rate is the inverse of the member *mean*, i.e.
+    ``n_members / weight``.
+
+    The count comes from the member table the caller already grouped, not from the
+    joint record. It matches what the weighting summed over because the CT-RAMP
+    filters drop an unusable member's tour and its trips upstream, then demote any
+    group left with fewer than two participants -- not because of the joint
+    record's own flag, and not because of the zero-weight filter, which only ever
+    removes whole households.
+
+    Args:
+        available: Columns present on the frame the expressions will run against.
+        weight_col: The joint weight column to carry through.
+        member_count: Expression giving the number of members behind the weight.
+
+    Returns:
+        The weight and ``sampleRate`` expressions, or empty when there is no
+        weight to carry.
+    """
+    if weight_col not in available:
+        return []
+    return [
+        pl.col(weight_col),
+        pl.when(pl.col(weight_col) > 0)
+        .then(member_count / pl.col(weight_col))
+        .otherwise(None)
+        .alias("sampleRate"),
+    ]
 
 
 def identify_misclassified_joint_tours(tours_canonical: pl.DataFrame) -> pl.DataFrame:
@@ -287,6 +403,49 @@ def identify_misclassified_joint_tours(tours_canonical: pl.DataFrame) -> pl.Data
         .otherwise(pl.col("joint_tour_id"))
         .alias("joint_tour_id")
     )
+
+
+def _validate_joint_tours_are_wholly_joint(linked_trips: pl.DataFrame) -> None:
+    """Raise when a joint tour has a leg that is not itself a joint trip.
+
+    CT-RAMP has no way to express a half-shared tour: a tour is joint or it is
+    not. The survey does -- a parent who drops a child and drives on to work
+    made one tour, part of it together -- so this is a constraint of the output
+    rather than of the data, and is enforced here rather than upstream.
+
+    Today the canonical rule is stricter than CT-RAMP needs and this cannot
+    fire. It exists so that widening ``joint_tour_id`` to cover partly-shared
+    tours fails loudly here, rather than silently dropping the unshared leg:
+    the individual trip file excludes joint tours and the joint trip file needs
+    a ``joint_trip_id``, so such a leg would reach neither.
+
+    Raises:
+        ValueError: If a trip on a joint tour carries no ``joint_trip_id``.
+    """
+    required = {"joint_tour_id", "joint_trip_id"}
+    if linked_trips.is_empty() or not required.issubset(linked_trips.columns):
+        return
+    # A frame carrying no joint trip at all is not asserting that these tours are
+    # partly shared -- it simply never recorded trip-level sharing. Judging it
+    # would fail every caller that supplies tours without the trips behind them.
+    if linked_trips["joint_trip_id"].null_count() == len(linked_trips):
+        return
+
+    stray = linked_trips.filter(
+        pl.col("joint_tour_id").is_not_null() & pl.col("joint_trip_id").is_null()
+    )
+    if stray.is_empty():
+        return
+
+    tour_ids = stray["joint_tour_id"].unique().to_list()
+    preview = tour_ids[:10]
+    msg = (
+        f"{len(stray)} trip(s) across {len(tour_ids)} joint tour(s) are not joint trips. "
+        f"CT-RAMP cannot represent a partly-shared tour, so such a tour must be split or "
+        f"reclassified before formatting. Joint tour IDs: {preview}"
+        f"{'...' if len(tour_ids) > len(preview) else ''}"
+    )
+    raise ValueError(msg)
 
 
 def _validate_joint_tours_have_trips(joint_tours: pl.DataFrame, linked_trips: pl.DataFrame) -> None:

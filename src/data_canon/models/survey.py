@@ -17,7 +17,7 @@ Two flags answer two different questions and must not be conflated:
   are valid survey data, useful for survey analysis.
 * ``model_usable`` -- *do the travel models take this record?* Reporting
   completeness AND an admissible tour structure. Stamped once by the
-  ``cascade_completeness`` step and read by the CT-RAMP/DaySim drop and the
+  ``cascade_completeness`` step and read by the travel-model drop and the
   weighting.
 
 Gate on ``model_usable``; ``complete`` is the descriptor it derives from. See
@@ -77,7 +77,7 @@ class HouseholdModel(BaseModel):
         description=(
             "Admissible to the tour-based model: survey-complete AND part of a "
             "well-formed tour structure. Stamped by the cascade_completeness step; "
-            "gates the CT-RAMP/DaySim drop and the weighting. Not a data-quality "
+            "gates the travel-model drop and the weighting. Not a data-quality "
             "verdict - see `complete`."
         ),
     )
@@ -152,7 +152,7 @@ class PersonModel(BaseModel):
         description=(
             "Admissible to the tour-based model: survey-complete AND part of a "
             "well-formed tour structure. Stamped by the cascade_completeness step; "
-            "gates the CT-RAMP/DaySim drop and the weighting. Not a data-quality "
+            "gates the travel-model drop and the weighting. Not a data-quality "
             "verdict - see `complete`."
         ),
     )
@@ -199,7 +199,7 @@ class PersonDayModel(BaseModel):
         description=(
             "Admissible to the tour-based model: survey-complete AND a coherent "
             "household-day AND part of a well-formed tour structure. Stamped by "
-            "the cascade_completeness step; gates the CT-RAMP/DaySim drop and the "
+            "the cascade_completeness step; gates the travel-model drop and the "
             "weighting. Not a data-quality verdict - see `complete`."
         ),
     )
@@ -240,7 +240,7 @@ class UnlinkedTripModel(BaseModel):
         description=(
             "Admissible to the tour-based model: survey-complete AND part of a "
             "well-formed tour structure. Stamped by the cascade_completeness step; "
-            "gates the CT-RAMP/DaySim drop and the weighting. Not a data-quality "
+            "gates the travel-model drop and the weighting. Not a data-quality "
             "verdict - see `complete`."
         ),
     )
@@ -325,7 +325,7 @@ class LinkedTripModel(BaseModel):
         description=(
             "Admissible to the tour-based model: survey-complete AND part of a "
             "well-formed tour structure. Stamped by the cascade_completeness step; "
-            "gates the CT-RAMP/DaySim drop and the weighting. Not a data-quality "
+            "gates the travel-model drop and the weighting. Not a data-quality "
             "verdict - see `complete`."
         ),
     )
@@ -391,7 +391,7 @@ class TourModel(BaseModel):
         description=(
             "Admissible to the tour-based model: survey-complete AND part of a "
             "well-formed tour structure. Stamped by the cascade_completeness step; "
-            "gates the CT-RAMP/DaySim drop and the weighting. Not a data-quality "
+            "gates the travel-model drop and the weighting. Not a data-quality "
             "verdict - see `complete`."
         ),
     )
@@ -426,46 +426,54 @@ class TourModel(BaseModel):
 class JointTripModel(BaseModel):
     """Joint trip group containing multiple linked trips from same household.
 
-    Represents a detected shared trip where multiple household members traveled
-    together. Each joint trip has a unique ID and aggregated spatiotemporal
-    attributes from its member trips.
+    Represents a detected shared trip where several household members travelled
+    together. This is a *linking* table: it records which member trips form the
+    group, and nothing about where or when they went. Those facts stay on the
+    member trips, which hold them first-hand.
+
+    Collapsing the members into one place or time means choosing a rule -- an
+    average names a point none of them reported, a representative privileges one
+    of them -- and which rule is right depends on what the answer is for. That
+    choice belongs to whoever is asking, so it is made downstream rather than
+    frozen here. Mirrors ``JointTourModel``.
+
+    This table is an *overlay* on ``linked_trips``, not a partition of it: every
+    member trip is still a row there in its own right. See ``joint_trip_weight``.
     """
 
     joint_trip_id: int = schema_field(ge=1, unique=True)
     hh_id: int = schema_field(ge=1, fk_to="households.hh_id")
     day_id: int = schema_field(ge=1, fk_to="days.day_id")
     num_joint_travelers: int = schema_field(
-        ge=2, description="Number of travelers in this joint trip"
+        ge=2,
+        description=(
+            "Detected group size: how many member trips the clique detection put "
+            "in this joint trip. Surveyed household members only - the reported "
+            "travel party, which may include people outside the survey, is "
+            "`num_travelers` on the member trips. Not a weighting quantity: it "
+            "does not track which members the weighting later excluded."
+        ),
     )
-    o_lat_mean: float = schema_field(
-        ge=-90, le=90, description="Mean origin latitude across member trips"
-    )
-    o_lon_mean: float = schema_field(
-        ge=-180, le=180, description="Mean origin longitude across member trips"
-    )
-    d_lat_mean: float = schema_field(
-        ge=-90,
-        le=90,
-        description="Mean destination latitude across member trips",
-    )
-    d_lon_mean: float = schema_field(
-        ge=-180,
-        le=180,
-        description="Mean destination longitude across member trips",
-    )
-    depart_time_mean: datetime = schema_field(description="Mean departure time across member trips")
-    depart_arrive_mean: datetime = schema_field(description="Mean arrival time across member trips")
     complete: bool | None = schema_field(default=None)
     model_usable: bool | None = schema_field(
         default=None,
         description=(
             "Admissible to the tour-based model: survey-complete AND part of a "
             "well-formed tour structure. Stamped by the cascade_completeness step; "
-            "gates the CT-RAMP/DaySim drop and the weighting. Not a data-quality "
+            "gates the travel-model drop and the weighting. Not a data-quality "
             "verdict - see `complete`."
         ),
     )
-    joint_trip_weight: float | None = schema_field(default=None, ge=0)
+    joint_trip_weight: float | None = schema_field(
+        default=None,
+        ge=0,
+        description=(
+            "Person-trips represented: the SUM of the member `linked_trip_weight`, "
+            "so the record stands for its whole party. Same unit as `linked_trips`, "
+            "which this table OVERLAYS rather than partitions, so "
+            "`sum(linked) + sum(joint)` double counts."
+        ),
+    )
 
 
 class JointTourModel(BaseModel):
@@ -476,16 +484,21 @@ class JointTourModel(BaseModel):
     group can be counted and weighted once, rather than inferred by grouping
     tours on ``joint_tour_id`` at every point of use.
 
-    Its weight is the mean of its member tours, so it sits on the same footing as
-    a tour (the mean of its linked trips). Membership requires at least two
-    participants -- a group of one is not joint.
+    Its weight is the SUM of its member tours -- person-tours, matching
+    ``joint_trips``. Membership requires at least two participants -- a group of
+    one is not joint.
     """
 
     joint_tour_id: int = schema_field(ge=1, unique=True)
     hh_id: int = schema_field(ge=1, fk_to="households.hh_id")
     day_id: int = schema_field(ge=1, fk_to="days.day_id")
     num_participants: int = schema_field(
-        ge=2, description="Number of household members on this joint tour"
+        ge=2,
+        description=(
+            "Group size: household members on this joint tour, whether or not "
+            "each carries weight. Not a weighting quantity - it does not track "
+            "which members the weighting excluded."
+        ),
     )
     complete: bool | None = schema_field(default=None)
     model_usable: bool | None = schema_field(
@@ -493,11 +506,19 @@ class JointTourModel(BaseModel):
         description=(
             "Admissible to the tour-based model: at least two member tours are "
             "themselves model-usable, so the group is still joint. Stamped by the "
-            "cascade_completeness step; gates the CT-RAMP/DaySim drop and the "
+            "cascade_completeness step; gates the travel-model drop and the "
             "weighting. Not a data-quality verdict - see `complete`."
         ),
     )
-    joint_tour_weight: float | None = schema_field(default=None, ge=0)
+    joint_tour_weight: float | None = schema_field(
+        default=None,
+        ge=0,
+        description=(
+            "Person-tours represented: the SUM of the member `tour_weight`. Same "
+            "unit as `tours`, which this table OVERLAYS rather than partitions, "
+            "so `sum(tours) + sum(joint_tours)` double counts."
+        ),
+    )
 
 
 class HabitualLocationModel(BaseModel):

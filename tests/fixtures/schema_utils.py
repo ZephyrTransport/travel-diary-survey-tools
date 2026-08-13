@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from data_canon.models.survey import (
     JointTourModel,
+    JointTripModel,
     LinkedTripModel,
     PersonDayModel,
     TourModel,
@@ -186,24 +187,7 @@ def days_for_persons(persons: pl.DataFrame, day_num: int = 1) -> pl.DataFrame:
 def empty_joint_trips() -> pl.DataFrame:
     """Create empty joint_trips DataFrame with complete schema.
 
-    Returns properly typed empty DataFrame that passes @step validation checks.
-    Note: JointTripModel is generated dynamically, so we define the schema manually.
-
     Returns:
-        Empty DataFrame with joint trips schema
+        Empty DataFrame with JointTripModel schema
     """
-    return pl.DataFrame(
-        schema={
-            "joint_trip_id": pl.Int64,
-            "hh_id": pl.Int64,
-            "day_id": pl.Int64,
-            "joint_trip_num": pl.Int64,
-            "num_participants": pl.Int64,
-            "o_purpose": pl.Int64,
-            "o_purpose_category": pl.Int64,
-            "d_purpose": pl.Int64,
-            "d_purpose_category": pl.Int64,
-            "mode_type": pl.Int64,
-            "travel_dow": pl.Int64,
-        }
-    )
+    return pl.DataFrame(schema=model_to_polars_schema(JointTripModel))
