@@ -54,14 +54,14 @@ import polars as pl
 from data_canon.core.dataclass import CanonicalData
 from pipeline.cache import PipelineCache
 from pipeline.decoration import step
-from processing.weighting.specs import (
+from processing.weighting.core.pipeline import WeightingPipeline
+from processing.weighting.core.specs import (
     BalancingConfig,
     ControlRegistryConfig,
     ImportanceConfig,
     WeightingConfig,
 )
 from processing.weighting.validation.weight_checks import weight_sanity_checks
-from processing.weighting.weighting_pipeline import WeightingPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,7 @@ def compute_weights(  # noqa: PLR0913
 
     Flat-parameter entry point required by the ``@step()`` decorator
     (YAML → keyword args).  Constructs a
-    [`WeightingPipeline`][processing.weighting.weighting_pipeline.WeightingPipeline];
+    [`WeightingPipeline`][processing.weighting.core.pipeline.WeightingPipeline];
     Full documentation of the algorithm, configuration, and diagnostics in included
     in that class.
     """

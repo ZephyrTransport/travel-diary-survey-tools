@@ -1,4 +1,4 @@
-"""Balancing sub-package (balancer, base weights, weight propagation).
+"""Balancing sub-package (balancer, base weights, importance).
 
 Orchestrates the core balancing loop:
 
@@ -10,6 +10,8 @@ Orchestrates the core balancing loop:
 3. **Balancer** ([`balancer`][processing.weighting.balancing.balancer]) --
    maximum-entropy list balancing via PopulationSim's ``np_balancer_numba``.
    Runs independently per geography zone.
-4. **Weight propagation** ([`weight_propagation`][processing.weighting.balancing.weight_propagation]) --
-   carry final household weights down through the canonical table hierarchy.
-"""  # noqa: E501
+
+Household weights leave here for [`processing.weighting.core.propagation`]
+[processing.weighting.core.propagation], which carries them down the canonical
+hierarchy.
+"""

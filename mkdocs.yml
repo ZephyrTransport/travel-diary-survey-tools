@@ -71,6 +71,7 @@ nav:
               - Overview: pipeline_steps/weighting/compute_weights.md
               - Crosswalk: pipeline_steps/weighting/crosswalk.md
               - Data Preparation: pipeline_steps/weighting/data_preparation.md
+              - Weight Hierarchy: pipeline_steps/weighting/hierarchy.md
               - Balancing: pipeline_steps/weighting/balancing.md
               - Controls: pipeline_steps/weighting/controls.md
               - Diagnostics: pipeline_steps/weighting/diagnostics.md

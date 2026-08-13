@@ -19,8 +19,9 @@ The ``compute_weights`` step orchestrates the full pipeline — see
           └─ day_weight        (carry forward via person_id)
               └─ unlinked_trip_weight  (carry forward via day_id)
                   ├─ linked_trip_weight   (mean agg via linked_trip_id)
-                  ├─ joint_trip_weight    (mean agg via joint_trip_id)
+                  │   └─ joint_trip_weight (SUM agg via joint_trip_id)
                   └─ tour_weight          (mean agg via tour_id)
+                      └─ joint_tour_weight (SUM agg via joint_tour_id)
 
 # Module structure
 

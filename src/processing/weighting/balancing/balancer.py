@@ -41,8 +41,7 @@ import polars as pl
 
 from processing.weighting.balancing._np_balancer import np_balancer_numba
 from processing.weighting.controls.registry import CONTROLS
-from processing.weighting.diagnostics.data import compute_weighted_totals, fit_table
-from processing.weighting.specs import (
+from processing.weighting.core.specs import (
     BalancingConfig,
     ControlTotals,
     GridPoint,
@@ -51,6 +50,7 @@ from processing.weighting.specs import (
     ZoneResult,
     ZoneStatus,
 )
+from processing.weighting.diagnostics.data import compute_weighted_totals, fit_table
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +84,7 @@ def balance_weights(
     Returns:
         Tuple of ``(weights, statuses)`` where *weights* is a DataFrame
         with columns ``hh_id``, ``hh_weight``, ``geo_id``, and
-        *statuses* is one [`ZoneStatus`][processing.weighting.specs.ZoneStatus]
+        *statuses* is one [`ZoneStatus`][processing.weighting.core.specs.ZoneStatus]
         entry per zone with convergence info.
     """
     bal = balancing or BalancingConfig()
@@ -151,7 +151,7 @@ def grid_search_expansion_factor(
 ) -> list[GridPoint]:
     """Re-run the balancer across a grid of ``max_expansion_factor`` values.
 
-    Returns one [`GridPoint`][processing.weighting.specs.GridPoint]
+    Returns one [`GridPoint`][processing.weighting.core.specs.GridPoint]
     per EF value with aggregate fit and weight-quality metrics.
     The *selected_ef* is automatically included in the grid if not already present.
 

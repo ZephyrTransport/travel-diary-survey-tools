@@ -26,7 +26,7 @@ import polars as pl
 
 from processing.weighting.controls.base import ControlLevel
 from processing.weighting.controls.registry import resolve_targets
-from processing.weighting.specs import ControlTotals, ImputationSummary, ZoneStatus
+from processing.weighting.core.specs import ControlTotals, ImputationSummary, ZoneStatus
 
 from .data import category_label_map
 

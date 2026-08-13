@@ -1,35 +1,16 @@
-"""The canonical weight hierarchy, declared once, and the code that walks it.
+"""Walk the weight hierarchy, moving weights between canonical tables.
 
 Used by both the ``weighting`` (computed) and ``existing_weights`` (supplied)
-steps to move weights through the canonical tables.
-
-# The hierarchy
-
-Weights disaggregate *down* from households and aggregate back *up* into
-groupings.  Both directions are edges of one tree, so [`HIERARCHY`]
-[processing.weighting.balancing.weight_propagation.HIERARCHY] declares each
-table exactly once -- its weight column, where the weight comes from, and the
-group within which that weight is conserved.  Everything else in this module is
-a projection of that list, so the shape of the hierarchy cannot drift between
-the propagation, the supplied-weight path and the checksum.
-
-|Table      |Weight                  |Derivation
-|-----------|------------------------|-----------------------------------------
-|households |``hh_weight``           |Anchor -- from the balancer, or supplied
-|persons    |``person_weight``       |Down from ``hh_weight`` via ``hh_id``
-|days       |``day_weight``          |Split: ``person_weight / n_usable_days``
-|unlinked   |``unlinked_trip_weight``|Down from ``day_weight`` via ``day_id``
-|linked     |``linked_trip_weight``  |Up: mean of member ``unlinked_trip_weight``
-|joint trips|``joint_trip_weight``   |Up: mean of member ``linked_trip_weight``
-|tours      |``tour_weight``         |Up: mean of member ``linked_trip_weight``
+steps. The shape being walked is declared in [`processing.weighting.core.hierarchy`]
+[processing.weighting.core.hierarchy]; this module only moves weights along it.
 
 # The distribution rule
 
 A record is admitted by a *usability flag* -- ``model_usable``, stamped once by
 the ``cascade_completeness`` step (see [`processing.completeness`]
-[processing.completeness]), so the weighted sample matches the tours
-CT-RAMP/DaySim actually keep.  Pass ``complete`` instead to weight the whole
-valid survey, including partial and overnight tours.
+[processing.completeness]), so the weighted sample matches the tours the travel
+models actually keep.  Pass ``complete`` instead to weight the whole valid
+survey, including partial and overnight tours.
 
 Unusable records carry no weight, but their population does not vanish: it is
 carried by the usable records in the same *scope*.  Give each record a **claim**
@@ -70,188 +51,18 @@ is genuinely stranded.  That is reported as a shortfall, never silently rescaled
 """
 
 import logging
-from dataclasses import dataclass
-from enum import Enum, auto
 
 import polars as pl
 
-logger = logging.getLogger(__name__)
-
-
-class Flow(Enum):
-    """Direction a weight moves along a hierarchy edge."""
-
-    DOWN = auto()
-    """Disaggregate: the parent's weight is shared out among its children."""
-
-    UP = auto()
-    """Aggregate: a grouping takes the mean weight of its usable members."""
-
-
-@dataclass(frozen=True)
-class Level:
-    """One table in the weight hierarchy.
-
-    Attributes:
-        table: Canonical table name.
-        id_col: Primary key of the table.
-        weight_col: Weight column this level owns.
-        config_key: Key used to supply this weight from a file.
-        parent: Table the weight is derived from; None marks the anchor.
-        key: The *other* table's id, carried on this side of the edge. For
-            ``DOWN`` it identifies the parent record; for ``UP`` it identifies
-            the grouping the member belongs to.
-        flow: Which way the weight moves along the edge.
-        scope: Group within which this weight is conserved -- the parent key.
-        split: If True, the parent's weight is divided equally among its usable
-            children (``parent_weight / n_usable``) instead of copied to each.
-            Days use this: a person's usable days jointly represent that person
-            once -- the average-day convention (see the module docstring).
-    """
-
-    table: str
-    id_col: str
-    weight_col: str
-    config_key: str
-    parent: str | None = None
-    key: str | None = None
-    flow: Flow | None = None
-    scope: str | None = None
-    split: bool = False
-
-    def __post_init__(self) -> None:
-        """Reject a half-declared edge at import time rather than mid-pipeline."""
-        edge = (self.parent, self.key, self.flow, self.scope)
-        if self.parent is None:
-            if any(part is not None for part in edge[1:]):
-                msg = f"{self.table}: anchor level must not declare key/flow/scope"
-                raise ValueError(msg)
-        elif any(part is None for part in edge):
-            msg = f"{self.table}: derived level needs parent, key, flow and scope"
-            raise ValueError(msg)
-
-
-HIERARCHY: tuple[Level, ...] = (
-    Level("households", "hh_id", "hh_weight", "household_weights"),
-    Level(
-        "persons",
-        "person_id",
-        "person_weight",
-        "person_weights",
-        parent="households",
-        key="hh_id",
-        flow=Flow.DOWN,
-        scope="hh_id",
-    ),
-    Level(
-        "days",
-        "day_id",
-        "day_weight",
-        "day_weights",
-        parent="persons",
-        key="person_id",
-        flow=Flow.DOWN,
-        # Conserved within the person: a person's usable days sum to their
-        # person weight (the vendor's average-day convention, split=True).
-        scope="person_id",
-        split=True,
-    ),
-    Level(
-        "unlinked_trips",
-        "unlinked_trip_id",
-        "unlinked_trip_weight",
-        "unlinked_trip_weights",
-        parent="days",
-        key="day_id",
-        flow=Flow.DOWN,
-        scope="day_id",
-    ),
-    Level(
-        "linked_trips",
-        "linked_trip_id",
-        "linked_trip_weight",
-        "linked_trip_weights",
-        parent="unlinked_trips",
-        key="linked_trip_id",
-        flow=Flow.UP,
-        scope="day_id",
-    ),
-    Level(
-        "joint_trips",
-        "joint_trip_id",
-        "joint_trip_weight",
-        "joint_trip_weights",
-        parent="linked_trips",
-        key="joint_trip_id",
-        flow=Flow.UP,
-        scope="day_id",
-    ),
-    Level(
-        "tours",
-        "tour_id",
-        "tour_weight",
-        "tour_weights",
-        parent="linked_trips",
-        key="tour_id",
-        flow=Flow.UP,
-        scope="day_id",
-    ),
-    Level(
-        "joint_tours",
-        "joint_tour_id",
-        "joint_tour_weight",
-        "joint_tour_weights",
-        # Mean of the member tours, keeping every UP edge a mean over the level
-        # directly below it -- as a tour is the mean of its linked trips.
-        parent="tours",
-        key="joint_tour_id",
-        flow=Flow.UP,
-        scope="day_id",
-    ),
+from processing.weighting.core.hierarchy import (
+    HIERARCHY,
+    LEVELS,
+    TABLE_NAMES,
+    Flow,
+    Level,
 )
 
-
-def _validate_hierarchy() -> None:
-    """Fail at import if the declared hierarchy is not a well-formed tree."""
-    by_table = {level.table: level for level in HIERARCHY}
-    if len(by_table) != len(HIERARCHY):
-        msg = "HIERARCHY declares the same table twice"
-        raise ValueError(msg)
-
-    anchors = [level.table for level in HIERARCHY if level.parent is None]
-    if len(anchors) != 1:
-        msg = f"HIERARCHY needs exactly one anchor, found {anchors}"
-        raise ValueError(msg)
-
-    seen: set[str] = set()
-    for level in HIERARCHY:
-        if level.parent is not None:
-            if level.parent not in by_table:
-                msg = f"{level.table}: unknown parent {level.parent!r}"
-                raise ValueError(msg)
-            if level.parent not in seen:
-                msg = f"{level.table}: parent {level.parent!r} is declared after it"
-                raise ValueError(msg)
-        seen.add(level.table)
-
-
-_validate_hierarchy()
-
-# ---------------------------------------------------------------------------
-# Projections of HIERARCHY. These are views, never independent facts.
-# ---------------------------------------------------------------------------
-
-LEVELS: dict[str, Level] = {level.table: level for level in HIERARCHY}
-TABLE_NAMES: list[str] = [level.table for level in HIERARCHY]
-WEIGHT_COLUMNS: dict[str, str] = {level.table: level.weight_col for level in HIERARCHY}
-WEIGHT_CONFIG_MAPPING: dict[str, tuple[str, str, str]] = {
-    level.config_key: (level.table, level.id_col, level.weight_col) for level in HIERARCHY
-}
-
-
-def levels_with_flow(flow: Flow) -> list[Level]:
-    """Return the levels whose weight moves in *flow*, in hierarchy order."""
-    return [level for level in HIERARCHY if level.flow is flow]
+logger = logging.getLogger(__name__)
 
 
 def collect_tables(**tables: pl.DataFrame | None) -> dict[str, pl.DataFrame | None]:
@@ -496,7 +307,7 @@ def _aggregate_up(
     level: Level,
     usability_flag_col: str | None,
 ) -> None:
-    """Derive *level*'s weight as the mean over its usable members, in place."""
+    """Combine *level*'s usable members into its weight, in place."""
     target_df = tables[level.table]
     source_df = tables.get(level.parent)  # type: ignore[arg-type]
     if target_df is None:
@@ -521,17 +332,18 @@ def _aggregate_up(
     src_weight = has_weight[level.parent]  # type: ignore[index]
     logger.info("Deriving %s from mean of %s", level.weight_col, src_weight)
 
-    agg = source_df.group_by(level.key).agg(
-        pl.col(src_weight)
-        .filter(pl.col(src_weight).is_not_null() & (pl.col(src_weight) != 0))
-        .mean()
-        .fill_null(0)
-        .alias(level.weight_col),
+    # Members that carried weight in. A zero-weight member was already re-homed
+    # onto its own scope's usable records, so it is neither averaged nor counted.
+    carried = pl.col(src_weight).filter(
+        pl.col(src_weight).is_not_null() & (pl.col(src_weight) != 0)
     )
+    combine = carried.mean()
+
+    agg = source_df.group_by(level.key).agg(combine.fill_null(0).alias(level.weight_col))
     target_df = safe_join_weight(target_df, agg, level.key)  # type: ignore[arg-type]
 
     # A grouping is never more usable than its members: an unusable record
-    # carries no weight even where the mean came out positive.
+    # carries no weight even where the combination came out positive.
     if usability_flag_col and usability_flag_col in target_df.columns:
         target_df = target_df.with_columns(
             pl.when(is_usable(usability_flag_col))

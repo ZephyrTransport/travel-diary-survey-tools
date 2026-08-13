@@ -5,8 +5,8 @@ import polars as pl
 import pytest
 
 from processing.weighting.balancing.merges import apply_category_merges
+from processing.weighting.core.specs import ControlRegistryConfig, MergeSpec
 from processing.weighting.diagnostics.data import apply_fit_merges
-from processing.weighting.specs import ControlRegistryConfig, MergeSpec
 
 
 # ---------------------------------------------------------------------------

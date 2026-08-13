@@ -1,7 +1,7 @@
 """Top-level weighting pipeline step.
 
 Orchestrates the full weighting pipeline via
-[`WeightingPipeline`][processing.weighting.weighting_pipeline.WeightingPipeline]:
+[`WeightingPipeline`][processing.weighting.core.pipeline.WeightingPipeline]:
 
 1.  **Setup** — parse YAML config → specs, target names, merges, importance.
     Cross-tab controls are registered with pre-merged dimensions so the
@@ -60,11 +60,21 @@ from processing.weighting.balancing.balancer import (
 )
 from processing.weighting.balancing.base_weights import compute_base_weights
 from processing.weighting.balancing.importance import compute_control_moe, compute_moe_importance
-from processing.weighting.balancing.weight_propagation import (
+from processing.weighting.controls.registry import register_crosstabs_from_config, resolve_targets
+from processing.weighting.core.propagation import (
     propagate_weights,
     safe_join_weight,
 )
-from processing.weighting.controls.registry import register_crosstabs_from_config, resolve_targets
+from processing.weighting.core.specs import (
+    BalancingConfig,
+    ControlRegistryConfig,
+    ControlTotals,
+    GridPoint,
+    ImportanceConfig,
+    ImputationSummary,
+    WeightingConfig,
+    ZoneStatus,
+)
 from processing.weighting.data_prep.control_data import (
     recode_pums_households,
     recode_pums_persons,
@@ -90,16 +100,6 @@ from processing.weighting.data_prep.seed_data import (
     recode_survey_persons,
 )
 from processing.weighting.diagnostics import generate_report
-from processing.weighting.specs import (
-    BalancingConfig,
-    ControlRegistryConfig,
-    ControlTotals,
-    GridPoint,
-    ImportanceConfig,
-    ImputationSummary,
-    WeightingConfig,
-    ZoneStatus,
-)
 from processing.weighting.validation.checksums import check_incidence_sums
 from processing.weighting.validation.control_validation import (
     validate_total_control_categories,

@@ -1,12 +1,14 @@
-"""Tests for weight_propagation shared helpers."""
+"""Tests for the weight hierarchy and the propagation that walks it."""
 
 import polars as pl
 import pytest
 
-from processing.weighting.balancing.weight_propagation import (
+from processing.weighting.core.hierarchy import (
     HIERARCHY,
     WEIGHT_COLUMNS,
     WEIGHT_CONFIG_MAPPING,
+)
+from processing.weighting.core.propagation import (
     collect_tables,
     non_null_tables,
     propagate_weights,
@@ -24,9 +26,9 @@ class TestConstants:
     def test_weight_config_mapping_keys(self):
         """Every hierarchy level exposes a config key for supplying its weight."""
         assert len(WEIGHT_CONFIG_MAPPING) == len(HIERARCHY)
-        assert "household_weights" in WEIGHT_CONFIG_MAPPING
-        assert "tour_weights" in WEIGHT_CONFIG_MAPPING
-        assert "joint_tour_weights" in WEIGHT_CONFIG_MAPPING
+        assert "hh_weight" in WEIGHT_CONFIG_MAPPING
+        assert "tour_weight" in WEIGHT_CONFIG_MAPPING
+        assert "joint_tour_weight" in WEIGHT_CONFIG_MAPPING
 
     def test_weight_columns_derived_from_mapping(self):
         """WEIGHT_COLUMNS should have one entry per table in the mapping."""
@@ -69,7 +71,7 @@ class TestCollectTables:
 
 
 class TestSafeJoinWeight:
-    """Tests for safe_join_weight, which joins a weight column to a table while."""
+    """Tests for safe_join_weight, which joins a weight column on, replacing any existing."""
 
     def test_basic_join(self):
         """Basic left join of weight column from w to df."""

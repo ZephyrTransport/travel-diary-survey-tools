@@ -8,10 +8,14 @@ import logging
 
 import polars as pl
 
-from processing.weighting.balancing.weight_propagation import LEVELS, Flow, levels_with_flow
 from processing.weighting.controls.base import ControlLevel
 from processing.weighting.controls.registry import CONTROLS
-from processing.weighting.specs import ControlSpec, ControlTotals
+from processing.weighting.core.hierarchy import (
+    LEVELS,
+    Flow,
+    levels_with_flow,
+)
+from processing.weighting.core.specs import ControlSpec, ControlTotals
 
 logger = logging.getLogger(__name__)
 
@@ -177,7 +181,7 @@ def _check_hierarchy(
 
     Each DOWN edge is checked against the identity its rule actually maintains,
     read from the same [`HIERARCHY`]
-    [processing.weighting.balancing.weight_propagation.HIERARCHY] the
+    [processing.weighting.core.hierarchy.HIERARCHY] the
     propagation walks -- so the check cannot drift from the rule:
 
     * copy-and-conserve levels: ``sum(child_weight) == sum(parent_weight *

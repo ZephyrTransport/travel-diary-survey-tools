@@ -28,7 +28,7 @@ from processing.weighting.controls.base import (
     ControlTarget,
     CrosstabControlTarget,
 )
-from processing.weighting.specs import ControlSpec
+from processing.weighting.core.specs import ControlSpec
 
 logger = logging.getLogger(__name__)
 

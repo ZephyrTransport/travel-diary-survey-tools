@@ -30,8 +30,8 @@ from tqdm import tqdm
 
 from processing.weighting.controls.base import ControlLevel
 from processing.weighting.controls.registry import pums_variables
+from processing.weighting.core.specs import PUMSSource
 from processing.weighting.data_prep.census_geo import _KEY_SIGNUP_URL, _census_api_key
-from processing.weighting.specs import PUMSSource
 
 logger = logging.getLogger(__name__)
 

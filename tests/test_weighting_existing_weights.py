@@ -33,7 +33,7 @@ class TestAddExistingWeights:
 
         # Load weights
         weights_config = {
-            "household_weights": {
+            "hh_weight": {
                 "weight_path": str(weight_file),
             }
         }
@@ -72,7 +72,7 @@ class TestAddExistingWeights:
         weights_df.write_csv(weight_file)
 
         weights_config = {
-            "person_weights": {
+            "person_weight": {
                 "weight_path": str(weight_file),
                 "weight_id_col": "pid",
             }
@@ -106,7 +106,7 @@ class TestAddExistingWeights:
         weights_df.write_csv(weight_file)
 
         weights_config = {
-            "unlinked_trip_weights": {
+            "unlinked_trip_weight": {
                 "weight_path": str(weight_file),
                 "weight_col": "wt",
                 "keep_name": True,
@@ -154,7 +154,7 @@ class TestAddExistingWeights:
         hh_weights_df.write_csv(hh_weight_file)
 
         weights_config = {
-            "household_weights": {
+            "hh_weight": {
                 "weight_path": str(hh_weight_file),
             }
         }
@@ -203,7 +203,7 @@ class TestAddExistingWeights:
         weights_df.write_csv(weight_file)
 
         weights_config = {
-            "unlinked_trip_weights": {
+            "unlinked_trip_weight": {
                 "weight_path": str(weight_file),
             }
         }
@@ -247,7 +247,7 @@ class TestAddExistingWeights:
         weights_df.write_csv(weight_file)
 
         weights_config = {
-            "unlinked_trip_weights": {
+            "unlinked_trip_weight": {
                 "weight_path": str(weight_file),
             }
         }
@@ -295,7 +295,7 @@ class TestAddExistingWeights:
         )
 
         weights_config = {
-            "household_weights": {
+            "hh_weight": {
                 # Missing weight_path - Pydantic will catch this
             }
         }
@@ -315,7 +315,7 @@ class TestAddExistingWeights:
         )
 
         weights_config = {
-            "household_weights": {
+            "hh_weight": {
                 "weight_path": "/nonexistent/path/to/weights.csv",
             }
         }
@@ -344,7 +344,7 @@ class TestAddExistingWeights:
         weights_df.write_csv(weight_file)
 
         weights_config = {
-            "household_weights": {
+            "hh_weight": {
                 "weight_path": str(weight_file),
             }
         }
@@ -373,7 +373,7 @@ class TestAddExistingWeights:
         weights_df.write_csv(weight_file)
 
         weights_config = {
-            "household_weights": {
+            "hh_weight": {
                 "weight_path": str(weight_file),
             }
         }
@@ -417,10 +417,10 @@ class TestAddExistingWeights:
         ).write_csv(person_weight_file)
 
         weights_config = {
-            "household_weights": {
+            "hh_weight": {
                 "weight_path": str(hh_weight_file),
             },
-            "person_weights": {
+            "person_weight": {
                 "weight_path": str(person_weight_file),
             },
         }
@@ -448,7 +448,7 @@ class TestAddExistingWeights:
         ).write_csv(weight_file)
 
         weights_config = {
-            "household_weights": {
+            "hh_weight": {
                 "weight_path": str(weight_file),
             }
         }
@@ -479,9 +479,9 @@ class TestAddExistingWeights:
             }
         ).write_csv(weight_file)
 
-        # config_key will be inferred from the dict key "household_weights"
+        # config_key will be inferred from the dict key "hh_weight"
         weights_config = {
-            "household_weights": {
+            "hh_weight": {
                 "weight_path": str(weight_file),
             }
         }
@@ -513,7 +513,7 @@ class TestAddExistingWeights:
 
         # Only provide weight_path, let defaults fill in the rest
         weights_config = {
-            "person_weights": {
+            "person_weight": {
                 "weight_path": str(weight_file),
                 # weight_id_col should default to "person_id"
                 # weight_col should default to "person_weight"
@@ -553,7 +553,7 @@ class TestSuppliedTotalPreserved:
         pl.DataFrame({"hh_id": [1, 2, 3, 4], "hh_weight": [10.0, 20.0, 30.0, 40.0]}).write_csv(
             weight_file
         )
-        return {"household_weights": {"weight_path": str(weight_file)}}
+        return {"hh_weight": {"weight_path": str(weight_file)}}
 
     def test_supplied_household_total_is_preserved(self, tmp_path):
         """Households have no parent, so the supplied total is held by rescaling."""
@@ -593,7 +593,7 @@ class TestSuppliedTotalPreserved:
         )
 
         result = add_existing_weights(
-            weights={"day_weights": {"weight_path": str(weight_file)}},
+            weights={"day_weight": {"weight_path": str(weight_file)}},
             days=days,
             usability_flag_col="complete",
         )
@@ -610,7 +610,7 @@ class TestSuppliedTotalPreserved:
 
         with pytest.raises(ValueError, match="missing its scope column"):
             add_existing_weights(
-                weights={"day_weights": {"weight_path": str(weight_file)}},
+                weights={"day_weight": {"weight_path": str(weight_file)}},
                 days=days,
                 usability_flag_col="complete",
             )
@@ -621,7 +621,7 @@ class TestSuppliedTotalPreserved:
         weight_file = tmp_path / "hh_weights.csv"
         pl.DataFrame({"hh_id": [1, 2], "hh_weight": [10.0, 20.0]}).write_csv(weight_file)
         result = add_existing_weights(
-            weights={"household_weights": {"weight_path": str(weight_file)}},
+            weights={"hh_weight": {"weight_path": str(weight_file)}},
             households=households,
             usability_flag_col="complete",
         )

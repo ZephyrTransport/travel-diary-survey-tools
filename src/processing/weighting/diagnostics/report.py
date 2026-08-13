@@ -13,7 +13,7 @@ import jinja2
 import polars as pl
 from geopandas import GeoDataFrame
 
-from processing.weighting.specs import ControlTotals, GridPoint, ImputationSummary, ZoneStatus
+from processing.weighting.core.specs import ControlTotals, GridPoint, ImputationSummary, ZoneStatus
 
 from .charts import (
     crosswalk_figure,

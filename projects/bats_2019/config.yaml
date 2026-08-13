@@ -278,13 +278,13 @@ steps:
   #   params:
   #     derive_missing_weights: true
   #     weights:
-  #       household_weights:
+  #       hh_weight:
   #         weight_path: "{{ survey_dir }}/weights/households_weights.csv"
-  #       person_weights:
+  #       person_weight:
   #         weight_path: "{{ survey_dir }}/weights/persons_weights.csv"
-  #       day_weights:
+  #       day_weight:
   #         weight_path: "{{ survey_dir }}/weights/days_weights.csv"
-  #       unlinked_trip_weights:
+  #       unlinked_trip_weight:
   #         weight_path: "{{ survey_dir }}/weights/unlinked_trips_weights.csv"
 
   - name: write_data

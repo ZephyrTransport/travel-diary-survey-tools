@@ -333,13 +333,13 @@ steps:
   #     derive_missing_weights: true
   #     usability_flag_col: model_usable  # supplied weights are redistributed onto usable records, preserving each supplied total
   #     weights:
-  #       household_weights:
+  #       hh_weight:
   #         weight_path: "{{ weights_dir }}/hh_weights.csv"
-  #       person_weights:
+  #       person_weight:
   #         weight_path: "{{ weights_dir }}/person_weights.csv"
-  #       day_weights:
+  #       day_weight:
   #         weight_path: "{{ weights_dir }}/day_weights.csv"
-  #       unlinked_trip_weights:
+  #       unlinked_trip_weight:
   #         weight_id_col: "trip_id"  # Weight file uses 'trip_id' instead of canonical 'unlinked_trip_id'
   #         weight_col: "trip_weight"  # Weight file uses 'trip_weight' instead of canonical 'unlinked_trip_weight'
   #         weight_path: "{{ weights_dir }}/trip_weights.csv"

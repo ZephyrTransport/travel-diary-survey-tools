@@ -233,9 +233,9 @@ class WeightingConfig:
     """Top-level configuration for the weighting pipeline.
 
     Groups the parameters that are *not* already covered by
-    [`ControlRegistryConfig`][processing.weighting.specs.ControlRegistryConfig],
-    [`BalancingConfig`][processing.weighting.specs.BalancingConfig], or
-    [`ImportanceConfig`][processing.weighting.specs.ImportanceConfig]
+    [`ControlRegistryConfig`][processing.weighting.core.specs.ControlRegistryConfig],
+    [`BalancingConfig`][processing.weighting.core.specs.BalancingConfig], or
+    [`ImportanceConfig`][processing.weighting.core.specs.ImportanceConfig]
     — primarily Census/geography settings and pipeline plumbing.
     """
 
@@ -256,7 +256,7 @@ class WeightingConfig:
 class ControlRegistryConfig:
     """Parsed control definitions, merge specs, and derived target names.
 
-    Built via [`from_yaml`][processing.weighting.specs.ControlRegistryConfig.from_yaml]
+    Built via [`from_yaml`][processing.weighting.core.specs.ControlRegistryConfig.from_yaml]
     from the YAML ``controls`` block.
     """
 

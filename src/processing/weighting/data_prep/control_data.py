@@ -51,8 +51,8 @@ from processing.weighting.controls.base import (
     CrosstabControlTarget,
 )
 from processing.weighting.controls.registry import CONTROLS, resolve_targets
+from processing.weighting.core.specs import ControlSpec, ControlTotals
 from processing.weighting.data_prep.crosswalk import _build_zone_remap
-from processing.weighting.specs import ControlSpec, ControlTotals
 from processing.weighting.validation.checksums import check_recode_nulls
 from processing.weighting.validation.control_validation import (
     validate_crosstab_margins,

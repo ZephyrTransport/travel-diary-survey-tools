@@ -10,7 +10,7 @@ from itertools import product
 
 import numpy as np
 
-from processing.weighting.specs import MergeSpec
+from processing.weighting.core.specs import MergeSpec
 
 logger = logging.getLogger(__name__)
 

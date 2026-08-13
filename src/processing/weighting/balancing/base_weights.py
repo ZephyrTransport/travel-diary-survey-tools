@@ -33,7 +33,7 @@ import polars as pl
 
 from processing.weighting.controls.base import ControlLevel
 from processing.weighting.controls.registry import CONTROLS
-from processing.weighting.specs import ControlTotals, SamplePlan
+from processing.weighting.core.specs import ControlTotals, SamplePlan
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 # I/O
 # ---------------------------------------------------------------------------
 def load_sample_plan(path: str | Path) -> SamplePlan:
-    """Read a sample-plan CSV into a [`SamplePlan`][processing.weighting.specs.SamplePlan].
+    """Read a sample-plan CSV into a [`SamplePlan`][processing.weighting.core.specs.SamplePlan].
 
     Args:
         path: Path to a CSV file.  Must contain at minimum ``bg_geo_id``
@@ -50,7 +50,7 @@ def load_sample_plan(path: str | Path) -> SamplePlan:
             sourced from the crosswalk, not from the CSV.
 
     Returns:
-        [`SamplePlan`][processing.weighting.specs.SamplePlan].
+        [`SamplePlan`][processing.weighting.core.specs.SamplePlan].
 
     Raises:
         FileNotFoundError: If *path* does not exist.
@@ -96,7 +96,7 @@ def compute_base_weights(
         sample_plan: Optional sample plan.  Accepts a file path (loaded
             via [`load_sample_plan`][processing.weighting.balancing.base_weights.load_sample_plan])
             or an already-loaded
-            [`SamplePlan`][processing.weighting.specs.SamplePlan].
+            [`SamplePlan`][processing.weighting.core.specs.SamplePlan].
             When ``None``, default response inversion is used.
         bg_populations: Census block-group population totals with columns
             ``[bg_geo_id, bg_population]``.  Required when *sample_plan*

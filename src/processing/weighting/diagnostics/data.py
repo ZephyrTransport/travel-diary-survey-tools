@@ -6,7 +6,7 @@ import polars as pl
 
 from processing.weighting.controls.base import ControlLevel, CrosstabControlTarget
 from processing.weighting.controls.registry import CONTROLS, resolve_targets
-from processing.weighting.specs import ControlTotals, MergeSpec
+from processing.weighting.core.specs import ControlTotals, MergeSpec
 
 
 def _collect_merge_labels(

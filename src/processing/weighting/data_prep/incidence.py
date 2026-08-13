@@ -20,7 +20,7 @@ import polars as pl
 
 from processing.weighting.controls.base import ControlLevel
 from processing.weighting.controls.registry import resolve_targets
-from processing.weighting.specs import ControlTotals, IncidenceBundle
+from processing.weighting.core.specs import ControlTotals, IncidenceBundle
 
 logger = logging.getLogger(__name__)
 

@@ -21,8 +21,9 @@ survey hierarchy.
 
 1. *Hierarchical carry-forward* for household → person → day → unlinked_trip:
    validate parent has weights, then join parent weight to child via FK.
-2. *Aggregated weights* for linked_trip, joint_trip, tour: compute mean
-   weight per group (excluding nulls and zeros), then left-join.
+2. *Aggregated weights* for linked_trip and tour: compute mean weight per group
+   (excluding nulls and zeros), then left-join. The joint levels **sum** instead
+   -- see [`Agg`][processing.weighting.core.hierarchy.Agg].
 
 Gap detection: raises an error if a middle-tier weight is missing
 (e.g. household + trip weights provided but person/day weights are not).
@@ -35,10 +36,12 @@ import polars as pl
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from pipeline.decoration import step
-from processing.weighting.balancing.weight_propagation import (
+from processing.weighting.core.hierarchy import (
     LEVELS,
     WEIGHT_COLUMNS,
     WEIGHT_CONFIG_MAPPING,
+)
+from processing.weighting.core.propagation import (
     collect_tables,
     distribute_within_scope,
     is_usable,
@@ -60,26 +63,26 @@ class ExistingWeightConfig(BaseModel):
 
     Examples:
         Basic usage with defaults:
-        >>> WeightConfig(config_key="household_weights", weight_path="hh_weights.csv")
+        >>> WeightConfig(config_key="hh_weight", weight_path="hh_weights.csv")
         # Uses: weight_id_col="hh_id", weight_col="hh_weight"
 
         Override weight column name:
         >>> WeightConfig(
-        ...     config_key="person_weights",
+        ...     config_key="person_weight",
         ...     weight_path="person_weights.csv",
         ...     weight_col="final_weight"  # Weight file uses "final_weight" not "person_weight"
         ... )
 
         Override ID column name (external weight file with non-canonical IDs):
         >>> WeightConfig(
-        ...     config_key="unlinked_trip_weights",
+        ...     config_key="unlinked_trip_weight",
         ...     weight_path="trip_weights.csv",
         ...     weight_id_col="trip_id",  # Weight file uses "trip_id" not "unlinked_trip_id"
         ...     weight_col="trip_weight" # Weight file uses "trip_weight" not "unlinked_trip_weight"
         ... )
 
     Attributes:
-        config_key: Key identifying the weight type (e.g., 'household_weights')
+        config_key: Key identifying the weight type (e.g., 'hh_weight')
         weight_path: Path to the CSV file containing weights
         weight_id_col: ID column name in the weight file. Defaults to canonical table ID.
         weight_col: Weight column name in the weight file. Defaults to canonical weight column.
@@ -185,7 +188,7 @@ def _apply_usability(
     weights already sum to their population estimate, so dropping records must
     not shrink that total. Each supplied weight is first conserved within its
     declared scope ([`distribute_within_scope`]
-    [processing.weighting.balancing.weight_propagation.distribute_within_scope]);
+    [processing.weighting.core.propagation.distribute_within_scope]);
     whatever that leaves stranded — scopes with no usable record at all — is
     then closed with one table-wide factor. Modifies *tables* in place.
 
@@ -284,12 +287,12 @@ def add_existing_weights(  # noqa: C901, PLR0912, PLR0915
               └─ day_weight        (split: person_weight / n_usable_days)
                   └─ unlinked_trip_weight  (carry forward via day_id)
                       ├─ linked_trip_weight   (mean agg via linked_trip_id)
-                      ├─ joint_trip_weight    (mean agg via joint_trip_id)
+                      │   └─ joint_trip_weight (SUM agg via joint_trip_id)
                       └─ tour_weight          (mean agg via tour_id)
-                          └─ joint_tour_weight (mean agg via joint_tour_id)
+                          └─ joint_tour_weight (SUM agg via joint_tour_id)
 
     The shape is declared once in
-    [`HIERARCHY`][processing.weighting.balancing.weight_propagation.HIERARCHY]; this
+    [`HIERARCHY`][processing.weighting.core.hierarchy.HIERARCHY]; this
     step only supplies the weights it is given and derives the rest from it.
 
     Days are the *average-day* split: a person's usable days share their person
@@ -303,17 +306,22 @@ def add_existing_weights(  # noqa: C901, PLR0912, PLR0915
     - ``sum(day_weight) ≈ person_weight`` (per person, usable days)
     - ``sum(unlinked_trip_weight) ≈ sum(day_weight x num_trips)``
 
-    The aggregate levels have no such identity: a mean over members does **not**
-    sum to the members' total, so ``sum(linked_trip_weight)`` is unrelated to
-    ``sum(unlinked_trip_weight)`` and is not checked.
+    The *mean* aggregate levels have no such identity: a mean over members does
+    **not** sum to the members' total, so ``sum(linked_trip_weight)`` is
+    unrelated to ``sum(unlinked_trip_weight)`` and is not checked.
+
+    The *sum* levels -- the joint tables -- do, and it is checked:
+
+    - ``sum(joint_trip_weight) ≈ sum(linked_trip_weight of member trips)``
+    - ``sum(joint_tour_weight) ≈ sum(tour_weight of member tours)``
 
     Args:
         weights: A dict mapping config keys to weight file paths.
             Each entry specifies a weight CSV to load.  Supported config
-            keys: ``household_weights``, ``person_weights``,
-            ``day_weights``, ``unlinked_trip_weights``,
-            ``linked_trip_weights``, ``joint_trip_weights``,
-            ``tour_weights``.
+            keys: ``hh_weight``, ``person_weight``,
+            ``day_weight``, ``unlinked_trip_weight``,
+            ``linked_trip_weight``, ``joint_trip_weight``,
+            ``tour_weight``.
 
             Config options per entry:
 
@@ -327,7 +335,7 @@ def add_existing_weights(  # noqa: C901, PLR0912, PLR0915
             without provided weight files (default: False).
         usability_flag_col: Boolean column deciding which records may carry weight,
             stamped upstream by the ``cascade_completeness`` step. Defaults to
-            ``model_usable`` (matching the tours CT-RAMP and DaySim keep); pass
+            ``model_usable`` (matching the tours the travel models keep); pass
             ``complete`` to weight the whole valid survey including partial and
             overnight tours. Supplied weights are redistributed onto the usable
             records rather than simply zeroed, so each table's supplied total is
@@ -351,12 +359,12 @@ def add_existing_weights(  # noqa: C901, PLR0912, PLR0915
           params:
             derive_missing_weights: true
             weights:
-              household_weights:
+              hh_weight:
                 weight_path: "weights/hh_weights.csv"
                 # defaults: id_col='hh_id', weight_col='hh_weight'
-              person_weights:
+              person_weight:
                 weight_path: "weights/person_weights.csv"
-              unlinked_trip_weights:
+              unlinked_trip_weight:
                 weight_path: "weights/trip_weights.csv"
                 weight_id_col: "trip_id"
                 weight_col: "trip_weight"

@@ -12,6 +12,7 @@ import pytest
 from rasterio.transform import from_bounds
 from shapely.geometry import box
 
+from processing.weighting.core.specs import ControlSpec, ControlTotals
 from processing.weighting.data_prep.census_geo import puma_vintage_for_pums_year
 from processing.weighting.data_prep.control_data import (
     build_control_totals,
@@ -25,7 +26,6 @@ from processing.weighting.data_prep.crosswalk import (
     _load_target_zones,
 )
 from processing.weighting.diagnostics.charts import crosswalk_figure
-from processing.weighting.specs import ControlSpec, ControlTotals
 from utils.crosswalk import (
     _cross_tabulate,
     _rasterize_categorical,

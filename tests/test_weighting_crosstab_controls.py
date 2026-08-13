@@ -11,13 +11,13 @@ from data_canon.codebook.households import IncomeBroad
 from processing.weighting.controls.base import CrosstabControlTarget
 from processing.weighting.controls.enums import HHSizeCategory
 from processing.weighting.controls.registry import CONTROLS, register_crosstab
+from processing.weighting.core.specs import ControlRegistryConfig, MergeSpec
 from processing.weighting.data_prep.incidence import (
     aggregate_control_totals,
     build_incidence_table,
 )
 from processing.weighting.data_prep.merges import apply_1d_merges, apply_crosstab_merges
 from processing.weighting.data_prep.seed_data import recode_survey_households
-from processing.weighting.specs import ControlRegistryConfig, MergeSpec
 from processing.weighting.validation.control_validation import warn_crosstab_sparsity
 
 

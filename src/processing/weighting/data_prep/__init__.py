@@ -24,6 +24,6 @@ survey seed data.
    PUMS-based controls.
 
 Together these modules provide the shared data-preparation utilities used
-by [`WeightingPipeline`][processing.weighting.weighting_pipeline.WeightingPipeline]
+by [`WeightingPipeline`][processing.weighting.core.pipeline.WeightingPipeline]
 before balancing begins.
 """

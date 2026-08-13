@@ -30,8 +30,8 @@ from sklearn.model_selection import cross_val_predict
 
 from processing.weighting.controls.base import ControlLevel
 from processing.weighting.controls.registry import resolve_targets
+from processing.weighting.core.specs import ImputationSummary
 from processing.weighting.data_prep.incidence import IncidenceBundle
-from processing.weighting.specs import ImputationSummary
 
 logger = logging.getLogger(__name__)
 

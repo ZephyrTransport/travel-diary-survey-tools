@@ -18,7 +18,7 @@ from itertools import product
 import polars as pl
 
 from processing.weighting.controls.registry import resolve_targets
-from processing.weighting.specs import ControlTotals, MergeSpec
+from processing.weighting.core.specs import ControlTotals, MergeSpec
 
 logger = logging.getLogger(__name__)
 
