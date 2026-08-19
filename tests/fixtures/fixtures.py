@@ -280,6 +280,7 @@ def process_scenario_through_pipeline(
         transit_mode_enums=DEFAULT_TRANSIT_MODE_CODES,
         max_dwell_time=180,  # in minutes
         dwell_buffer_distance=100,  # in meters
+        split_on_occupancy=False,
     )
     linked_trips = link_result["linked_trips"].with_columns(
         pl.lit(None).cast(pl.Int64).alias("joint_trip_id")

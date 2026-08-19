@@ -87,6 +87,7 @@ def single_trip_tour_data():
         unlinked_trips=unlinked_trips,
         change_mode_enum=PurposeCategory.CHANGE_MODE.value,
         transit_mode_enums=[ModeType.TRANSIT.value],
+        split_on_occupancy=False,
     )
     unlinked_trips_with_ids = link_result["unlinked_trips"]
     linked_trips = link_result["linked_trips"].with_columns(
@@ -191,6 +192,7 @@ def partial_tour_data():
         unlinked_trips=unlinked_trips,
         change_mode_enum=PurposeCategory.CHANGE_MODE.value,
         transit_mode_enums=[ModeType.TRANSIT.value],
+        split_on_occupancy=False,
     )
     unlinked_trips_with_ids = link_result["unlinked_trips"]
     linked_trips = link_result["linked_trips"].with_columns(
@@ -295,6 +297,7 @@ def distant_destinations_data():
         unlinked_trips=unlinked_trips,
         change_mode_enum=PurposeCategory.CHANGE_MODE.value,
         transit_mode_enums=[ModeType.TRANSIT.value],
+        split_on_occupancy=False,
     )
     unlinked_trips_with_ids = link_result["unlinked_trips"]
     linked_trips = link_result["linked_trips"].with_columns(
@@ -369,6 +372,7 @@ def round_trip_tour_data():
         unlinked_trips=unlinked_trips,
         change_mode_enum=PurposeCategory.CHANGE_MODE.value,
         transit_mode_enums=[ModeType.TRANSIT.value],
+        split_on_occupancy=False,
     )
     unlinked_trips_with_ids = link_result["unlinked_trips"]
     linked_trips = link_result["linked_trips"].with_columns(
@@ -578,6 +582,7 @@ def test_tour_num_sequential():
         unlinked_trips=unlinked_trips,
         change_mode_enum=PurposeCategory.CHANGE_MODE.value,
         transit_mode_enums=[ModeType.TRANSIT.value],
+        split_on_occupancy=False,
     )
     unlinked_trips_with_ids = link_result["unlinked_trips"]
     linked_trips = link_result["linked_trips"].with_columns(
@@ -695,6 +700,7 @@ def test_all_tours_have_required_fields():
         unlinked_trips=unlinked_trips,
         change_mode_enum=PurposeCategory.CHANGE_MODE.value,
         transit_mode_enums=[ModeType.TRANSIT.value],
+        split_on_occupancy=False,
     )
     unlinked_trips_with_ids = link_result["unlinked_trips"]
     linked_trips = link_result["linked_trips"].with_columns(

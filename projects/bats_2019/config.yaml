@@ -41,6 +41,10 @@ steps:
       transit_mode_enums: [FERRY, TRANSIT, LONG_DISTANCE]
       max_dwell_time: 180  # in minutes
       dwell_buffer_distance: 100  # in meters
+      # Break a linked trip where the reported party size changes between
+      # segments, on the reading that somebody was picked up or dropped off
+      # rather than transferring. No default: state the choice explicitly.
+      split_on_occupancy: false
 
   - name: detect_joint_trips
     validate_input: true

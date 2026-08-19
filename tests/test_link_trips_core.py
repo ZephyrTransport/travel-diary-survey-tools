@@ -52,6 +52,7 @@ class TestLinkTripIds:
             change_mode_enum=10,
             max_dwell_time=120,
             dwell_buffer_distance=100,
+            split_on_occupancy=False,
         )
 
         # Both trips should have same linked_trip_id
@@ -93,6 +94,7 @@ class TestLinkTripIds:
             change_mode_enum=10,
             max_dwell_time=120,
             dwell_buffer_distance=100,
+            split_on_occupancy=False,
         )
 
         # Each trip should have different linked_trip_id
@@ -130,6 +132,7 @@ class TestLinkTripIds:
             change_mode_enum=10,
             max_dwell_time=120,
             dwell_buffer_distance=100,
+            split_on_occupancy=False,
         )
 
         # Each person should have unique linked_trip_id
@@ -167,6 +170,7 @@ class TestLinkTripIds:
             change_mode_enum=10,
             max_dwell_time=120,  # 120 minutes
             dwell_buffer_distance=100,
+            split_on_occupancy=False,
         )
 
         # Should not link due to time gap
@@ -204,6 +208,7 @@ class TestLinkTripIds:
             change_mode_enum=10,
             max_dwell_time=120,
             dwell_buffer_distance=10,  # 10 miles
+            split_on_occupancy=False,
         )
 
         # Should not link due to distance
@@ -252,6 +257,7 @@ class TestLinkTripIds:
             change_mode_enum=10,
             max_dwell_time=120,
             dwell_buffer_distance=100,
+            split_on_occupancy=False,
         )
 
         # All three trips should have same linked_trip_id
@@ -301,6 +307,7 @@ class TestLinkTripIds:
             change_mode_enum=10,
             max_dwell_time=120,
             dwell_buffer_distance=100,
+            split_on_occupancy=False,
         )
 
         # All linked_trip_ids should be unique globally
@@ -338,6 +345,7 @@ class TestLinkTripIds:
             change_mode_enum=10,
             max_dwell_time=120,
             dwell_buffer_distance=100,
+            split_on_occupancy=False,
         )
 
         # Should still process without error
@@ -366,6 +374,7 @@ class TestLinkTripIds:
             change_mode_enum=10,
             max_dwell_time=120,
             dwell_buffer_distance=100,
+            split_on_occupancy=False,
         )
 
         assert len(result) == 0
@@ -764,6 +773,7 @@ class TestLinkTripsIntegration:
             transit_mode_enums=[ModeType.TRANSIT.value],
             max_dwell_time=120,
             dwell_buffer_distance=100,
+            split_on_occupancy=False,
         )
 
         # Should return dict with two DataFrames
@@ -820,6 +830,7 @@ class TestLinkTripsIntegration:
             change_mode_enum=10,
             transit_mode_enums=[ModeType.TRANSIT.value],
             max_dwell_time=120,
+            split_on_occupancy=False,
         )
 
         linked_trips = result["linked_trips"]
@@ -1207,6 +1218,7 @@ class TestTableLevelUniqueness:
             change_mode_enum=PurposeCategory.CHANGE_MODE.value,
             transit_mode_enums=[ModeType.TRANSIT.value],
             max_dwell_time=120,
+            split_on_occupancy=False,
         )
 
         unlinked_trips = result["unlinked_trips"]

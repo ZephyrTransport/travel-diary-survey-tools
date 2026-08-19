@@ -66,6 +66,7 @@ def create_test_data(
         transit_mode_enums=[12, 13, 14],
         max_dwell_time=180,  # in minutes
         dwell_buffer_distance=100,  # in meters
+        split_on_occupancy=False,
     ).values()
 
     # Add joint_trip_id column for extract_tours validation

@@ -89,6 +89,7 @@ class TestLinkTripsIntegration:
             transit_mode_enums=[ModeType.TRANSIT.value],
             max_dwell_time=120,
             dwell_buffer_distance=100,
+            split_on_occupancy=False,
         )
 
         # Should return dict with two DataFrames
@@ -145,6 +146,7 @@ class TestLinkTripsIntegration:
             change_mode_enum=10,
             transit_mode_enums=[ModeType.TRANSIT.value],
             max_dwell_time=120,
+            split_on_occupancy=False,
         )
 
         linked_trips = result["linked_trips"]
@@ -532,6 +534,7 @@ class TestTableLevelUniqueness:
             change_mode_enum=PurposeCategory.CHANGE_MODE.value,
             transit_mode_enums=[ModeType.TRANSIT.value],
             max_dwell_time=120,
+            split_on_occupancy=False,
         )
 
         unlinked_trips = result["unlinked_trips"]

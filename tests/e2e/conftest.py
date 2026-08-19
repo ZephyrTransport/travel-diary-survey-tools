@@ -149,6 +149,7 @@ def _step_blocks(data_dir: Path, output_dir: Path, enabled: frozenset) -> dict:
                 "transit_mode_enums": ["FERRY", "TRANSIT", "LONG_DISTANCE"],
                 "max_dwell_time": 180,
                 "dwell_buffer_distance": 100,
+                "split_on_occupancy": False,
             },
         },
         "detect_joint_trips": {

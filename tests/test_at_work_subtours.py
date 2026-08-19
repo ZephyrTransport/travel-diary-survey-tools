@@ -170,6 +170,7 @@ def extracted():
         unlinked_trips=_lunch_subtour_day(),
         change_mode_enum=PurposeCategory.CHANGE_MODE.value,
         transit_mode_enums=[ModeType.TRANSIT.value],
+        split_on_occupancy=False,
     )
     linked_trips = link_result["linked_trips"].with_columns(
         pl.lit(None).cast(pl.Int64).alias("joint_trip_id")

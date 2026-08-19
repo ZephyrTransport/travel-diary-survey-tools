@@ -65,6 +65,8 @@ def link_trips(
     transit_mode_enums: list[str],
     max_dwell_time: float = 120,
     dwell_buffer_distance: float = 100,
+    *,
+    split_on_occupancy: bool,
 ) -> dict[str, pl.DataFrame]:
     """Link unlinked trip segments into complete journey records.
 
@@ -80,6 +82,13 @@ def link_trips(
             minutes (default: 120).
         dwell_buffer_distance: Maximum spatial distance between trips to link,
             in meters (default: 100).
+        split_on_occupancy: Refuse to link two segments whose reported party
+            size differs. A change of occupancy at a stop is evidence that
+            somebody was picked up or dropped off, which makes the stop an
+            activity rather than a transfer. Required, and deliberately without
+            a default: either answer changes what a linked trip *is*, so the
+            choice belongs to whoever configured the run rather than to this
+            signature.
 
     Returns:
         Dictionary containing:
@@ -132,6 +141,7 @@ def link_trips(
         change_mode_enum,
         max_dwell_time,
         dwell_buffer_distance,
+        split_on_occupancy=split_on_occupancy,
     )
 
     # Aggregate linked trips
@@ -152,6 +162,8 @@ def link_trip_ids(
     change_mode_enum: str,
     max_dwell_time: float = 120,
     dwell_buffer_distance: float = 100,
+    *,
+    split_on_occupancy: bool,
 ) -> pl.DataFrame:
     """Link trips based on purpose and mode in time sequence.
 
@@ -169,9 +181,15 @@ def link_trip_ids(
         change_mode_enum: Enum label indicating a mode change
         max_dwell_time: Maximum time gap between trips to link them (minutes)
         dwell_buffer_distance: Maximum distance between trips to link (meters)
+        split_on_occupancy: Also break the link where the reported party size
+            changes between segments. Required; see ``link_trips``.
 
     Returns:
         DataFrame with linked_trip_id column added
+
+    Raises:
+        ValueError: split_on_occupancy is set but the trips carry no
+            num_travelers column to compare.
 
     """
     logger.info("Linking trip IDs...")
@@ -190,12 +208,19 @@ def link_trip_ids(
     # Step 1: Sort trips by person, day, and departure time
     unlinked_trips = unlinked_trips.sort(["person_id", "day_id", "depart_time", "arrive_time"])
 
+    if split_on_occupancy and "num_travelers" not in unlinked_trips.columns:
+        msg = (
+            "split_on_occupancy is enabled but unlinked_trips has no num_travelers "
+            "column, so a change of party size cannot be detected."
+        )
+        raise ValueError(msg)
+
     # Step 2: Get previous trip purpose category within the same person
+    shift_cols = ["d_purpose_category", "d_lon", "d_lat", "arrive_time"]
+    if split_on_occupancy:
+        shift_cols.append("num_travelers")
     unlinked_trips = unlinked_trips.with_columns(
-        pl.col("d_purpose_category", "d_lon", "d_lat", "arrive_time")
-        .shift(fill_value=None)
-        .over("person_id")
-        .name.map(lambda c: f"prev_{c}")
+        pl.col(shift_cols).shift(fill_value=None).over("person_id").name.map(lambda c: f"prev_{c}")
     )
 
     # Get change mode integer code value from enum label
@@ -208,28 +233,35 @@ def link_trip_ids(
     #  - prev_purpose is missing
     #  - distance between prev_d_coord and o_coord > threshold
     #  - time between prev_arrive_time and depart_time > threshold
-    unlinked_trips = unlinked_trips.with_columns(
-        [
-            (
-                (pl.col("prev_d_purpose_category") != change_mode_code)
-                | pl.col("prev_d_purpose_category").is_null()
-                | (
-                    expr_haversine(
-                        pl.col("prev_d_lat"),
-                        pl.col("prev_d_lon"),
-                        pl.col("o_lat"),
-                        pl.col("o_lon"),
-                    )
-                    > dwell_buffer_distance
-                )
-                | (
-                    ((pl.col("depart_time") - pl.col("prev_arrive_time")).dt.total_minutes())
-                    > max_dwell_time
-                )
+    starts_new_trip = (
+        (pl.col("prev_d_purpose_category") != change_mode_code)
+        | pl.col("prev_d_purpose_category").is_null()
+        | (
+            expr_haversine(
+                pl.col("prev_d_lat"),
+                pl.col("prev_d_lon"),
+                pl.col("o_lat"),
+                pl.col("o_lon"),
             )
-            .cast(pl.Int32)
-            .alias("new_trip_flag"),
-        ]
+            > dwell_buffer_distance
+        )
+        | (
+            ((pl.col("depart_time") - pl.col("prev_arrive_time")).dt.total_minutes())
+            > max_dwell_time
+        )
+    )
+
+    if split_on_occupancy:
+        # Only a reported change breaks the link. An unreported party size on
+        # either side is missing data, not evidence that anybody got in or out.
+        starts_new_trip = starts_new_trip | (
+            pl.col("num_travelers").is_not_null()
+            & pl.col("prev_num_travelers").is_not_null()
+            & (pl.col("num_travelers") != pl.col("prev_num_travelers"))
+        )
+
+    unlinked_trips = unlinked_trips.with_columns(
+        starts_new_trip.cast(pl.Int32).alias("new_trip_flag")
     )
 
     # Step 4: Assign linked trip IDs using cumulative sum
@@ -243,14 +275,45 @@ def link_trip_ids(
     unlinked_trips_with_id = create_linked_trip_id(unlinked_trips)
 
     # Step 6: Clean up temporary columns
-    return unlinked_trips_with_id.drop(
-        [
-            "prev_d_purpose_category",
-            "prev_d_lon",
-            "prev_d_lat",
-            "prev_arrive_time",
-            "new_trip_flag",
-        ]
+    temp_cols = [
+        "prev_d_purpose_category",
+        "prev_d_lon",
+        "prev_d_lat",
+        "prev_arrive_time",
+        "new_trip_flag",
+    ]
+    if split_on_occupancy:
+        temp_cols.append("prev_num_travelers")
+    return unlinked_trips_with_id.drop(temp_cols)
+
+
+def _warn_on_occupancy_change(unlinked_trips: pl.DataFrame) -> None:
+    """Report linked trips whose party size changes between segments.
+
+    ``num_travelers`` is rolled up with a max, which silently reports the
+    largest party as though it applied to the whole journey. A party that
+    changes mid-journey usually means somebody was picked up or dropped off,
+    making the stop an activity rather than a transfer -- so the link itself is
+    suspect, not just the count. Linking with ``split_on_occupancy`` enabled
+    keeps those segments apart and silences this warning.
+    """
+    if "num_travelers" not in unlinked_trips.columns:
+        return
+
+    varying = (
+        unlinked_trips.group_by("linked_trip_id")
+        .agg(pl.col("num_travelers").drop_nulls().n_unique().alias("_n_sizes"))
+        .filter(pl.col("_n_sizes") > 1)
+    )
+    if varying.is_empty():
+        return
+
+    logger.warning(
+        "%d linked trip(s) change party size between segments; num_travelers reports "
+        "the largest. This usually indicates a pick-up or drop-off that was linked as "
+        "a transfer -- consider link_trips(split_on_occupancy=True). Examples: %s",
+        varying.height,
+        varying["linked_trip_id"].head(5).to_list(),
     )
 
 
@@ -279,6 +342,7 @@ def aggregate_linked_trips(
 
     """
     logger.info("Aggregating linked trips...")
+    _warn_on_occupancy_change(unlinked_trips)
 
     transit_mode_codes = resolve_enum_labels(
         table_name="unlinked_trips",
