@@ -17,6 +17,54 @@ from pipeline.logger import setup_logging
 
 logger = logging.getLogger(__name__)
 
+# Enough passes to resolve any sane chain of shorthands referring to shorthands,
+# and few enough that a cycle is reported rather than spun on.
+MAX_TEMPLATE_PASSES = 10
+
+
+def _substitute(text: str, variables: dict[str, str]) -> str:
+    """Replace every ``{{ name }}`` in one string with its value."""
+    for name, value in variables.items():
+        text = text.replace(f"{{{{ {name} }}}}", str(value))
+    return text
+
+
+def _resolve_variables(variables: dict[str, str]) -> dict[str, str]:
+    """Expand the shorthands against each other before anything else uses them.
+
+    Config shorthands routinely refer to other shorthands
+    (``output_dir: "{{ survey_dir }}/analysis"``). Substituting in a single pass
+    resolves such a reference only when its target happens to be declared later
+    in the file, because the pass has already moved past an earlier one -- so
+    the same config works or silently emits a literal ``{{ survey_dir }}`` path
+    depending on the order its keys were written in. Resolving the shorthands
+    to a fixed point first makes declaration order irrelevant.
+
+    Args:
+        variables: Top-level string values from the config, unexpanded.
+
+    Returns:
+        The same mapping with every nested reference expanded.
+
+    Raises:
+        ValueError: A reference could not be resolved within
+            ``MAX_TEMPLATE_PASSES``, which means the shorthands refer to each
+            other in a cycle.
+    """
+    resolved = dict(variables)
+    for _ in range(MAX_TEMPLATE_PASSES):
+        expanded = {key: _substitute(value, resolved) for key, value in resolved.items()}
+        if expanded == resolved:
+            return resolved
+        resolved = expanded
+
+    unresolved = sorted(key for key, value in resolved.items() if "{{" in value)
+    msg = (
+        f"Config variables still reference each other after {MAX_TEMPLATE_PASSES} "
+        f"passes: {unresolved}. They likely refer to each other in a cycle."
+    )
+    raise ValueError(msg)
+
 
 class Pipeline:
     """Class to run a data processing pipeline based on a configuration file."""
@@ -103,14 +151,11 @@ class Pipeline:
 
         # Extract top-level variables for substitution
         variables = {key: value for key, value in config.items() if isinstance(value, str)}
+        variables = _resolve_variables(variables)
 
-        # Recursively replace template variables
         def replace_templates(obj: Any) -> Any:  # noqa: ANN401
             if isinstance(obj, str):
-                # Replace {{ variable_name }} with actual values
-                for var_name, var_value in variables.items():
-                    obj = obj.replace(f"{{{{ {var_name} }}}}", str(var_value))
-                return obj
+                return _substitute(obj, variables)
 
             if isinstance(obj, dict):
                 return {k: replace_templates(v) for k, v in obj.items()}
