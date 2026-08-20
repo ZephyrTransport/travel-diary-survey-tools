@@ -19,39 +19,39 @@ Each tab shows the fields for one canonical table. Only steps that reference the
 
 === "households"
 
-    | Field | Type | Constraints | extract_tours | add_zone_ids | format_daysim |
-    | --- | --- | --- | --- | --- | --- |
-    | `hh_id` | int | ≥ 1, UNIQUE | ✓ | ✓ |  |
-    | `home_lat` | float | ≥ -90, ≤ 90 | ✓ | ✓ |  |
-    | `home_lon` | float | ≥ -180, ≤ 180 | ✓ | ✓ |  |
-    | `residence_rent_own` | ResidenceRentOwn |  |  |  | ✓ |
-    | `residence_type` | ResidenceType |  |  |  | ✓ |
-    | `income` | int or None | ≥ 0 |  |  |  |
-    | `income_bin` | IncomeBroad |  |  |  |  |
-    | `hh_weight` | float or None | ≥ 0 |  |  |  |
-    | `num_vehicles` | int | ≥ 0 |  |  |  |
-    | `complete` | bool |  |  |  |  |
-    | `model_usable` | bool or None |  |  |  |  |
+    | Field | Type | Constraints | extract_tours | add_zone_ids | format_ctramp | format_daysim |
+    | --- | --- | --- | --- | --- | --- | --- |
+    | `hh_id` | int | ≥ 1, UNIQUE | ✓ | ✓ | ✓ |  |
+    | `home_lat` | float | ≥ -90, ≤ 90 | ✓ | ✓ | ✓ |  |
+    | `home_lon` | float | ≥ -180, ≤ 180 | ✓ | ✓ | ✓ |  |
+    | `residence_rent_own` | ResidenceRentOwn |  |  |  |  | ✓ |
+    | `residence_type` | ResidenceType |  |  |  |  | ✓ |
+    | `income` | int or None | ≥ 0 |  |  |  |  |
+    | `income_bin` | IncomeBroad |  |  |  | ✓ |  |
+    | `hh_weight` | float or None | ≥ 0 |  |  |  |  |
+    | `num_vehicles` | int | ≥ 0 |  |  | ✓ |  |
+    | `complete` | bool |  |  |  |  |  |
+    | `model_usable` | bool or None |  |  |  |  |  |
 
 === "persons"
 
     | Field | Type | Constraints | extract_tours | add_zone_ids | format_ctramp | format_daysim |
     | --- | --- | --- | --- | --- | --- | --- |
-    | `person_id` | int | ≥ 1, UNIQUE | ✓ | ✓ |  |  |
-    | `hh_id` | int | ≥ 1, FK → `households.hh_id`, REQ_CHILD |  |  |  |  |
+    | `person_id` | int | ≥ 1, UNIQUE | ✓ | ✓ | ✓ |  |
+    | `hh_id` | int | ≥ 1, FK → `households.hh_id`, REQ_CHILD |  |  | ✓ |  |
     | `person_num` | int | ≥ 1 |  |  | ✓ | ✓ |
-    | `age` | AgeCategory |  | ✓ |  |  |  |
+    | `age` | AgeCategory |  | ✓ |  | ✓ |  |
     | `gender` | Gender |  |  |  | ✓ |  |
-    | `work_lat` | float or None | ≥ -90, ≤ 90 | ✓ | ✓ |  |  |
-    | `work_lon` | float or None | ≥ -180, ≤ 180 | ✓ | ✓ |  |  |
-    | `school_lat` | float or None | ≥ -90, ≤ 90 | ✓ | ✓ |  |  |
-    | `school_lon` | float or None | ≥ -180, ≤ 180 | ✓ | ✓ |  |  |
+    | `work_lat` | float or None | ≥ -90, ≤ 90 | ✓ | ✓ | ✓ |  |
+    | `work_lon` | float or None | ≥ -180, ≤ 180 | ✓ | ✓ | ✓ |  |
+    | `school_lat` | float or None | ≥ -90, ≤ 90 | ✓ | ✓ | ✓ |  |
+    | `school_lon` | float or None | ≥ -180, ≤ 180 | ✓ | ✓ | ✓ |  |
     | `industry` | Industry or None |  |  |  |  |  |
     | `occupation` | Occupation or None |  |  |  |  |  |
-    | `job_type` | JobType or None |  |  |  | ✓ |  |
-    | `employment` | Employment |  | ✓ |  |  |  |
-    | `student` | Student |  | ✓ |  |  |  |
-    | `school_type` | SchoolType or None |  | ✓ |  |  |  |
+    | `job_type` | JobType or None |  |  |  |  |  |
+    | `employment` | Employment |  | ✓ |  | ✓ |  |
+    | `student` | Student |  | ✓ |  | ✓ |  |
+    | `school_type` | SchoolType or None |  | ✓ |  | ✓ |  |
     | `work_park` | WorkParking or None |  |  |  |  | ✓ |
     | `work_mode` | Mode or None |  |  |  |  | ✓ |
     | `race` | Race or None |  |  |  |  |  |
@@ -123,30 +123,30 @@ Each tab shows the fields for one canonical table. Only steps that reference the
     | --- | --- | --- | --- | --- | --- | --- | --- |
     | `day_id` | int | ≥ 1, FK → `days.day_id` |  | ✓ |  |  |  |
     | `person_id` | int | ≥ 1, FK → `persons.person_id` |  |  |  |  |  |
-    | `hh_id` | int | ≥ 1, FK → `households.hh_id` |  |  |  |  |  |
-    | `linked_trip_id` | int | ≥ 1, UNIQUE |  |  | ✓ |  |  |
+    | `hh_id` | int | ≥ 1, FK → `households.hh_id` |  |  |  | ✓ |  |
+    | `linked_trip_id` | int | ≥ 1, UNIQUE |  |  | ✓ | ✓ |  |
     | `joint_trip_id` | int or None | ≥ 1, FK → `joint_trips.joint_trip_id` |  | ✓ |  |  |  |
-    | `tour_id` | int | ≥ 1, FK → `tours.tour_id` |  |  |  |  | ✓ |
+    | `tour_id` | int | ≥ 1, FK → `tours.tour_id` |  |  |  | ✓ | ✓ |
     | `travel_dow` | TravelDow |  |  |  |  |  |  |
-    | `o_purpose` | Purpose |  |  | ✓ |  | ✓ |  |
-    | `o_purpose_category` | PurposeCategory |  |  | ✓ |  |  |  |
-    | `o_lat` | float | ≥ -90, ≤ 90 | ✓ |  | ✓ |  |  |
-    | `o_lon` | float | ≥ -180, ≤ 180 | ✓ |  | ✓ |  |  |
-    | `d_purpose` | Purpose |  |  | ✓ |  | ✓ |  |
-    | `d_purpose_category` | PurposeCategory |  |  | ✓ |  |  |  |
-    | `d_lat` | float | ≥ -90, ≤ 90 | ✓ |  | ✓ |  |  |
-    | `d_lon` | float | ≥ -180, ≤ 180 | ✓ |  | ✓ |  |  |
-    | `mode_type` | ModeType |  |  | ✓ |  |  |  |
+    | `o_purpose` | Purpose |  |  | ✓ |  |  |  |
+    | `o_purpose_category` | PurposeCategory |  |  | ✓ |  | ✓ |  |
+    | `o_lat` | float | ≥ -90, ≤ 90 | ✓ |  | ✓ | ✓ |  |
+    | `o_lon` | float | ≥ -180, ≤ 180 | ✓ |  | ✓ | ✓ |  |
+    | `d_purpose` | Purpose |  |  | ✓ |  |  |  |
+    | `d_purpose_category` | PurposeCategory |  |  | ✓ |  | ✓ |  |
+    | `d_lat` | float | ≥ -90, ≤ 90 | ✓ |  | ✓ | ✓ |  |
+    | `d_lon` | float | ≥ -180, ≤ 180 | ✓ |  | ✓ | ✓ |  |
+    | `mode_type` | ModeType |  |  | ✓ |  | ✓ |  |
     | `driver` | Driver |  |  |  |  |  | ✓ |
-    | `num_travelers` | int | ≥ 1 |  |  |  |  |  |
+    | `num_travelers` | int | ≥ 1 |  |  |  | ✓ |  |
     | `access_mode` | AccessEgressMode or None |  |  |  |  | ✓ | ✓ |
     | `egress_mode` | AccessEgressMode or None |  |  |  |  | ✓ | ✓ |
     | `duration_minutes` | float | ≥ 0 |  |  |  |  |  |
-    | `distance_meters` | float | ≥ 0 |  |  |  |  |  |
-    | `depart_time` | datetime |  | ✓ |  |  |  |  |
-    | `arrive_time` | datetime |  | ✓ |  |  |  |  |
+    | `distance_meters` | float | ≥ 0 |  |  |  | ✓ |  |
+    | `depart_time` | datetime |  | ✓ |  |  | ✓ |  |
+    | `arrive_time` | datetime |  | ✓ |  |  | ✓ |  |
     | `d_activity_duration` | int |  |  | ✓ |  |  |  |
-    | `tour_direction` | TourDirection |  |  |  |  |  | ✓ |
+    | `tour_direction` | TourDirection |  |  |  |  | ✓ | ✓ |
     | `o_location_type` | LocationType |  |  |  |  |  |  |
     | `d_location_type` | LocationType |  |  |  |  |  |  |
     | `complete` | bool or None |  |  |  |  |  |  |
@@ -157,20 +157,20 @@ Each tab shows the fields for one canonical table. Only steps that reference the
 
     | Field | Type | Constraints | cascade_completeness | add_zone_ids | format_ctramp | format_daysim |
     | --- | --- | --- | --- | --- | --- | --- |
-    | `tour_id` | int | ≥ 1, UNIQUE | ✓ | ✓ |  |  |
-    | `hh_id` | int | ≥ 1, FK → `households.hh_id` |  |  |  |  |
+    | `tour_id` | int | ≥ 1, UNIQUE | ✓ | ✓ | ✓ |  |
+    | `hh_id` | int | ≥ 1, FK → `households.hh_id` |  |  | ✓ |  |
     | `person_id` | int | ≥ 1, FK → `persons.person_id` |  |  |  |  |
     | `day_id` | int | ≥ 1, FK → `days.day_id` | ✓ |  |  |  |
     | `tour_num` | int | ≥ 1 |  |  |  |  |
-    | `subtour_num` | int | ≥ 0 |  |  |  |  |
-    | `parent_tour_id` | int | ≥ 1, FK → `tours.tour_id` |  |  |  |  |
-    | `joint_tour_id` | int or None | ≥ 1 |  |  |  |  |
-    | `tour_purpose` | PurposeCategory or None |  |  |  |  |  |
+    | `subtour_num` | int | ≥ 0 |  |  | ✓ |  |
+    | `parent_tour_id` | int | ≥ 1, FK → `tours.tour_id` |  |  | ✓ |  |
+    | `joint_tour_id` | int or None | ≥ 1 |  |  | ✓ |  |
+    | `tour_purpose` | PurposeCategory or None |  |  |  | ✓ |  |
     | `tour_type` | TourType |  |  |  |  |  |
-    | `tour_category` | TourCategory |  |  |  |  |  |
+    | `tour_category` | TourCategory |  |  |  | ✓ |  |
     | `single_trip_tour` | bool |  |  |  |  |  |
-    | `origin_depart_time` | datetime |  |  |  |  |  |
-    | `origin_arrive_time` | datetime |  |  |  |  |  |
+    | `origin_depart_time` | datetime |  |  |  | ✓ |  |
+    | `origin_arrive_time` | datetime |  |  |  | ✓ |  |
     | `dest_arrive_time` | datetime or None |  |  |  |  |  |
     | `dest_depart_time` | datetime or None |  |  |  |  |  |
     | `origin_linked_trip_id` | int | ≥ 1, FK → `linked_trips.linked_trip_id` |  |  |  | ✓ |
@@ -181,10 +181,10 @@ Each tab shows the fields for one canonical table. Only steps that reference the
     | `d_lon` | float | ≥ -180, ≤ 180 |  | ✓ |  |  |
     | `o_location_type` | LocationType |  |  |  |  |  |
     | `d_location_type` | LocationType |  |  |  |  |  |
-    | `tour_mode` | ModeType |  |  |  |  |  |
+    | `tour_mode` | ModeType |  |  |  | ✓ |  |
     | `outbound_mode` | ModeType or None |  |  |  |  |  |
     | `inbound_mode` | ModeType or None |  |  |  |  |  |
-    | `num_travelers` | int | ≥ 1 |  |  | ✓ |  |
+    | `num_travelers` | int | ≥ 1 |  |  |  |  |
     | `complete` | bool or None |  | ✓ |  |  |  |
     | `model_usable` | bool or None |  |  |  |  |  |
     | `tour_weight` | float or None | ≥ 0 |  |  |  |  |

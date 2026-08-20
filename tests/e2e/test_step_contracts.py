@@ -45,6 +45,14 @@ def test_required_columns_are_present(full_result, step, table, columns):
     )
 
 
+def _is_required(fn, probe, params, baseline, fingerprint):
+    """Whether dropping a column changed the outcome. A raise proves it was required."""
+    try:
+        return fingerprint(fn(**probe, **params)) != baseline
+    except Exception:  # noqa: BLE001  # any failure means the column was load-bearing
+        return True
+
+
 def test_format_ctramp_requires_nothing_it_does_not_read(full_result):
     """Dropping any required column must actually break ``format_ctramp``.
 
@@ -65,8 +73,14 @@ def test_format_ctramp_requires_nothing_it_does_not_read(full_result):
     inputs = {
         name: tables.get(name, pl.DataFrame())
         for name in (
-            "persons", "households", "unlinked_trips", "linked_trips",
-            "tours", "joint_trips", "joint_tours", "days",
+            "persons",
+            "households",
+            "unlinked_trips",
+            "linked_trips",
+            "tours",
+            "joint_trips",
+            "joint_tours",
+            "days",
         )
     }
 
@@ -80,13 +94,10 @@ def test_format_ctramp_requires_nothing_it_does_not_read(full_result):
         for col in sorted(tc.requires):
             if col.endswith(_DYNAMIC_SUFFIXES) or col not in inputs[table].columns:
                 continue
-            probe = {**inputs, table: inputs[table].drop(col)}
-            try:
-                if fingerprint(fn(**probe, **params)) != baseline:
-                    continue
-            except Exception:  # noqa: BLE001  # any failure proves it is required
-                continue
-            unused.append(f"{table}.{col}")
+            if not _is_required(
+                fn, {**inputs, table: inputs[table].drop(col)}, params, baseline, fingerprint
+            ):
+                unused.append(f"{table}.{col}")
 
     assert not unused, (
         f"format_ctramp declares columns it does not read: {unused}. "
