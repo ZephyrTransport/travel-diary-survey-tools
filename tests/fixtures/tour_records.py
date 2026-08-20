@@ -98,7 +98,7 @@ def create_tour(
         Complete tour record dict
     """
     # A subtour is a tour numbered under a parent, or one whose parent is some
-    # other tour. Primary tours self-reference in canonical data and are None here.
+    # other tour. Primary tours self-reference, matching canonical data.
     if tour_type is None:
         is_subtour = subtour_num > 0 or (parent_tour_id is not None and parent_tour_id != tour_id)
         tour_type = TourType.WORK_BASED if is_subtour else TourType.HOME_BASED
@@ -149,7 +149,7 @@ def create_tour(
         "data_quality": data_quality.value,
         "tour_weight": tour_weight,
         "joint_tour_id": joint_tour_id,
-        "parent_tour_id": parent_tour_id,
+        "parent_tour_id": tour_id if parent_tour_id is None else parent_tour_id,
         "subtour_num": subtour_num,
         "single_trip_tour": False,  # Default to False, set by tour extraction
     }

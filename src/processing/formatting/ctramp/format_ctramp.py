@@ -396,23 +396,71 @@ def _incorporate_day_into_ids(
 
 
 @step(
+    # Derived by ablation against the 2023 canonical output: every column below was
+    # dropped in turn and the step re-run, keeping those whose absence raised. Columns
+    # whose absence merely degrades the output (weights, `industry`, `tnc_type`,
+    # `model_usable`, the `day_id`s) are deliberately excluded - see module note.
+    # Zone columns are omitted because their names come from the `taz_field` param
+    # (e.g. `o_TAZ1454`) and so cannot be expressed statically.
     requires={
+        "households": {
+            "hh_id",
+            "home_lat",
+            "home_lon",
+            "income_bin",
+            "num_vehicles",
+        },
         "persons": {
+            "person_id",
+            "hh_id",
             "person_num",
+            "age",
             "gender",
-            "job_type",
+            "employment",
+            "student",
+            "school_type",
+            "school_lat",
+            "school_lon",
+            "work_lat",
+            "work_lon",
             "commute_subsidy_provide_free_parking",
             "commute_subsidy_provide_discounted_parking",
             "commute_subsidy_use_free_parking",
             "commute_subsidy_use_discounted_parking",
         },
         "linked_trips": {
-            "o_purpose",
-            "d_purpose",
+            "linked_trip_id",
+            "hh_id",
+            "tour_id",
+            "joint_tour_id",
+            "o_purpose_category",
+            "d_purpose_category",
+            "o_lat",
+            "o_lon",
+            "d_lat",
+            "d_lon",
+            "depart_time",
+            "arrive_time",
+            "distance_meters",
+            "mode_type",
             "access_mode",
             "egress_mode",
+            "tour_direction",
+            "num_travelers",
         },
-        "tours": {"num_travelers"},
+        "tours": {
+            "tour_id",
+            "hh_id",
+            "parent_tour_id",
+            "joint_tour_id",
+            "subtour_num",
+            "tour_purpose",
+            "tour_category",
+            "tour_mode",
+            "origin_depart_time",
+            "origin_arrive_time",
+        },
+        "joint_trips": {"joint_trip_id", "hh_id"},
         "days": {"person_id", "hh_id", "day_id"},
     },
 )
@@ -445,14 +493,14 @@ def format_ctramp(  # noqa: PLR0913
             person_id, hh_id, person_num, age, gender, employment, student,
             school_type, commute subsidies.
         households: Canonical household data with income and dwelling fields.
-            Required columns: hh_id, home_taz, income_detailed, income_followup,
-            num_vehicles.
+            Required columns: hh_id, home_lat, home_lon, income_bin, num_vehicles.
         linked_trips: Canonical linked trip data. Required columns: linked_trip_id,
             tour_id, o_purpose_category, d_purpose_category, mode_type, o_taz,
             d_taz, tour_direction, times, person_id, hh_id.
-        tours: Canonical tour data. Required columns: tour_id, hh_id, person_id,
-            person_num, tour_category, tour_purpose, o_taz, d_taz, times,
-            tour_mode, joint_tour_id, parent_tour_id.
+        tours: Canonical tour data. Required columns: tour_id, hh_id, subtour_num,
+            parent_tour_id, joint_tour_id, tour_purpose, tour_category, tour_mode,
+            origin_depart_time, origin_arrive_time, and the zone columns named by
+            `taz_field`.
         joint_tours: Aggregated joint tour data carrying ``joint_tour_weight``.
             May be empty but must be provided.
         unlinked_trips: Canonical unlinked trips used to derive detailed transit
