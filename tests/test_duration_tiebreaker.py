@@ -173,7 +173,12 @@ def test_duration_tiebreaker_equal_priority():
 
 
 def test_duration_tiebreaker_different_priority():
-    """Priority wins over duration when priorities differ."""
+    """Priority wins over duration when priorities differ (hierarchy method).
+
+    This is a guarantee of the hierarchy method only; the scoring method
+    deliberately lets a long-enough activity outrank a higher-priority but brief
+    one, so this test pins the method.
+    """
     # Create sample trips with different priorities
     persons, households, unlinked_trips, linked_trips = create_test_data(
         person_data={
@@ -254,7 +259,9 @@ def test_duration_tiebreaker_different_priority():
         ],
     )
 
-    result = extract_tours(persons, households, unlinked_trips, linked_trips)
+    result = extract_tours(
+        persons, households, unlinked_trips, linked_trips, tour_purpose_method="hierarchy"
+    )
 
     # Tour purpose should be work (priority 1) regardless of duration
     tour = result["tours"].row(0, named=True)

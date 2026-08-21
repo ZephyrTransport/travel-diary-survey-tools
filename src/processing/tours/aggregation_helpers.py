@@ -23,6 +23,7 @@ from .priority_utils import (
     add_activity_duration_column,
     add_mode_priority_column,
     add_purpose_priority_column,
+    add_purpose_score_column,
 )
 from .tour_configs import TourConfig
 
@@ -53,8 +54,7 @@ def _calculate_tour_purp_and_dest(
         - tour_purp_and_coords: Aggregated tour purpose and destination coords
     """
     logger.info("Calculating tour purpose and primary destination...")
-    # Add priorities and activity duration for selection logic
-    linked_trips = add_purpose_priority_column(linked_trips, config, alias="_purpose_priority")
+    # Add mode priority and activity duration for selection logic.
     linked_trips = add_mode_priority_column(
         linked_trips, config.mode_hierarchy, alias="_mode_priority"
     )
@@ -89,13 +89,35 @@ def _calculate_tour_purp_and_dest(
         ]
     )
 
-    # Determine tour purpose and primary destination from non-last trips
-    # Note: Single-trip tours will have null purpose
-    # and will be filtered out later
-    non_last = linked_trips.filter(~pl.col("_is_last_trip")).sort(
-        ["tour_id", "_purpose_priority", "_activity_duration"],
-        descending=[False, False, True],
-    )
+    # Order non-last trips so the tour purpose is the first row per tour. Two
+    # methods (config.tour_purpose_method):
+    # - "score": duration-weighted, highest score wins (a long discretionary
+    #   activity can outrank a brief mandatory one). Score is on the *effective*
+    #   purpose so a work-related stop at a worksite competes as work.
+    # - "hierarchy": priority rank, activity duration breaks ties only.
+    # Single-trip tours have no non-last trip and get a null purpose (filtered
+    # downstream).
+    if config.tour_purpose_method == "score":
+        linked_trips = add_purpose_score_column(
+            linked_trips,
+            config,
+            purpose_col="_d_purpose_effective",
+            duration_col="_activity_duration",
+            alias="_purpose_score",
+        )
+        non_last = linked_trips.filter(~pl.col("_is_last_trip")).sort(
+            # score wins; ties broken by longer activity then lowest trip id so
+            # the selection is deterministic.
+            ["tour_id", "_purpose_score", "_activity_duration", "linked_trip_id"],
+            descending=[False, True, True, False],
+            nulls_last=True,
+        )
+    else:
+        linked_trips = add_purpose_priority_column(linked_trips, config, alias="_purpose_priority")
+        non_last = linked_trips.filter(~pl.col("_is_last_trip")).sort(
+            ["tour_id", "_purpose_priority", "_activity_duration"],
+            descending=[False, False, True],
+        )
 
     tour_purp_and_coords = non_last.group_by("tour_id", maintain_order=True).agg(
         [

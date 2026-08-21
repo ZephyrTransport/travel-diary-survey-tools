@@ -33,6 +33,8 @@ times. Downstream formatters can transform to Daysim format (integer codes,
 HHMM times, tour reordering, etc.) as needed.
 """
 
+from typing import Literal
+
 import polars as pl
 from pydantic import BaseModel, Field
 
@@ -147,7 +149,131 @@ class TourConfig(BaseModel):
         description=(
             "Priority order for determining tour purpose by person "
             "category (lower = higher priority). All non-HOME purposes "
-            "must be explicitly defined."
+            "must be explicitly defined. Used only when "
+            "tour_purpose_method='hierarchy'."
+        ),
+    )
+
+    # Tour purpose selection method:
+    # - "score": duration-weighted. Each candidate activity scores
+    #   W * duration / (duration + h); the highest score wins, so a long
+    #   discretionary activity can outweigh a brief mandatory one. W is a
+    #   per-person-category priority ceiling (purpose_score_weights); h is a
+    #   per-purpose shape read from data (purpose_score_halfmax).
+    # - "hierarchy": lexicographic. Highest-priority purpose wins, duration only
+    #   breaks ties within a priority band (purpose_priority_by_personcat).
+    tour_purpose_method: Literal["score", "hierarchy"] = Field(
+        default="score",
+        description=(
+            "How to pick a tour's purpose from its trips: 'score' "
+            "(duration-weighted, highest score wins) or 'hierarchy' "
+            "(priority rank, duration as tie-breaker only)."
+        ),
+    )
+
+    # Purpose ceiling weight W by person category, for the scoring method. Higher
+    # = more likely to be the tour purpose; this sets the ranking, mirroring the
+    # intent of purpose_priority_by_personcat. Mandatory purposes (work/school)
+    # sit well above discretionary ones. ESCORT is demoted to the bottom tier so
+    # it only wins for a pure escort tour (drop-off then home, no other
+    # activity), never when a real activity follows. OVERNIGHT is 0 (never wins).
+    purpose_score_weights: dict[str, dict[PurposeCategory, float]] = Field(
+        default={
+            PersonCategory.WORKER: {
+                PurposeCategory.WORK: 10.0,
+                PurposeCategory.WORK_RELATED: 10.0,
+                PurposeCategory.SCHOOL: 8.0,
+                PurposeCategory.SCHOOL_RELATED: 8.0,
+                PurposeCategory.ESCORT: 2.0,
+                PurposeCategory.SHOP: 4.0,
+                PurposeCategory.MEAL: 4.0,
+                PurposeCategory.SOCIALREC: 4.0,
+                PurposeCategory.ERRAND: 4.0,
+                PurposeCategory.CHANGE_MODE: 2.0,
+                PurposeCategory.OTHER: 2.0,
+                PurposeCategory.MISSING: 2.0,
+                PurposeCategory.PNTA: 2.0,
+                PurposeCategory.NOT_IMPUTABLE: 2.0,
+                PurposeCategory.OVERNIGHT: 0.0,
+            },
+            PersonCategory.STUDENT: {
+                PurposeCategory.SCHOOL: 10.0,
+                PurposeCategory.SCHOOL_RELATED: 10.0,
+                PurposeCategory.WORK: 8.0,
+                PurposeCategory.WORK_RELATED: 8.0,
+                PurposeCategory.ESCORT: 2.0,
+                PurposeCategory.SHOP: 4.0,
+                PurposeCategory.MEAL: 4.0,
+                PurposeCategory.SOCIALREC: 4.0,
+                PurposeCategory.ERRAND: 4.0,
+                PurposeCategory.CHANGE_MODE: 2.0,
+                PurposeCategory.OTHER: 2.0,
+                PurposeCategory.MISSING: 2.0,
+                PurposeCategory.PNTA: 2.0,
+                PurposeCategory.NOT_IMPUTABLE: 2.0,
+                PurposeCategory.OVERNIGHT: 0.0,
+            },
+            PersonCategory.OTHER: {
+                PurposeCategory.WORK: 10.0,
+                PurposeCategory.WORK_RELATED: 10.0,
+                PurposeCategory.SCHOOL: 8.0,
+                PurposeCategory.SCHOOL_RELATED: 8.0,
+                PurposeCategory.ESCORT: 2.0,
+                PurposeCategory.SHOP: 4.0,
+                PurposeCategory.MEAL: 4.0,
+                PurposeCategory.SOCIALREC: 4.0,
+                PurposeCategory.ERRAND: 4.0,
+                PurposeCategory.CHANGE_MODE: 2.0,
+                PurposeCategory.OTHER: 2.0,
+                PurposeCategory.MISSING: 2.0,
+                PurposeCategory.PNTA: 2.0,
+                PurposeCategory.NOT_IMPUTABLE: 2.0,
+                PurposeCategory.OVERNIGHT: 0.0,
+            },
+        },
+        description=(
+            "Purpose ceiling weight W by person category for the scoring method "
+            "(higher = more important as a tour anchor). Sets the purpose "
+            "ranking; the one hand-tuned knob."
+        ),
+    )
+
+    # Purpose half-saturation duration h (minutes), for the scoring method. At a
+    # duration of h the activity reaches half its ceiling W. h is the duration at
+    # which a purpose is "established" as the day's anchor, which is role-based:
+    # - Discretionary (shop/meal/social/errand): each purpose's typical activity
+    #   duration (BATS-2023 weighted median, cross-checked against 2019), so
+    #   x/(x+h) reads as "how long relative to typical" and duration disambiguates
+    #   which discretionary activity is primary.
+    # - Mandatory (work/school): a low establishment threshold (~20 min), not the
+    #   (long) typical duration, so any genuine visit reaches the high ceiling and
+    #   wins; only sub-threshold drive-bys (GPS jitter, brief pass-bys) fall out.
+    # - Escort: deliberately large so escort saturates slowly; with its bottom
+    #   weight it is selected only for a pure escort tour.
+    purpose_score_halfmax: dict[PurposeCategory, float] = Field(
+        default={
+            PurposeCategory.WORK: 20.0,
+            PurposeCategory.WORK_RELATED: 20.0,
+            PurposeCategory.SCHOOL: 20.0,
+            PurposeCategory.SCHOOL_RELATED: 20.0,
+            PurposeCategory.ESCORT: 200.0,
+            PurposeCategory.SHOP: 18.0,
+            PurposeCategory.MEAL: 26.0,
+            PurposeCategory.SOCIALREC: 56.0,
+            PurposeCategory.ERRAND: 29.0,
+            PurposeCategory.OVERNIGHT: 46.0,
+            PurposeCategory.OTHER: 59.0,
+            PurposeCategory.CHANGE_MODE: 60.0,
+            PurposeCategory.MISSING: 60.0,
+            PurposeCategory.PNTA: 60.0,
+            PurposeCategory.NOT_IMPUTABLE: 60.0,
+        },
+        description=(
+            "Half-saturation duration h in minutes by purpose for the scoring "
+            "method: the duration at which a purpose reaches half its ceiling W. "
+            "Discretionary purposes use their BATS-2023 typical activity duration; "
+            "mandatory purposes use a low establishment threshold; escort is set "
+            "high so it only wins a pure escort tour."
         ),
     )
 

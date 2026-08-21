@@ -474,7 +474,13 @@ def test_distant_destinations(distant_destinations_data):
     """Test that tours with distant destinations still get valid times."""
     persons, households, unlinked_trips, linked_trips = distant_destinations_data
 
-    result = extract_tours(persons, households, unlinked_trips, linked_trips)
+    # Pin the hierarchy method: this fixture's work and social stops are both
+    # 60 min, and under the scoring method a 60-min stay reads as a normal social
+    # visit but an atypically brief work visit, so social would win. This test is
+    # about destination-time fallback, not purpose selection.
+    result = extract_tours(
+        persons, households, unlinked_trips, linked_trips, tour_purpose_method="hierarchy"
+    )
     tours_df = result["tours"]
 
     assert len(tours_df) == 1

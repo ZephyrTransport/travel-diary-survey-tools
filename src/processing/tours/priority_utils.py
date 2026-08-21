@@ -124,3 +124,70 @@ def add_activity_duration_column(
             .alias(alias)
         ]
     )
+
+
+def add_purpose_score_column(
+    df: pl.DataFrame,
+    config: TourConfig,
+    purpose_col: str = "_d_purpose_effective",
+    duration_col: str = "_activity_duration",
+    person_category_col: str = "person_category",
+    alias: str = "purpose_score",
+) -> pl.DataFrame:
+    """Add a duration-weighted purpose score used to pick the tour purpose.
+
+    Each candidate activity scores ``W * x / (x + h)`` where ``x`` is its
+    activity duration, ``W`` is the purpose's ceiling weight for the person's
+    category (``config.purpose_score_weights``) and ``h`` is the purpose's
+    half-saturation duration (``config.purpose_score_halfmax``). The score rises
+    with duration toward ``W``, reaching ``W / 2`` at ``x = h``, so a long
+    discretionary activity can outscore a brief mandatory one. Highest score
+    wins.
+
+    Purposes with no configured weight (e.g. HOME) get a null score and are never
+    selected. The lookups are vectorized joins rather than per-row evaluation.
+
+    Args:
+        df: Trip data with the purpose, duration and person-category columns.
+        config: TourConfig carrying the weight and half-max tables.
+        purpose_col: Column holding the (effective) purpose category value.
+        duration_col: Column holding the activity duration in minutes.
+        person_category_col: Column holding the PersonCategory string.
+        alias: Name for the score column to add.
+
+    Returns:
+        DataFrame with the score column added.
+    """
+    weights = pl.DataFrame(
+        [
+            {"_pcat": person_category, "_purpose": purpose.value, "_w": float(weight)}
+            for person_category, purposes in config.purpose_score_weights.items()
+            for purpose, weight in purposes.items()
+        ],
+        schema={"_pcat": pl.Utf8, "_purpose": pl.Int64, "_w": pl.Float64},
+    )
+    halfmax = pl.DataFrame(
+        [
+            {"_purpose": purpose.value, "_h": float(h)}
+            for purpose, h in config.purpose_score_halfmax.items()
+        ],
+        schema={"_purpose": pl.Int64, "_h": pl.Float64},
+    )
+
+    scored = (
+        df.with_columns(pl.col(purpose_col).cast(pl.Int64).alias("_score_purpose"))
+        .join(
+            weights,
+            left_on=[person_category_col, "_score_purpose"],
+            right_on=["_pcat", "_purpose"],
+            how="left",
+        )
+        .join(halfmax, left_on="_score_purpose", right_on="_purpose", how="left")
+        .with_columns(
+            (pl.col("_w") * pl.col(duration_col) / (pl.col(duration_col) + pl.col("_h"))).alias(
+                alias
+            )
+        )
+        .drop("_score_purpose", "_w", "_h")
+    )
+    return scored

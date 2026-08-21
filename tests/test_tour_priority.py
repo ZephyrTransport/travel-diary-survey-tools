@@ -11,6 +11,7 @@ from processing.tours.priority_utils import (
     add_activity_duration_column,
     add_mode_priority_column,
     add_purpose_priority_column,
+    add_purpose_score_column,
 )
 from processing.tours.tour_configs import TourConfig
 
@@ -189,3 +190,178 @@ class TestAddActivityDurationColumn:
 
         assert "custom_duration" in result.columns
         assert "activity_duration" not in result.columns
+
+
+def _score_trips(person_category, purpose_category, durations):
+    """One trip per duration, all same person category and purpose."""
+    n = len(durations)
+    return pl.DataFrame(
+        {
+            "person_category": [person_category] * n,
+            "_d_purpose_effective": [purpose_category] * n,
+            "_activity_duration": [float(d) for d in durations],
+        }
+    )
+
+
+class TestAddPurposeScoreColumn:
+    """Test the duration-weighted purpose score used to pick tour purpose."""
+
+    def test_score_increases_with_duration(self, default_config):
+        """A longer activity of the same purpose always scores higher."""
+        df = _score_trips(PersonCategory.WORKER, PurposeCategory.SHOP.value, [10, 60, 240])
+        scored = add_purpose_score_column(df, default_config, alias="_s")["_s"].to_list()
+        assert scored[0] < scored[1] < scored[2]
+
+    def test_score_is_half_of_ceiling_at_halfmax(self, default_config):
+        """At duration == h the score is exactly W / 2."""
+        h = default_config.purpose_score_halfmax[PurposeCategory.SHOP]
+        w = default_config.purpose_score_weights[PersonCategory.WORKER][PurposeCategory.SHOP]
+        df = _score_trips(PersonCategory.WORKER, PurposeCategory.SHOP.value, [h])
+        score = add_purpose_score_column(df, default_config, alias="_s")["_s"][0]
+        assert score == pytest.approx(w / 2)
+
+    def test_trivial_mandatory_driveby_is_overridden(self, default_config):
+        """A sub-threshold work drive-by (5 min) loses to a long shopping stop.
+
+        Mandatory purposes are sticky (low h), but only above the establishment
+        threshold; a trivial pass-by falls below it and a real activity wins.
+        """
+        df = pl.DataFrame(
+            {
+                "person_category": [PersonCategory.WORKER, PersonCategory.WORKER],
+                "_d_purpose_effective": [
+                    PurposeCategory.WORK.value,
+                    PurposeCategory.SHOP.value,
+                ],
+                "_activity_duration": [5.0, 240.0],
+            }
+        )
+        scored = add_purpose_score_column(df, default_config, alias="_s")
+        work = scored.filter(pl.col("_d_purpose_effective") == PurposeCategory.WORK.value)["_s"][0]
+        shop = scored.filter(pl.col("_d_purpose_effective") == PurposeCategory.SHOP.value)["_s"][0]
+        assert shop > work
+
+    def test_modest_mandatory_is_sticky_over_long_discretionary(self, default_config):
+        """A genuine but short work visit (30 min) still beats a long shop.
+
+        This is the stickiness the scoring is calibrated for: any real mandatory
+        visit wins, so short work stops are not reclassified as discretionary.
+        """
+        df = pl.DataFrame(
+            {
+                "person_category": [PersonCategory.WORKER, PersonCategory.WORKER],
+                "_d_purpose_effective": [
+                    PurposeCategory.WORK.value,
+                    PurposeCategory.SHOP.value,
+                ],
+                "_activity_duration": [30.0, 240.0],
+            }
+        )
+        scored = add_purpose_score_column(df, default_config, alias="_s")
+        work = scored.filter(pl.col("_d_purpose_effective") == PurposeCategory.WORK.value)["_s"][0]
+        shop = scored.filter(pl.col("_d_purpose_effective") == PurposeCategory.SHOP.value)["_s"][0]
+        assert work > shop
+
+    def test_pure_escort_wins_but_escort_with_activity_does_not(self, default_config):
+        """Escort scores below any real activity, so escort+shop is a shop tour."""
+        df = pl.DataFrame(
+            {
+                "person_category": [PersonCategory.WORKER, PersonCategory.WORKER],
+                "_d_purpose_effective": [
+                    PurposeCategory.ESCORT.value,
+                    PurposeCategory.SHOP.value,
+                ],
+                # a long escort vs a modest shop: shop still wins
+                "_activity_duration": [120.0, 30.0],
+            }
+        )
+        scored = add_purpose_score_column(df, default_config, alias="_s")
+        escort = scored.filter(pl.col("_d_purpose_effective") == PurposeCategory.ESCORT.value)[
+            "_s"
+        ][0]
+        shop = scored.filter(pl.col("_d_purpose_effective") == PurposeCategory.SHOP.value)["_s"][0]
+        assert shop > escort
+
+    def test_typical_mandatory_outscores_long_discretionary(self, default_config):
+        """A normal work day still beats even a long social visit."""
+        df = pl.DataFrame(
+            {
+                "person_category": [PersonCategory.WORKER, PersonCategory.WORKER],
+                "_d_purpose_effective": [
+                    PurposeCategory.WORK.value,
+                    PurposeCategory.SOCIALREC.value,
+                ],
+                "_activity_duration": [304.0, 300.0],
+            }
+        )
+        scored = add_purpose_score_column(df, default_config, alias="_s")
+        work = scored.filter(pl.col("_d_purpose_effective") == PurposeCategory.WORK.value)["_s"][0]
+        social = scored.filter(pl.col("_d_purpose_effective") == PurposeCategory.SOCIALREC.value)[
+            "_s"
+        ][0]
+        assert work > social
+
+    def test_person_category_changes_the_ranking(self, default_config):
+        """A worker ranks work over school; a student ranks school over work."""
+        df = pl.DataFrame(
+            {
+                "person_category": [
+                    PersonCategory.WORKER,
+                    PersonCategory.WORKER,
+                    PersonCategory.STUDENT,
+                    PersonCategory.STUDENT,
+                ],
+                "_d_purpose_effective": [
+                    PurposeCategory.WORK.value,
+                    PurposeCategory.SCHOOL.value,
+                    PurposeCategory.WORK.value,
+                    PurposeCategory.SCHOOL.value,
+                ],
+                # equal, typical duration so only the ceiling W decides
+                "_activity_duration": [200.0, 200.0, 200.0, 200.0],
+            }
+        )
+        scored = add_purpose_score_column(df, default_config, alias="_s")
+        worker = scored.filter(pl.col("person_category") == PersonCategory.WORKER)
+        student = scored.filter(pl.col("person_category") == PersonCategory.STUDENT)
+        w_work = worker.filter(pl.col("_d_purpose_effective") == PurposeCategory.WORK.value)["_s"][
+            0
+        ]
+        w_school = worker.filter(pl.col("_d_purpose_effective") == PurposeCategory.SCHOOL.value)[
+            "_s"
+        ][0]
+        s_work = student.filter(pl.col("_d_purpose_effective") == PurposeCategory.WORK.value)["_s"][
+            0
+        ]
+        s_school = student.filter(pl.col("_d_purpose_effective") == PurposeCategory.SCHOOL.value)[
+            "_s"
+        ][0]
+        assert w_work > w_school
+        assert s_school > s_work
+
+    def test_overnight_scores_zero(self, default_config):
+        """OVERNIGHT has ceiling 0, so it never outscores a real purpose."""
+        df = pl.DataFrame(
+            {
+                "person_category": [PersonCategory.WORKER, PersonCategory.WORKER],
+                "_d_purpose_effective": [
+                    PurposeCategory.OVERNIGHT.value,
+                    PurposeCategory.SHOP.value,
+                ],
+                "_activity_duration": [600.0, 20.0],
+            }
+        )
+        scored = add_purpose_score_column(df, default_config, alias="_s")
+        overnight = scored.filter(
+            pl.col("_d_purpose_effective") == PurposeCategory.OVERNIGHT.value
+        )["_s"][0]
+        shop = scored.filter(pl.col("_d_purpose_effective") == PurposeCategory.SHOP.value)["_s"][0]
+        assert overnight == 0.0
+        assert shop > overnight
+
+    def test_unmapped_purpose_scores_null(self, default_config):
+        """A purpose with no weight (HOME) gets a null score and never wins."""
+        df = _score_trips(PersonCategory.WORKER, PurposeCategory.HOME.value, [120])
+        score = add_purpose_score_column(df, default_config, alias="_s")["_s"][0]
+        assert score is None
