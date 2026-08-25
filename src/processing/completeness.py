@@ -375,12 +375,15 @@ def _tour_model_usable_expr(*, has_quality: bool, has_category: bool) -> pl.Expr
     """model_usable expression for the tours table.
 
     A tour is model-usable when its (cascaded) reporting is complete and its
-    structure is admissible: VALID quality (not single-trip, loop,
-    missing-anchor, change-mode, spatial-gap, indeterminate) AND COMPLETE
-    category -- it departs from and returns to its own anchor. The anchor is
-    home for a home-based tour and the workplace for an at-work subtour, so one
-    criterion admits both. This matches the CT-RAMP / DaySim drop criterion
-    exactly.
+    structure is admissible: VALID quality (not single-trip, loop, partial,
+    change-mode or spatially gapped) AND COMPLETE category -- it departs from
+    and returns to its own anchor. The anchor is home for a home-based tour and
+    the workplace for an at-work subtour, so one criterion admits both. This
+    matches the CT-RAMP / DaySim drop criterion exactly.
+
+    VALID now implies COMPLETE, since the partial shapes are quality codes in
+    their own right; the category term is kept as a guard for frames that carry
+    a category but no quality column.
     """
     usable = pl.col("complete").fill_null(value=False)
     if has_quality:

@@ -399,26 +399,24 @@ class TourModel(BaseModel):
 
     @model_validator(mode="after")
     def validate_complete_tours(self) -> "TourModel":
-        """Validate that complete tours have all required fields.
+        """Validate that a tour with a primary destination describes it fully.
 
-        Single-trip tours (where person made one trip but didn't return home)
-        are allowed to have null tour_purpose, destination times, and
-        dest_linked_trip_id. Complete tours must have these fields populated.
+        A null ``tour_purpose`` is a legitimate outcome, not an error: a tour
+        whose every candidate stop was the return leg or a mode change has no
+        activity to anchor on, and extraction records that as
+        ``TourDataQuality.NO_DESTINATION``. What must hold is the converse --
+        once a tour *has* a purpose, it has a primary destination, so the
+        timings and the trip it was drawn from cannot be missing.
         """
-        if not self.single_trip_tour:
-            if self.tour_purpose is None:
-                msg = f"Tour {self.tour_id}: Complete tours must have tour_purpose (non-null)"
-                raise ValueError(msg)
+        if self.tour_purpose is not None:
             if self.dest_arrive_time is None:
-                msg = f"Tour {self.tour_id}: Complete tours must have dest_arrive_time (non-null)"
+                msg = f"Tour {self.tour_id}: a tour with a purpose must have dest_arrive_time"
                 raise ValueError(msg)
             if self.dest_depart_time is None:
-                msg = f"Tour {self.tour_id}: Complete tours must have dest_depart_time (non-null)"
+                msg = f"Tour {self.tour_id}: a tour with a purpose must have dest_depart_time"
                 raise ValueError(msg)
             if self.dest_linked_trip_id is None:
-                msg = (
-                    f"Tour {self.tour_id}: Complete tours must have dest_linked_trip_id (non-null)"
-                )
+                msg = f"Tour {self.tour_id}: a tour with a purpose must have dest_linked_trip_id"
                 raise ValueError(msg)
         return self
 

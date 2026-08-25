@@ -58,12 +58,35 @@ class TourDirection(LabeledEnum):
 
 
 class TourDataQuality(LabeledEnum):
-    """Tour data quality classification for validation and filtering."""
+    """Why a tour is not a valid round trip. ``VALID`` means it is one.
+
+    A tour is valid when it is a closed excursion from its anchor, observed end
+    to end, with a real activity to anchor it on. Every other code names the
+    single reason that failed. Where ``tour_category`` says *which* end is open,
+    this says *why* it is open -- the two answer different questions and neither
+    substitutes for the other.
+
+    Read the ``PARTIAL_*`` codes as statements about observation, not about
+    corruption: the trips are as the respondent reported them, and the tour does
+    not close because the diary stopped watching. ``NO_DESTINATION`` and
+    ``SPATIAL_GAP``, by contrast, mean the record itself cannot be trusted.
+
+    This is a **leaf** fact, computed from the tour's own trips plus the
+    surrounding trips of the same person, so the completeness cascade can read
+    it without the derivation ever pointing back at ``model_usable``. Reporting
+    completeness (``complete``), household-date coherence (``hh_day_complete``)
+    and the model gate (``model_usable``) live in their own columns and never
+    leak in here: a tour can be flawless and still be dropped because a
+    housemate skipped that date, which is not a fact about this tour.
+    """
 
     VALID = (0, "Valid tour")
-    SINGLE_TRIP = (1, "Single-trip tour")
-    LOOP_TRIP = (2, "Home-based loop trip")
-    MISSING_ANCHOR = (3, "No anchor at either end of tour")
-    INDETERMINATE = (4, "Invalid tour, cause unknown")
-    CHANGE_MODE = (5, "Change mode as primary purpose (linking failure)")
-    SPATIAL_GAP = (6, "Spatial gap between consecutive trips (missing leg)")
+    PARTIAL_OTHER_HOME = (1, "Open end is another home known for this person")
+    PARTIAL_DAY_SPLIT = (2, "Chain resumes at the same place on the next diary day")
+    PARTIAL_DIARY_EDGE = (3, "First or last trip in the diary; its open end is not a known home")
+    NO_DESTINATION = (
+        4,
+        "No activity to anchor the tour on: returns to the anchor without "
+        "stopping, or every stop was a mode change",
+    )
+    SPATIAL_GAP = (5, "Missing leg, inside the tour or at its boundary")

@@ -326,7 +326,7 @@ class TestDropInvalidTours:
                 "tour_id": [1, 2, 3, 4],
                 "tour_data_quality": [
                     TourDataQuality.VALID.value,
-                    TourDataQuality.SINGLE_TRIP.value,  # invalid
+                    TourDataQuality.NO_DESTINATION.value,  # invalid
                     TourDataQuality.VALID.value,
                     TourDataQuality.VALID.value,
                 ],
@@ -394,7 +394,7 @@ class TestDropInvalidTours:
                 "tour_id": [1, 2],
                 "tour_data_quality": [
                     TourDataQuality.VALID.value,
-                    TourDataQuality.SINGLE_TRIP.value,
+                    TourDataQuality.NO_DESTINATION.value,
                 ],
                 "tour_category": [TourCategory.COMPLETE.value, TourCategory.PARTIAL_BOTH.value],
             }

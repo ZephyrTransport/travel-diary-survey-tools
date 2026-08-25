@@ -79,13 +79,28 @@ def _calculate_tour_purp_and_dest(
     )
     linked_trips = linked_trips.with_columns(effective_purpose.alias("_d_purpose_effective"))
 
-    # Mark last trip (excluded from purpose selection)
+    # A trip cannot supply the tour purpose when it is the *return leg* -- the
+    # last trip, landing back on the anchor. That arrival is the tour closing,
+    # not an activity. A partial tour's last trip never reaches the anchor, so
+    # its destination is a genuine candidate; excluding it purely for being last
+    # is what left every one-trip tour with a null purpose.
+    is_last_trip = pl.col("linked_trip_id").rank("ordinal").over("tour_id") == pl.col(
+        "linked_trip_id"
+    ).count().over("tour_id")
+    anchor_reached = (
+        pl.when(pl.col("subtour_num") > 0)
+        .then(pl.col("_d_at_work") | pl.col("_d_at_school"))
+        .otherwise(pl.col("_d_is_home"))
+    )
     linked_trips = linked_trips.with_columns(
         [
+            is_last_trip.alias("_is_last_trip"),
+            # Mode changes are never activities, so they can never be the
+            # primary destination however long the dwell.
             (
-                pl.col("linked_trip_id").rank("ordinal").over("tour_id")
-                == pl.col("linked_trip_id").count().over("tour_id")
-            ).alias("_is_last_trip"),
+                (is_last_trip & anchor_reached.fill_null(value=False))
+                | (pl.col("_d_purpose_effective") == PurposeCategory.CHANGE_MODE.value)
+            ).alias("_is_not_a_destination"),
         ]
     )
 
@@ -95,8 +110,9 @@ def _calculate_tour_purp_and_dest(
     #   activity can outrank a brief mandatory one). Score is on the *effective*
     #   purpose so a work-related stop at a worksite competes as work.
     # - "hierarchy": priority rank, activity duration breaks ties only.
-    # Single-trip tours have no non-last trip and get a null purpose (filtered
-    # downstream).
+    # A tour with no candidate at all -- an anchor-to-anchor loop, or one whose
+    # every stop was a mode change -- gets a null purpose and is flagged
+    # NO_DESTINATION downstream.
     if config.tour_purpose_method == "score":
         linked_trips = add_purpose_score_column(
             linked_trips,
@@ -105,7 +121,7 @@ def _calculate_tour_purp_and_dest(
             duration_col="_activity_duration",
             alias="_purpose_score",
         )
-        non_last = linked_trips.filter(~pl.col("_is_last_trip")).sort(
+        non_last = linked_trips.filter(~pl.col("_is_not_a_destination")).sort(
             # score wins; ties broken by longer activity then lowest trip id so
             # the selection is deterministic.
             ["tour_id", "_purpose_score", "_activity_duration", "linked_trip_id"],
@@ -114,7 +130,7 @@ def _calculate_tour_purp_and_dest(
         )
     else:
         linked_trips = add_purpose_priority_column(linked_trips, config, alias="_purpose_priority")
-        non_last = linked_trips.filter(~pl.col("_is_last_trip")).sort(
+        non_last = linked_trips.filter(~pl.col("_is_not_a_destination")).sort(
             ["tour_id", "_purpose_priority", "_activity_duration"],
             descending=[False, False, True],
         )

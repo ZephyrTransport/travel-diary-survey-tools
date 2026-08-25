@@ -804,7 +804,7 @@ def _build_records():
     )
 
     # HH 20 - day that never touches home (work -> meal -> gym) ->
-    # tour_data_quality MISSING_ANCHOR, tour_category PARTIAL_BOTH.
+    # tour_data_quality PARTIAL_BOTH, tour_category PARTIAL_BOTH.
     s.household(20, "home_b", income=INC_50_75K)
     s.person(
         2001,

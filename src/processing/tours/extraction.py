@@ -93,6 +93,7 @@ from typing import Any
 
 import polars as pl
 
+from data_canon.codebook.generic import LocationType
 from pipeline.decoration import step
 from utils.create_ids import create_tour_ids
 
@@ -275,7 +276,9 @@ def extract_tours(
     tours = validate_and_correct_tours(
         tours,
         linked_trips_with_tour_dir,
+        habitual_locations=habitual_locations,
         spatial_gap_threshold_meters=config.spatial_gap_threshold_meters,
+        home_threshold_meters=config.distance_thresholds[LocationType.HOME],
     )
 
     # Step 8: Add tour_id and joint_tour_id to unlinked_trips

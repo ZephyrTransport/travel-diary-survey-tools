@@ -450,10 +450,9 @@ def test_single_trip_tour(single_trip_tour_data):
     # Tour number should be 1, not 0
     assert tours_df["tour_num"][0] == 1
 
-    # Single-trip tours are allowed to have null purpose and dest times
-    assert tours_df["tour_purpose"][0] is None
-    assert tours_df["dest_arrive_time"][0] is None
-    assert tours_df["dest_depart_time"][0] is None
+    # The one trip leaves home and stops at the shop without returning, so the
+    # shop is a genuine primary destination -- not a return leg to be skipped.
+    assert tours_df["tour_purpose"][0] == PurposeCategory.SHOP.value
 
 
 def test_partial_tour(partial_tour_data):

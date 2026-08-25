@@ -72,16 +72,17 @@ def validate_row_for_step(
     try:
         model.model_validate(filtered_row, strict=False)
     except PydanticValidationError as e:
-        # Only re-raise errors for fields that are actually present
-        # or required for this step
-        relevant_errors = [
-            err
-            for err in e.errors()
-            if (
-                err.get("loc", [None])[0] in filtered_row
-                or err.get("loc", [None])[0] in required_fields
-            )
-        ]
+        # Only re-raise errors for fields that are actually present or required
+        # for this step. A model-level validator reports an empty ``loc`` -- it
+        # is about the row as a whole rather than one field -- so it is always
+        # relevant and must not be indexed into.
+        def _is_relevant(err: dict) -> bool:
+            loc = err.get("loc") or ()
+            if not loc:
+                return True
+            return loc[0] in filtered_row or loc[0] in required_fields
+
+        relevant_errors = [err for err in e.errors() if _is_relevant(err)]
         if relevant_errors:
             raise PydanticValidationError.from_exception_data(
                 model.__name__,

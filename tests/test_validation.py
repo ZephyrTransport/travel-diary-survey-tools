@@ -514,7 +514,7 @@ class TestValidToursAreComplete:
 
     def test_single_trip_flagged_invalid_passes(self):
         """A single-trip tour flagged non-VALID is allowed to lack a purpose."""
-        tours = self._tours(TourDataQuality.SINGLE_TRIP.value, single_trip=True, purpose=None)
+        tours = self._tours(TourDataQuality.NO_DESTINATION.value, single_trip=True, purpose=None)
         assert check_valid_tours_are_complete(tours) == []
 
     def test_valid_but_single_trip_fails(self):

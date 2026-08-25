@@ -43,7 +43,7 @@ Feature-specific behaviours (imputation stash, edge-case coverage below) are ass
 | 4 | Multi-stop errands | non-mandatory day (activity N), inbound/outbound stops |
 | 5 | Escort + school child (proxy) | ESCORT, child non-driving, proxy respondent |
 | 6 | Work subtour (lunch) | at-work subtour: tour_type WORK_BASED, COMPLETE against its work anchor, emitted AT_WORK in CT-RAMP |
-| 7 | Single-trip tour (no return) | tour_data_quality SINGLE_TRIP, SOCIALREC |
+| 7 | Single-trip tour (no return) | tour_data_quality PARTIAL_DIARY_EDGE, SOCIALREC |
 | 8 | Weekend 2 retirees | weekend day, joint, Retired person type |
 | 9 | TNC user | TNC mode, zero-vehicle household |
 | 10 | Bikeshare + part-time student | BIKESHARE mode, PT student |
@@ -54,9 +54,9 @@ Feature-specific behaviours (imputation stash, edge-case coverage below) are ass
 | 15 | Car-free bike commuter | BIKE mode |
 | 16 | University student + non-traveler | person_type UNIVERSITY_STUDENT, student_category College, activity M **and** H (person with a day but no trips) |
 | 17 | PT worker with stops | PART_TIME_WORKER, outbound + inbound intermediate stops |
-| 18 | Home→home loop | tour_data_quality LOOP_TRIP |
-| 19 | Change-mode primary purpose | tour_data_quality CHANGE_MODE, CHANGE_MODE purpose, >180 min no-link |
-| 20 | Day never touches home | tour_data_quality MISSING_ANCHOR, category PARTIAL_BOTH |
+| 18 | Home→home loop | tour_data_quality NO_DESTINATION |
+| 19 | Change-mode-only stops | tour_data_quality NO_DESTINATION, CHANGE_MODE purpose, >180 min no-link |
+| 20 | Day never touches home | tour_data_quality PARTIAL_DIARY_EDGE, category PARTIAL_BOTH |
 | 21 | Starts away, ends home | tour_category PARTIAL_START |
 | 22 | Home→work→social | tour_category PARTIAL_END |
 | 23 | 3-person joint with a child | 3-person clique, composition ADULTS_AND_CHILDREN |
@@ -68,7 +68,7 @@ Feature-specific behaviours (imputation stash, edge-case coverage below) are ass
 - **CT-RAMP person_type**: all 8 (FT worker, PT worker, university student, nonworker, retired, child driving-age, child non-driving, child under-5).
 - **StudentCategory**: all 3 (College or higher, Grade or high school, Not a student).
 - **activity_pattern**: M, N, H.
-- **tour_data_quality**: VALID, SINGLE_TRIP, LOOP_TRIP, MISSING_ANCHOR, CHANGE_MODE (5 of 6).
+- **tour_data_quality**: VALID, PARTIAL_DIARY_EDGE, NO_DESTINATION (3 of 6). PARTIAL_OTHER_HOME, PARTIAL_DAY_SPLIT and SPATIAL_GAP need travel the generator does not produce and are unit-tested.
 - **tour_category**: COMPLETE, PARTIAL_END, PARTIAL_START, PARTIAL_BOTH (all 4).
 - **joint tour_composition**: ADULTS_ONLY, CHILDREN_ONLY, ADULTS_AND_CHILDREN (all 3).
 - **modes**: walk, bike, bikeshare, taxi, TNC, car, school-bus, transit.

@@ -102,7 +102,7 @@ def _gate_tables(
     """
     tour_quality = tour_quality or [
         TourDataQuality.VALID.value,
-        TourDataQuality.SINGLE_TRIP.value,
+        TourDataQuality.NO_DESTINATION.value,
         TourDataQuality.VALID.value,
     ]
     tour_category = tour_category or [
@@ -170,7 +170,7 @@ class TestComputeModelUsable:
     def test_day_with_tours_but_none_usable_is_gated_out(self):
         """A day whose travel yields no admissible tour is not model-usable."""
         tables = _gate_tables(
-            tour_quality=[TourDataQuality.SINGLE_TRIP.value] * 3,
+            tour_quality=[TourDataQuality.NO_DESTINATION.value] * 3,
             tour_category=[TourCategory.PARTIAL_BOTH.value] * 3,
         )
         compute_model_usable(tables)
@@ -226,7 +226,7 @@ def _joint_tables(*, tour_usable: list[bool]):
                 "complete": [True] * n,
                 # Quality/category decide usability; drive them from tour_usable.
                 "tour_data_quality": [
-                    TourDataQuality.VALID.value if u else TourDataQuality.LOOP_TRIP.value
+                    TourDataQuality.VALID.value if u else TourDataQuality.NO_DESTINATION.value
                     for u in tour_usable
                 ],
                 "tour_category": [TourCategory.COMPLETE.value] * n,

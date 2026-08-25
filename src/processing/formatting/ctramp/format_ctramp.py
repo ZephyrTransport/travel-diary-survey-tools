@@ -529,8 +529,8 @@ def format_ctramp(  # noqa: PLR0913
             hh_weight before formatting, cascading to persons, tours, and
             trips (default: True).
         drop_invalid_tours: If True, remove tours that are not VALID (single-trip,
-            loop, missing-anchor, change-mode, indeterminate) or not COMPLETE (do
-            not start and end at home), mirroring the DaySim formatter (which drops
+            loop, partial, change-mode, spatially gapped) or not COMPLETE (do not
+            start and end at home), mirroring the DaySim formatter (which drops
             both). Cascades to linked and joint trips (default: True).
 
     Returns:

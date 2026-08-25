@@ -69,7 +69,7 @@ class CTRAMPConfig(BaseModel):
         default=True,
         description=(
             "If True, remove tours that are not VALID (single-trip, loop, "
-            "missing-anchor, change-mode, indeterminate) or not COMPLETE (do not "
+            "partial, change-mode, spatially gapped) or not COMPLETE (do not "
             "start and end at home). Mirrors the DaySim formatter, which drops "
             "both, so both outputs keep the same tours. Cascades to linked and "
             "joint trips."
