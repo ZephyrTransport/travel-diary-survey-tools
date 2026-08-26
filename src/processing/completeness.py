@@ -583,7 +583,7 @@ def _log_gate_summary(tables: dict[str, pl.DataFrame | None]) -> None:
         '  "complete" = survey reporting (partials/overnights included); '
         '"model_usable" = admissible to the tour-based model.',
         "",
-        f"  {'table':<16}{'rows':>10}{'complete':>12}{'model_usable':>14}{'net-new':>10}",
+        f"  {'table':<16}{'rows':>10}{'complete':>12}{'model_usable':>14}{'newly unusable':>16}",
     ]
     for name, df in tables.items():
         if df is None or "model_usable" not in df.columns:
@@ -591,9 +591,10 @@ def _log_gate_summary(tables: dict[str, pl.DataFrame | None]) -> None:
         n = df.height
         n_complete = df.filter(pl.col("complete").fill_null(value=False)).height
         n_usable = df.filter(pl.col("model_usable")).height
-        # net-new = valid survey data the model still cannot use
-        net_new = n_complete - n_usable
-        lines.append(f"  {name:<16}{n:>10,}{n_complete:>12,}{n_usable:>14,}{net_new:>10,}")
+        # Survey data that reported fine and the model still cannot use, which
+        # is the column worth reading: the loss this gate adds on its own.
+        newly_unusable = n_complete - n_usable
+        lines.append(f"  {name:<16}{n:>10,}{n_complete:>12,}{n_usable:>14,}{newly_unusable:>16,}")
     logger.info("\n".join(lines))
 
 

@@ -6,7 +6,8 @@ preserved, and log what was removed:
 
 * [`_drop_invalid_tours`][processing.formatting.ctramp.filters._drop_invalid_tours]:
   removes tours that are not VALID or not COMPLETE (mirrors the DaySim formatter),
-  reporting a two-grid drop summary split by already-incomplete vs. net-new loss.
+  reporting a two-grid drop summary split by already-incomplete vs. newly-unusable
+  loss.
 * [`_drop_missing_taz`][processing.formatting.ctramp.filters._drop_missing_taz]:
   removes households (and their descendants) without a valid home TAZ, and
   tours/trips whose origin or destination TAZ is missing.
@@ -145,12 +146,13 @@ def _drop_lone_joint_participants(
 
 
 def _completeness_split(df: pl.DataFrame) -> tuple[int, int]:
-    """Return (already_incomplete, net_new) counts from the ``complete`` flag.
+    """Return (already_incomplete, newly_unusable) counts from the ``complete`` flag.
 
     ``already_incomplete`` are records flagged incomplete (household / person /
-    day cascade) — they were already excluded from the weighted model. ``net_new``
-    are otherwise-complete records now being dropped. When the ``complete`` column
-    is absent (e.g. tests), everything is treated as net-new.
+    day cascade) — they were already excluded from the weighted model.
+    ``newly_unusable`` are otherwise-complete records now being dropped. When the
+    ``complete`` column is absent (e.g. tests), everything is treated as newly
+    unusable.
     """
     total = df.height
     if "complete" not in df.columns:
@@ -162,23 +164,23 @@ def _completeness_split(df: pl.DataFrame) -> tuple[int, int]:
 def _drop_grid(title: str, df: pl.DataFrame, denom: int) -> list[str]:
     """Build the lines of one drop grid (tours or member trips).
 
-    ``net %`` is the net-new share of all records — the genuinely new data loss.
+    ``new %`` is the newly-unusable share of all records — the genuinely new loss.
     """
-    header = f"  {title:<14}{'dropped':>9}{'incomplete':>13}{'net-new':>10}{'net %':>8}"
+    header = f"  {title:<14}{'dropped':>9}{'incomplete':>13}{'newly unusable':>16}{'new %':>8}"
 
-    def row(name: str, incomplete: int, net: int) -> str:
-        total = incomplete + net
-        pct = net * 100 / denom if denom > 0 else 0
-        return f"  {name:<14}{total:>9,}{incomplete:>13,}{net:>10,}{pct:>7.1f}%"
+    def row(name: str, incomplete: int, newly_unusable: int) -> str:
+        total = incomplete + newly_unusable
+        pct = newly_unusable * 100 / denom if denom > 0 else 0
+        return f"  {name:<14}{total:>9,}{incomplete:>13,}{newly_unusable:>16,}{pct:>7.1f}%"
 
     lines = [header]
     for label in ("invalid", "partial/open"):
-        incomplete, net = _completeness_split(df.filter(pl.col("_reason") == label))
-        if incomplete + net == 0:
+        incomplete, newly_unusable = _completeness_split(df.filter(pl.col("_reason") == label))
+        if incomplete + newly_unusable == 0:
             continue
-        lines.append(row(label, incomplete, net))
-    incomplete, net = _completeness_split(df)
-    lines.append(row("total", incomplete, net))
+        lines.append(row(label, incomplete, newly_unusable))
+    incomplete, newly_unusable = _completeness_split(df)
+    lines.append(row("total", incomplete, newly_unusable))
     return lines
 
 
@@ -187,8 +189,8 @@ def _log_drop_summary(dropped: pl.DataFrame, linked_trips: pl.DataFrame, n_og_to
 
     Splits each count into records that were already incomplete (household /
     person / day flagged incomplete — already out of the weighted model) versus
-    net-new removal of otherwise-complete records, so the log makes clear how
-    much is genuinely new loss.
+    newly-unusable removal of otherwise-complete records, so the log makes clear
+    how much is genuinely new loss.
     """
     if dropped.height == 0:
         return
@@ -199,7 +201,7 @@ def _log_drop_summary(dropped: pl.DataFrame, linked_trips: pl.DataFrame, n_og_to
     lines = [
         "Dropped tours/member-trips to match DaySim (DaySim already drops these).",
         '  "incomplete" = flagged incomplete via the household>person>day>trip cascade; '
-        '"net-new" = otherwise-complete records.',
+        '"newly unusable" = otherwise-complete records.',
         "",
         *_drop_grid("TOURS", dropped, n_og_tours),
         "",

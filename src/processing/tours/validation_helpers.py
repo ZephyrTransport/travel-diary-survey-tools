@@ -86,8 +86,8 @@ def _open_end_facts(
     after it, so this walks each person's whole trip sequence -- across diary
     days, which is exactly where tours are cut -- and reports, per tour:
 
-    * ``_start_other_home`` / ``_end_other_home`` -- that end sits on a home the
-      pipeline already observed for this person but does not anchor on.
+    * ``_start_other_home`` / ``_end_other_home`` -- that end sits on another
+      home this person is known to have, which tours are not built around.
     * ``_start_resumes`` / ``_end_resumes`` -- the adjacent trip picks up at the
       same place, so the journey continues and was merely split.
     * ``_start_edge`` / ``_end_edge`` -- there is no adjacent trip at all; the
@@ -198,13 +198,14 @@ def _other_home_flags(
     habitual_locations: pl.DataFrame | None,
     home_threshold_meters: float,
 ) -> pl.DataFrame:
-    """Flag tour ends sitting on a secondary home of the same person.
+    """Flag tour ends sitting on another home of the same person.
 
-    ``build_habitual_locations`` already derives the other homes a person stays
-    at from their own travel; they simply are not used as tour anchors. A tour
-    that begins or ends at one is not really partial -- it closes on a home we
-    declined to anchor on -- so saying that outright is more honest than
-    reporting a truncation that did not happen.
+    Any non-primary home in ``habitual_locations`` counts, whether the
+    respondent reported it or the pipeline derived it from their travel --
+    a second residence is a second residence either way. Tours are simply not
+    built around them, so one that begins or ends at one reads as truncated
+    when it is not. Saying so outright beats reporting a truncation that did
+    not happen.
     """
     blank = ends.select("tour_id").with_columns(
         pl.lit(value=False).alias("_start_other_home"),
