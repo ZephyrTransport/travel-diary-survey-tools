@@ -70,11 +70,18 @@ def test_chained_shorthands_resolve():
 
 
 def test_no_template_leaks_into_a_resolved_path(tmp_path):
-    """No resolved value keeps an unexpanded marker, which becomes a real path."""
+    """No resolved value keeps an unexpanded marker, which becomes a real path.
+
+    ``survey_dir`` is rooted in ``tmp_path`` rather than a literal drive because
+    this is the one case here that sets ``log_file``: ``Pipeline`` creates the
+    log's parent directory on construction, so whatever this resolves to gets
+    made on disk. Pointed at ``M:/``, that means the mapped network share on a
+    Windows machine, and a FileNotFoundError on one without it.
+    """
     config = _load(
         tmp_path,
         {
-            "survey_dir": "M:/survey",
+            "survey_dir": str(tmp_path / "survey"),
             "output_dir": "{{ survey_dir }}/out",
             "log_file": "{{ output_dir }}/run.log",
             "steps": [],

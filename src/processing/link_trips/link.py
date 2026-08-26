@@ -449,12 +449,21 @@ def aggregate_linked_trips(
         (pl.col("arrive_time").max() - pl.col("depart_time").min())
         .dt.total_minutes()
         .alias("duration_minutes"),
-        # Dwell duration at change_mode locations:
-        # duration_minutes - travel_duration_minutes
-        (
-            (pl.col("arrive_time").max() - pl.col("depart_time").min()).dt.total_minutes()
-            - pl.col("duration_minutes").sum()
-        ).alias("dwell_duration_minutes"),
+        # Dwell duration: time waiting between the merged segments (e.g. a
+        # transfer), summed over each gap from one segment's arrival to the
+        # next segment's departure. Measured from the timestamps alone so it
+        # cannot go negative and a single-segment trip is exactly zero. The
+        # earlier "elapsed minus summed segment durations" form differenced two
+        # independently rounded quantities -- vendor durations are whole
+        # minutes, elapsed is truncated -- and so reported -1 minutes of dwell
+        # on trips that had no dwell at all.
+        (pl.col("depart_time").shift(-1) - pl.col("arrive_time"))
+        .dt.total_seconds()
+        .sum()
+        .truediv(60)
+        .round()
+        .cast(pl.Int64)
+        .alias("dwell_duration_minutes"),
         # Number of segments in linked trip
         pl.len().alias("num_segments"),
     ]

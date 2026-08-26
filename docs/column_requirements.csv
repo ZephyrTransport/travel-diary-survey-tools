@@ -115,7 +115,7 @@ linked_trips,joint_tour_id,int or None,≥ 1, FK → `joint_tours.joint_tour_id`
 linked_trips,linked_trip_num,int or None,≥ 1,,,,,,,,,,,,
 linked_trips,num_segments,int or None,≥ 1,,,,,,,,,,,,
 linked_trips,travel_duration_minutes,int or None,≥ 0,,,,,,,,,,,,
-linked_trips,dwell_duration_minutes,int or None,,,,,,,,,,,,,
+linked_trips,dwell_duration_minutes,int or None,≥ 0,,,,,,,,,,,,
 linked_trips,o_location_type,LocationType,,,,,,,,,,,,,
 linked_trips,d_location_type,LocationType,,,,,,,,,,,,,
 linked_trips,complete,bool or None,,,,,,,,,,,,,

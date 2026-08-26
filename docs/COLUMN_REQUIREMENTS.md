@@ -157,7 +157,7 @@ Each tab shows the fields for one canonical table. Only steps that reference the
     | `linked_trip_num` | int or None | ≥ 1 |  |  |  |  |  |
     | `num_segments` | int or None | ≥ 1 |  |  |  |  |  |
     | `travel_duration_minutes` | int or None | ≥ 0 |  |  |  |  |  |
-    | `dwell_duration_minutes` | int or None |  |  |  |  |  |  |
+    | `dwell_duration_minutes` | int or None | ≥ 0 |  |  |  |  |  |
     | `o_location_type` | LocationType |  |  |  |  |  |  |
     | `d_location_type` | LocationType |  |  |  |  |  |  |
     | `complete` | bool or None |  |  |  |  |  |  |

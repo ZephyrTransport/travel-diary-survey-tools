@@ -1238,3 +1238,116 @@ class TestTableLevelUniqueness:
             assert count == 1, (
                 f"linked_trip_id {unlinked_trip_id} appears {count} times, should be 1"
             )
+
+
+def _segments(times: list[tuple[datetime, datetime]], durations: list[float]) -> pl.DataFrame:
+    """Build one linked trip's segments from (depart, arrive) pairs.
+
+    ``durations`` is the vendor's reported minutes in motion per segment, kept
+    separate from the timestamps so a test can round them against each other.
+    """
+    n = len(times)
+    return pl.DataFrame(
+        {
+            "linked_trip_id": [1] * n,
+            "linked_trip_num": [1] * n,
+            "person_id": [100] * n,
+            "hh_id": [10] * n,
+            "day_id": [10001] * n,
+            "depart_time": [depart for depart, _ in times],
+            "arrive_time": [arrive for _, arrive in times],
+            "travel_dow": [1] * n,
+            "depart_date": [depart.date() for depart, _ in times],
+            "arrive_date": [arrive.date() for _, arrive in times],
+            "depart_hour": [depart.hour for depart, _ in times],
+            "depart_minute": [depart.minute for depart, _ in times],
+            "depart_seconds": [depart.second for depart, _ in times],
+            "arrive_hour": [arrive.hour for _, arrive in times],
+            "arrive_minute": [arrive.minute for _, arrive in times],
+            "arrive_seconds": [arrive.second for _, arrive in times],
+            "o_purpose_category": [PurposeCategory.HOME.value]
+            + [PurposeCategory.CHANGE_MODE.value] * (n - 1),
+            "d_purpose_category": [PurposeCategory.CHANGE_MODE.value] * (n - 1)
+            + [PurposeCategory.WORK.value],
+            "o_purpose": [Purpose.HOME.value] + [Purpose.MODE_CHANGE.value] * (n - 1),
+            "d_purpose": [Purpose.MODE_CHANGE.value] * (n - 1) + [Purpose.GROCERY.value],
+            "o_lat": [37.7] * n,
+            "o_lon": [-122.4] * n,
+            "d_lat": [37.75] * n,
+            "d_lon": [-122.45] * n,
+            "mode_type": [ModeType.WALK.value] * n,
+            "num_travelers": [1] * n,
+            "driver": [0] * n,
+            "distance_meters": [804.67] * n,
+            "duration_minutes": durations,
+            "unlinked_trip_weight": [1.0] * n,
+        }
+    )
+
+
+class TestDwellDuration:
+    """``dwell_duration_minutes`` is measured from the timestamps.
+
+    It is the time spent waiting *between* the merged segments, so it is read
+    off the gaps themselves rather than derived by subtracting reported segment
+    durations from elapsed time. Those two quantities round independently, and
+    differencing them used to manufacture negative dwell on trips that had none.
+    """
+
+    def test_dwell_is_the_gap_between_segments(self):
+        """Two segments five minutes apart dwell for five minutes."""
+        trips = _segments(
+            [
+                (datetime(2024, 1, 1, 8, 0), datetime(2024, 1, 1, 8, 10)),
+                (datetime(2024, 1, 1, 8, 15), datetime(2024, 1, 1, 8, 45)),
+            ],
+            durations=[10.0, 30.0],
+        )
+
+        result = aggregate_linked_trips(trips, transit_mode_enums=[ModeType.TRANSIT.value])
+
+        assert result.row(0, named=True)["dwell_duration_minutes"] == 5
+
+    def test_dwell_sums_every_gap(self):
+        """Three segments have two gaps, and both count."""
+        trips = _segments(
+            [
+                (datetime(2024, 1, 1, 8, 0), datetime(2024, 1, 1, 8, 10)),
+                (datetime(2024, 1, 1, 8, 15), datetime(2024, 1, 1, 8, 30)),
+                (datetime(2024, 1, 1, 8, 37), datetime(2024, 1, 1, 9, 0)),
+            ],
+            durations=[10.0, 15.0, 23.0],
+        )
+
+        result = aggregate_linked_trips(trips, transit_mode_enums=[ModeType.TRANSIT.value])
+
+        assert result.row(0, named=True)["dwell_duration_minutes"] == 5 + 7
+
+    def test_single_segment_trip_has_no_dwell(self):
+        """One segment has no gap to wait in, so its dwell is exactly zero."""
+        trips = _segments(
+            [(datetime(2024, 1, 1, 8, 0), datetime(2024, 1, 1, 8, 10))],
+            durations=[10.0],
+        )
+
+        result = aggregate_linked_trips(trips, transit_mode_enums=[ModeType.TRANSIT.value])
+
+        assert result.row(0, named=True)["dwell_duration_minutes"] == 0
+
+    def test_dwell_survives_durations_that_exceed_elapsed(self):
+        """A segment reported longer than it elapsed must not dwell negatively.
+
+        Vendor durations are whole minutes and elapsed was truncated, so a
+        10.5-minute segment reported as 11 used to yield 10 - 11 = -1 minutes
+        of dwell on a trip with no gap at all. This was 43% of BATS 2023.
+        """
+        trips = _segments(
+            [(datetime(2024, 1, 1, 8, 0), datetime(2024, 1, 1, 8, 10, 30))],
+            durations=[11.0],
+        )
+
+        result = aggregate_linked_trips(trips, transit_mode_enums=[ModeType.TRANSIT.value])
+
+        row = result.row(0, named=True)
+        assert row["duration_minutes"] < row["travel_duration_minutes"]
+        assert row["dwell_duration_minutes"] == 0
