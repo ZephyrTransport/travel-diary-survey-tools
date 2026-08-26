@@ -574,18 +574,35 @@ ruff format src/some_module/
 
 ### Pre-commit Hooks
 
-Install pre-commit hooks to ensure code quality before committing. It basically runs the linters and formatters automatically when you try to commit code. You can also run it manually with:
+**Run this once after cloning:**
+
+```bash
+pre-commit install
+```
+
+`uv sync` installs the `pre-commit` package, but it cannot install the hook: `.git/hooks/` is
+not part of the repository, so a fresh clone has the config and no enforcement. Nothing warns
+you — the first sign is CI failing on a push. The command above is the only thing that creates
+`.git/hooks/pre-commit`, and it is needed once per clone, on every machine.
+
+Once installed, the linters and formatters run automatically when you commit. To run them over
+the whole tree without committing:
 
 ```bash
 pre-commit run --all-files
 ```
 
+The hook is a fast signal, not the guarantee: `git rebase`, `git commit --amend` and
+`--no-verify` all bypass it. CI runs `ruff check .` and `ruff format --check .` over the whole
+repository and is what actually enforces this.
+
 ## Contributing
 
 1. Create a new branch for your feature
-2. Make your changes with appropriate tests
-3. Ensure all tests pass and code is formatted
-4. Submit a pull request
+2. Run `pre-commit install` if you have not already (see [Pre-commit Hooks](#pre-commit-hooks))
+3. Make your changes with appropriate tests
+4. Ensure all tests pass and code is formatted
+5. Submit a pull request
 
 ## License
 

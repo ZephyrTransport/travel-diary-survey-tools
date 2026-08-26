@@ -65,6 +65,31 @@ from processing.weighting.validation.weight_checks import weight_sanity_checks
 
 logger = logging.getLogger(__name__)
 
+# Geography and seed weight the balancer works from. They ride on ``households``
+# through the run because zone assignment, balancing and diagnostics all read
+# them, then move to their own table before the tables are handed back.
+_WEIGHTING_COLUMNS = ("study_geoid", "ctrl_geoid", "bg_geo_id", "base_weight")
+
+
+def _split_weighting_columns(tables: dict[str, pl.DataFrame]) -> None:
+    """Move the weighting's working columns off ``households`` in place.
+
+    ``hh_weight`` is copied rather than moved: it is the deliverable and stays
+    on ``households``, but repeating it here lets the expansion factor be read
+    off one table.
+    """
+    hh = tables.get("households")
+    if hh is None:
+        return
+
+    present = [c for c in _WEIGHTING_COLUMNS if c in hh.columns]
+    if not present:
+        return
+
+    carried = ["hh_weight"] if "hh_weight" in hh.columns else []
+    tables["household_weights"] = hh.select("hh_id", *present, *carried)
+    tables["households"] = hh.drop(present)
+
 
 # ===========================================================================
 # Pipeline step entry point
@@ -208,5 +233,8 @@ def compute_weights(  # noqa: PLR0913
         wt_pipeline.control_totals,
         wt_pipeline.controls.specs,
     )
+
+    # After the checks, which still read the seed off households.
+    _split_weighting_columns(result_tables)
 
     return result_tables

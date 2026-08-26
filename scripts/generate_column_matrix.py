@@ -20,6 +20,7 @@ from pydantic.fields import FieldInfo
 import data_canon.codebook.days as days_module
 import data_canon.codebook.households as households_module
 import data_canon.codebook.persons as persons_module
+import data_canon.codebook.tours as tours_module
 import data_canon.codebook.trips as trips_module
 import data_canon.codebook.vehicles as vehicles_module
 
@@ -310,6 +311,7 @@ def collect_labeled_enums() -> dict[str, type]:
         days_module,
         households_module,
         persons_module,
+        tours_module,
         trips_module,
         vehicles_module,
     ]

@@ -19,7 +19,10 @@ from collections.abc import Callable
 
 import polars as pl
 
-from data_canon.codebook.tours import TourDataQuality
+from data_canon.codebook.tours import (
+    TourCategory,
+    TourDataQuality,
+)
 from utils.helpers import expr_haversine
 
 logger = logging.getLogger(__name__)
@@ -81,41 +84,54 @@ def check_for_teleports(unlinked_trips: pl.DataFrame) -> list[str]:
     return errors
 
 
-def check_single_trip_tour_flag_consistency(
-    tours: pl.DataFrame, linked_trips: pl.DataFrame
-) -> list[str]:
-    """Verify single_trip_tour flag matches actual trip count.
+def check_trip_count_matches_quality(tours: pl.DataFrame, linked_trips: pl.DataFrame) -> list[str]:
+    """Verify trip_count matches the trips, and NO_DESTINATION means what it says.
 
-    This validates the business logic that sets the single_trip_tour flag.
-    Tours with trip_count=1 should have single_trip_tour=True, and tours
-    with trip_count>=2 should have single_trip_tour=False.
+    ``trip_count`` is checked against the linked trips rather than against
+    another tour column: both are derived in the extractor, so they would agree
+    even if the extractor were wrong. Only the trips themselves are independent.
+
+    ``NO_DESTINATION`` is checked in both directions against its actual
+    definition: a *closed* tour that aggregation found no purpose for. A partial
+    tour may also lack a purpose -- half of it went unobserved -- and is graded
+    on its open end instead, so a null purpose alone does not imply the code.
 
     Args:
-        tours: Tour records with single_trip_tour flag
+        tours: Tour records with trip_count, tour_data_quality and tour_purpose
         linked_trips: Trip records to count per tour
 
     Returns:
         List of error messages (empty if validation passes)
     """
     errors = []
+    if "tour_data_quality" not in tours.columns or "trip_count" not in tours.columns:
+        return errors
 
-    # Count trips per tour
-    trip_counts = linked_trips.group_by("tour_id").agg(pl.len().alias("actual_trip_count"))
+    actual = linked_trips.group_by("tour_id").agg(pl.len().alias("actual_trip_count"))
+    joined = tours.join(actual, on="tour_id", how="left")
 
-    # Join with tours and check consistency
-    inconsistent = tours.join(trip_counts, on="tour_id", how="left").filter(
-        # Flag says single-trip but has multiple trips
-        (pl.col("single_trip_tour") & (pl.col("actual_trip_count") != 1))
-        # Flag says multi-trip but has only one trip
-        | (~pl.col("single_trip_tour") & (pl.col("actual_trip_count") == 1))
-    )
-
-    if len(inconsistent) > 0:
-        tour_ids = inconsistent["tour_id"].to_list()[:5]
+    miscounted = joined.filter(pl.col("trip_count") != pl.col("actual_trip_count"))
+    if len(miscounted) > 0:
+        tour_ids = miscounted["tour_id"].to_list()[:5]
         errors.append(
-            f"Found {len(inconsistent)} tours where single_trip_tour flag "
-            f"doesn't match actual trip count. Sample tour IDs: {tour_ids}"
+            f"Found {len(miscounted)} tours whose trip_count does not match the "
+            f"number of linked trips. Sample tour IDs: {tour_ids}"
         )
+
+    if {"tour_purpose", "tour_category"} <= set(tours.columns):
+        no_dest = pl.col("tour_data_quality") == TourDataQuality.NO_DESTINATION.value
+        nothing_to_anchor_on = pl.col("tour_purpose").is_null() & (
+            pl.col("tour_category") == TourCategory.COMPLETE.value
+        )
+        drifted = joined.filter(
+            (no_dest & ~nothing_to_anchor_on) | (~no_dest & nothing_to_anchor_on)
+        )
+        if len(drifted) > 0:
+            tour_ids = drifted["tour_id"].to_list()[:5]
+            errors.append(
+                f"Found {len(drifted)} tours where NO_DESTINATION disagrees with "
+                f"being a closed tour without a purpose. Sample tour IDs: {tour_ids}"
+            )
 
     return errors
 
@@ -134,7 +150,7 @@ def check_valid_tours_are_complete(tours: pl.DataFrame) -> list[str]:
     the two are complementary rather than redundant.
 
     Args:
-        tours: Tour records with tour_data_quality, single_trip_tour, tour_purpose
+        tours: Tour records with tour_data_quality, trip_count, tour_purpose
 
     Returns:
         List of error messages (empty if validation passes)
@@ -146,9 +162,10 @@ def check_valid_tours_are_complete(tours: pl.DataFrame) -> list[str]:
     if "tour_data_quality" not in tours.columns:
         return errors
 
+    single_trip = pl.col("trip_count") == 1
     invalid = tours.filter(
         (pl.col("tour_data_quality") == TourDataQuality.VALID.value)
-        & (pl.col("single_trip_tour") | pl.col("tour_purpose").is_null())
+        & (single_trip | pl.col("tour_purpose").is_null())
     )
 
     if len(invalid) > 0:
@@ -255,7 +272,7 @@ def check_trip_spatial_continuity(linked_trips: pl.DataFrame) -> list[str]:
 
 
 # Register the tour validators
-CUSTOM_VALIDATORS["tours"].append(check_single_trip_tour_flag_consistency)
+CUSTOM_VALIDATORS["tours"].append(check_trip_count_matches_quality)
 CUSTOM_VALIDATORS["tours"].append(check_valid_tours_are_complete)
 
 # Register the linked-trip validators

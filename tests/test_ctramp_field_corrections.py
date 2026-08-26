@@ -164,9 +164,6 @@ class TestHouseholdFieldCorrections:
                 ),
             ],
             schema=get_tour_schema(),
-        ).with_columns(
-            pl.lit(value=True).alias("single_trip_tour")
-            # Each tour has 1 trip, so flag should be True
         )
 
         # Add trips for each tour to avoid validation error
@@ -202,6 +199,40 @@ class TestHouseholdFieldCorrections:
                     person_id=102,
                     day_id=10201,
                     tour_direction=TourDirection.OUTBOUND,
+                    joint_tour_id=9002,
+                ),
+                # Return legs: a one-trip tour is structurally invalid and would
+                # be dropped before it could count toward jtf_choice.
+                create_linked_trip(
+                    linked_trip_id=10005,
+                    tour_id=1001,
+                    person_id=101,
+                    day_id=10101,
+                    tour_direction=TourDirection.INBOUND,
+                    joint_tour_id=9001,
+                ),
+                create_linked_trip(
+                    linked_trip_id=10006,
+                    tour_id=1002,
+                    person_id=102,
+                    day_id=10201,
+                    tour_direction=TourDirection.INBOUND,
+                    joint_tour_id=9001,
+                ),
+                create_linked_trip(
+                    linked_trip_id=10007,
+                    tour_id=1003,
+                    person_id=101,
+                    day_id=10101,
+                    tour_direction=TourDirection.INBOUND,
+                    joint_tour_id=9002,
+                ),
+                create_linked_trip(
+                    linked_trip_id=10008,
+                    tour_id=1004,
+                    person_id=102,
+                    day_id=10201,
+                    tour_direction=TourDirection.INBOUND,
                     joint_tour_id=9002,
                 ),
             ]

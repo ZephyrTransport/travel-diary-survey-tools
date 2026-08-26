@@ -360,3 +360,14 @@ def full_output_dir():
     """Output dir of the 'full' profile."""
     _result, output_dir, _tmp = _get_run(PROFILES["full"])
     return output_dir
+
+
+@pytest.fixture(scope="session")
+def full_input_dir():
+    """Raw input dir of the 'full' profile.
+
+    The vendor surface: columns present here are carried through rather than
+    computed, which is what lets a test tell the two apart.
+    """
+    _result, _output_dir, tmp = _get_run(PROFILES["full"])
+    return Path(tmp) / "data"

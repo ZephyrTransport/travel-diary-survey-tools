@@ -272,15 +272,16 @@ class TestEdgeCaseCoverage:
         q = set(full_result.tours["tour_data_quality"].to_list())
         assert {0, 3, 4} <= q, f"missing tour_data_quality buckets: {q}"
 
-    def test_a_tour_with_a_purpose_is_never_no_destination(self, full_result):
-        """NO_DESTINATION means exactly that aggregation found no purpose."""
+    def test_no_destination_means_a_closed_tour_without_a_purpose(self, full_result):
+        """The code holds exactly when that is what the tour is.
+
+        A partial tour may also lack a purpose -- half of it went unobserved --
+        and is graded on its open end, so a null purpose alone is not enough.
+        """
         tours = full_result.tours
-        assert tours.filter(
-            (pl.col("tour_data_quality") == 4) & pl.col("tour_purpose").is_not_null()
-        ).is_empty()
-        assert tours.filter(
-            (pl.col("tour_data_quality") != 4) & pl.col("tour_purpose").is_null()
-        ).is_empty()
+        nothing_to_anchor_on = pl.col("tour_purpose").is_null() & (pl.col("tour_category") == 1)
+        assert tours.filter((pl.col("tour_data_quality") == 4) & ~nothing_to_anchor_on).is_empty()
+        assert tours.filter((pl.col("tour_data_quality") != 4) & nothing_to_anchor_on).is_empty()
 
     def test_all_tour_categories_present(self, full_result):
         # COMPLETE(1), PARTIAL_END(2), PARTIAL_START(3), PARTIAL_BOTH(4).

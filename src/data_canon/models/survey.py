@@ -45,7 +45,12 @@ from data_canon.codebook.persons import (
     Student,
     WorkParking,
 )
-from data_canon.codebook.tours import TourCategory, TourDirection, TourType
+from data_canon.codebook.tours import (
+    TourCategory,
+    TourDataQuality,
+    TourDirection,
+    TourType,
+)
 from data_canon.codebook.trips import (
     AccessEgressMode,
     Driver,
@@ -214,7 +219,20 @@ class UnlinkedTripModel(BaseModel):
     person_id: int = schema_field(ge=1, fk_to="persons.person_id")
     hh_id: int = schema_field(ge=1, fk_to="households.hh_id")
     linked_trip_id: int = schema_field(ge=1, fk_to="linked_trips.linked_trip_id")
+    linked_trip_num: int | None = schema_field(
+        ge=1,
+        default=None,
+        description=(
+            "Sequence number of the linked trip this segment belongs to, within its person-day."
+        ),
+    )
     tour_id: int | None = schema_field(ge=1, fk_to="tours.tour_id")
+    joint_tour_id: int | None = schema_field(
+        ge=1,
+        fk_to="joint_tours.joint_tour_id",
+        default=None,
+        description="The joint tour this segment's tour belongs to, if any.",
+    )
     o_lon: float = schema_field(ge=-180, le=180)
     o_lat: float = schema_field(ge=-90, le=90)
     d_lon: float = schema_field(ge=-180, le=180)
@@ -313,6 +331,67 @@ class LinkedTripModel(BaseModel):
         ),
     )
     tour_direction: TourDirection = schema_field()
+    # Tour membership, denormalised from the tours table so a trip carries its
+    # own place in the hierarchy. The tour-level record remains authoritative.
+    tour_num: int | None = schema_field(
+        ge=1,
+        default=None,
+        description="The trip's tour, numbered within its person-day.",
+    )
+    subtour_num: int | None = schema_field(
+        ge=0,
+        default=None,
+        description=(
+            "Which at-work/at-school subtour of the parent tour this trip belongs "
+            "to; 0 when the trip is on the parent tour itself."
+        ),
+    )
+    parent_tour_id: int | None = schema_field(
+        ge=1,
+        fk_to="tours.tour_id",
+        default=None,
+        description=("The containing tour for a subtour trip. Primary tours self-reference."),
+    )
+    tour_purpose: PurposeCategory | None = schema_field(
+        default=None,
+        description="The primary purpose of the tour this trip belongs to.",
+    )
+    joint_tour_id: int | None = schema_field(
+        ge=1,
+        fk_to="joint_tours.joint_tour_id",
+        default=None,
+        description="The joint tour this trip's tour belongs to, if any.",
+    )
+    # Linking outputs: what the unlinked segments collapsed into.
+    linked_trip_num: int | None = schema_field(
+        ge=1,
+        default=None,
+        description="This linked trip's sequence number within its person-day.",
+    )
+    num_segments: int | None = schema_field(
+        ge=1,
+        default=None,
+        description=(
+            "Unlinked trip segments merged into this linked trip. Greater than "
+            "one where access/egress or mode-change legs were joined."
+        ),
+    )
+    travel_duration_minutes: int | None = schema_field(
+        ge=0,
+        default=None,
+        description="Minutes in motion, summed across the merged segments.",
+    )
+    dwell_duration_minutes: int | None = schema_field(
+        default=None,
+        description=(
+            "Minutes waiting between the merged segments (e.g. a transfer), as "
+            "elapsed time minus the summed segment durations. Deliberately "
+            "unconstrained: it is negative for ~43% of BATS-2023 linked trips "
+            "because reported segment durations are rounded independently of the "
+            "GPS timestamps they are differenced against, so the parts can "
+            "exceed the whole. Treat a negative value as 'no measurable dwell'."
+        ),
+    )
     o_location_type: LocationType = schema_field(
         description="Classified location type of the trip origin (Home/Work/School/Other).",
     )
@@ -344,7 +423,18 @@ class TourModel(BaseModel):
     parent_tour_id: int = schema_field(ge=1, fk_to="tours.tour_id")
     joint_tour_id: int | None = schema_field(ge=1, default=None)
 
-    tour_purpose: PurposeCategory | None = schema_field(default=None)
+    tour_purpose: PurposeCategory | None = schema_field(
+        default=None,
+        description=(
+            "The tour's primary activity: the highest-priority purpose among "
+            "its destinations, ranked by the person's category (a worker's "
+            "work trip outranks their shopping stop). Null where no stop "
+            "qualifies -- every candidate was the return leg to the anchor or a "
+            "mode change. On a closed tour that is `NO_DESTINATION`; on a "
+            "partial one the missing half is the reason, so `tour_data_quality` "
+            "names the open end instead."
+        ),
+    )
     tour_type: TourType = schema_field(
         description=(
             "What the tour is anchored on: home for a home-based tour, the "
@@ -353,7 +443,23 @@ class TourModel(BaseModel):
         ),
     )
     tour_category: TourCategory = schema_field()
-    single_trip_tour: bool = schema_field(default=False)
+    tour_data_quality: TourDataQuality = schema_field(
+        description=(
+            "What is structurally wrong with this tour, or VALID. Derived from "
+            "the tour's own trips only -- never from survey completeness or "
+            "household coherence, which have their own columns. Codes 2-4 "
+            "mirror `tour_category` value for value. Not the model gate: see "
+            "`model_usable`."
+        ),
+    )
+    trip_count: int = schema_field(
+        ge=1,
+        description=(
+            "Linked trips in the tour. Stop counts are a formatter concern: they are "
+            "a modelling convention, and a directional count has to come from the "
+            "trips anyway."
+        ),
+    )
 
     # Timing
     origin_depart_time: datetime = schema_field()

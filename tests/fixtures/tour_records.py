@@ -142,16 +142,16 @@ def create_tour(
         "dest_depart_time": dest_depart_time,
         "dest_arrive_time": dest_arrive_time,
         "travel_dow": travel_dow.value,
-        "num_trips": num_trips,
+        "trip_count": num_trips,
+        "stop_count": max(num_trips - 1, 0),
         "num_travelers": num_travelers,
         "tour_mode": tour_mode.value,
         "student_category": student_category,
-        "data_quality": data_quality.value,
+        "tour_data_quality": data_quality.value,
         "tour_weight": tour_weight,
         "joint_tour_id": joint_tour_id,
         "parent_tour_id": tour_id if parent_tour_id is None else parent_tour_id,
         "subtour_num": subtour_num,
-        "single_trip_tour": False,  # Default to False, set by tour extraction
     }
 
     # Add optional MAZ fields
@@ -184,9 +184,7 @@ def get_tour_schema() -> dict[str, type]:
             "o_TAZ1454": pl.Int64,
             "d_TAZ1454": pl.Int64,
             "travel_dow": pl.Int64,
-            "num_trips": pl.Int64,
             "student_category": pl.String,
-            "data_quality": pl.Int64,
         }
     )
 

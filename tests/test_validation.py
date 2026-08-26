@@ -489,18 +489,18 @@ class TestValidToursAreComplete:
     """Tests for the check_valid_tours_are_complete custom validator."""
 
     def _tours(self, quality, *, single_trip, purpose):
-        """Build a one-row tours frame with the given quality/flag/purpose."""
+        """Build a one-row tours frame with the given quality/trip count/purpose."""
         return pl.DataFrame(
             {
                 "tour_id": [1],
                 "tour_data_quality": [quality],
-                "single_trip_tour": [single_trip],
+                "trip_count": [1 if single_trip else 3],
                 "tour_purpose": [purpose],
             },
             schema={
                 "tour_id": pl.Int64,
                 "tour_data_quality": pl.Int64,
-                "single_trip_tour": pl.Boolean,
+                "trip_count": pl.Int64,
                 "tour_purpose": pl.Int64,
             },
         )
@@ -518,7 +518,7 @@ class TestValidToursAreComplete:
         assert check_valid_tours_are_complete(tours) == []
 
     def test_valid_but_single_trip_fails(self):
-        """A tour mislabeled VALID but flagged single-trip is reported."""
+        """A tour mislabeled VALID but holding a single trip is reported."""
         tours = self._tours(
             TourDataQuality.VALID.value, single_trip=True, purpose=PurposeCategory.WORK.value
         )
@@ -534,7 +534,7 @@ class TestValidToursAreComplete:
 
     def test_missing_quality_column_is_noop(self):
         """Frames without tour_data_quality produce no errors."""
-        tours = pl.DataFrame({"tour_id": [1], "single_trip_tour": [True], "tour_purpose": [None]})
+        tours = pl.DataFrame({"tour_id": [1], "trip_count": [1], "tour_purpose": [None]})
         assert check_valid_tours_are_complete(tours) == []
 
 

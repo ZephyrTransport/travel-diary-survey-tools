@@ -19,6 +19,7 @@ from data_canon.codebook.persons import (
     Employment,
     Student,
 )
+from data_canon.codebook.tours import TourDataQuality
 from data_canon.codebook.trips import Driver, ModeType, Purpose, PurposeCategory
 from processing import link_trips
 from processing.tours.extraction import extract_tours
@@ -444,8 +445,10 @@ def test_single_trip_tour(single_trip_tour_data):
     # Single-trip tours should be kept but flagged
     assert len(tours_df) == 1
 
-    # Should be flagged as single-trip tour
-    assert tours_df["single_trip_tour"][0] is True
+    # Kept, with the count on the tour and a reason for being open-ended. Here
+    # nothing precedes or follows it in the diary, so that is where it stops.
+    assert tours_df["trip_count"][0] == 1
+    assert tours_df["tour_data_quality"][0] == TourDataQuality.PARTIAL_DIARY_EDGE.value
 
     # Tour number should be 1, not 0
     assert tours_df["tour_num"][0] == 1
@@ -719,7 +722,7 @@ def test_all_tours_have_required_fields():
     assert (tours_df["tour_num"] >= 1).all()
 
     # All non-single-trip tours should have non-null tour_purpose and dest times
-    non_single_trip_tours = tours_df.filter(~tours_df["single_trip_tour"])
+    non_single_trip_tours = tours_df.filter(pl.col("trip_count") > 1)
     if len(non_single_trip_tours) > 0:
         assert non_single_trip_tours["tour_purpose"].null_count() == 0
         assert non_single_trip_tours["dest_arrive_time"].null_count() == 0

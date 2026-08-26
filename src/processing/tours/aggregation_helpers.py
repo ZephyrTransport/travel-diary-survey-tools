@@ -29,10 +29,6 @@ from .tour_configs import TourConfig
 
 logger = logging.getLogger(__name__)
 
-# Constants
-# A tour requires at least some round-trip structure, even if not to/from home
-MIN_TRIPS_FOR_VALID_TOUR = 2
-
 
 def _calculate_tour_purp_and_dest(
     linked_trips: pl.DataFrame,
@@ -359,7 +355,6 @@ def _aggregate_and_classify_tours(
             pl.col("d_location_type").last().alias("_fallback_d_location_type"),
             # Counts
             pl.col("linked_trip_id").count().alias("trip_count"),
-            (pl.col("linked_trip_id").count() - 1).alias("stop_count"),
             # Flags for classification
             pl.col("subtour_num").first().alias("_subtour_num"),
             pl.col("_anchor_location_type").first().alias("_anchor_location_type"),
@@ -399,19 +394,8 @@ def _aggregate_and_classify_tours(
         .join(dest_times, on="tour_id", how="left")
     )
 
-    # Flag single-trip tours (incomplete tours with only one trip)
-    # A valid tour must have at least 2 trips: one leaving and one returning
-    tours = tours.with_columns(
-        [(pl.col("trip_count") < MIN_TRIPS_FOR_VALID_TOUR).alias("single_trip_tour")]
-    )
-
-    single_trip_count = tours.filter(pl.col("single_trip_tour")).height
-    logger.info(
-        "Tours: %d total, %d single-trip tours (<%d trips)",
-        len(tours),
-        single_trip_count,
-        MIN_TRIPS_FOR_VALID_TOUR,
-    )
+    one_trip_count = tours.filter(pl.col("trip_count") == 1).height
+    logger.info("Tours: %d total, %d with a single trip", len(tours), one_trip_count)
 
     # Classify what the tour is anchored on, and -- separately -- how completely
     # it reaches that anchor. These are two orthogonal facts and must not share a

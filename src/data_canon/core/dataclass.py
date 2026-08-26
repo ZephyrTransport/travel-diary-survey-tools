@@ -10,6 +10,7 @@ import polars as pl
 from pydantic import BaseModel
 
 from data_canon.models import survey as survey_models
+from data_canon.models import weighting as weighting_models
 from data_canon.validation.column import (
     check_unique_constraints,
     get_unique_fields,
@@ -45,6 +46,7 @@ class CanonicalData:
     joint_tours: pl.DataFrame | None = None
     habitual_locations: pl.DataFrame | None = None
     habitual_location_days: pl.DataFrame | None = None
+    household_weights: pl.DataFrame | None = None
 
     # Model mapping for validation
     models: dict[str, type[BaseModel]] = field(
@@ -59,6 +61,7 @@ class CanonicalData:
             "joint_tours": survey_models.JointTourModel,
             "habitual_locations": survey_models.HabitualLocationModel,
             "habitual_location_days": survey_models.HabitualLocationDayModel,
+            "household_weights": weighting_models.HouseholdWeightingModel,
         }
     )
 
@@ -83,6 +86,7 @@ class CanonicalData:
             "joint_tours",
             "habitual_locations",
             "habitual_location_days",
+            "household_weights",
         ],
         repr=False,
     )

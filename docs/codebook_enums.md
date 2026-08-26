@@ -709,6 +709,41 @@ Quick lookup of categorical values and labels for codebook enum fields.
 | 995 | Missing Response |
 | 998 | Unknown TNC Service |
 
+## TourCategory
+
+| Value | Label |
+| --- | --- |
+| 1 | Start at anchor, end at anchor |
+| 2 | Start at anchor, end away from anchor |
+| 3 | Start away from anchor, end at anchor |
+| 4 | Start away from anchor, end away from anchor |
+
+## TourDataQuality
+
+| Value | Label |
+| --- | --- |
+| 0 | Valid tour |
+| 1 | Open end is another home known for this person |
+| 2 | Chain resumes at the same place on the next diary day |
+| 3 | First or last trip in the diary; its open end is not a known home |
+| 4 | No activity to anchor the tour on: returns to the anchor without stopping, or every stop was a mode change |
+| 5 | Missing leg, inside the tour or at its boundary |
+
+## TourDirection
+
+| Value | Label |
+| --- | --- |
+| 1 | Outbound half-tour |
+| 2 | Inbound half-tour |
+
+## TourType
+
+| Value | Label |
+| --- | --- |
+| 1 | Home-based tour |
+| 2 | Work-based tour (at-work subtour) |
+| 3 | School-based tour (at-school subtour) |
+
 ## TravelDow
 
 **Description:** Day of the week enumeration
