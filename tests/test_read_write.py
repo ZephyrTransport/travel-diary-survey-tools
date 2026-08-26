@@ -135,6 +135,7 @@ class TestWriteData:
             output_paths=output_paths,
             canonical_data=canonical_data,
             validate_input=False,
+            write_only_canonical=False,
         )
 
         assert output_path.exists()
@@ -154,6 +155,7 @@ class TestWriteData:
             output_paths=output_paths,
             canonical_data=canonical_data,
             validate_input=False,
+            write_only_canonical=False,
         )
 
         assert output_path.exists()
@@ -172,6 +174,7 @@ class TestWriteData:
             canonical_data=canonical_data,
             validate_input=False,
             create_dirs=True,
+            write_only_canonical=False,
         )
 
         assert output_path.exists()
@@ -194,6 +197,7 @@ class TestWriteData:
                 canonical_data=canonical_data,
                 validate_input=False,
                 create_dirs=False,
+                write_only_canonical=False,
             )
 
     def test_write_multiple_tables(self, tmp_path):
@@ -210,6 +214,7 @@ class TestWriteData:
             output_paths=output_paths,
             canonical_data=canonical_data,
             validate_input=False,
+            write_only_canonical=False,
         )
 
         assert (tmp_path / "households.csv").exists()
@@ -228,6 +233,7 @@ class TestWriteData:
                 output_paths=output_paths,
                 canonical_data=canonical_data,
                 validate_input=False,
+                write_only_canonical=False,
             )
 
     def test_write_geodataframe(self, tmp_path):
@@ -248,6 +254,7 @@ class TestWriteData:
             output_paths=output_paths,
             canonical_data=canonical_data,
             validate_input=False,
+            write_only_canonical=False,
         )
 
         assert output_path.exists()
@@ -266,6 +273,7 @@ class TestWriteData:
             output_paths=output_paths,
             canonical_data=canonical_data,
             validate_input=False,
+            write_only_canonical=False,
         )
 
         assert output_path.exists()

@@ -410,6 +410,10 @@ steps:
   - name: write_data
     validate_input: true
     params:
+      # Deliver only the documented schema: declared model fields plus the
+      # zone and pre-imputation columns steps register. Set false to dump
+      # every column on the frame when debugging.
+      write_only_canonical: true
       # The "codebook" includes all the labeled enums used in the survey datamodel.
       # This is useful to generate Tableau aliases and for summarization code.
       enum_codebook_path: "{{ output_dir }}/survey/codebook.xlsx"

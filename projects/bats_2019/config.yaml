@@ -294,6 +294,10 @@ steps:
   - name: write_data
     validate_input: true
     params:
+      # Deliver only the documented schema: declared model fields plus the
+      # zone and pre-imputation columns steps register. Set false to dump
+      # every column on the frame when debugging.
+      write_only_canonical: true
       output_paths:
         # Standard Survey Formats
         households: "{{ output_dir }}/survey/households_2019.csv"

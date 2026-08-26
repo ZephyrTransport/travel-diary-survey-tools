@@ -237,7 +237,7 @@ def _step_blocks(data_dir: Path, output_dir: Path, enabled: frozenset) -> dict:
         "write_data": {
             "name": "write_data",
             "validate_input": False,
-            "params": {"output_paths": output_paths},
+            "params": {"output_paths": output_paths, "write_only_canonical": True},
         },
     }
 

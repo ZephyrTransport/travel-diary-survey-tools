@@ -14,7 +14,8 @@ This test draws that line mechanically. A column must be one of:
 
 * declared on the table's model,
 * present in the raw input (vendor passthrough), or
-* an instance of a documented generated family (see ``_GENERATED_SUFFIXES``).
+* registered by the step that generated it, for columns whose names come
+  from configuration (zone ids, pre-imputation stashes).
 
 Anything else fails here, at the moment it is added, rather than being found
 later by reading parquet schemas.
@@ -22,19 +23,10 @@ later by reading parquet schemas.
 
 import polars as pl
 import pytest
-import yaml
 
 from data_canon.core.dataclass import CanonicalData
 
 pytestmark = [pytest.mark.e2e, pytest.mark.slow]
-
-# Column families generated from configuration rather than fixed in a model.
-# ``stash_preimputed_columns`` emits ``{column}_preimputed`` for whatever columns
-# a project names, so the set differs per project and cannot be a static field.
-_GENERATED_SUFFIXES = ("_preimputed",)
-
-# Prefixes ``add_zone_ids`` attaches a zone name to, e.g. ``o_taz``, ``home_maz``.
-_ZONE_PREFIXES = ("o", "d", "home", "work", "school")
 
 
 def _raw_columns(input_dir) -> set[str]:
@@ -45,43 +37,21 @@ def _raw_columns(input_dir) -> set[str]:
     return cols
 
 
-def _zone_columns(output_dir) -> set[str]:
-    """Zone columns this run's config asks for.
-
-    ``add_zone_ids`` names its output ``{prefix}_{zone_name}`` where zone_name
-    comes from config -- "taz"/"maz" here, "TAZ1454" and others in production --
-    so the set is per-project and cannot be declared as fixed model fields.
-    Reading it back from the config keeps the exclusion exact rather than a
-    loose pattern that would also swallow genuine mistakes.
-    """
-    config = yaml.safe_load((output_dir / "config.yaml").read_text())
-    names = [
-        geo["zone_name"]
-        for step in config.get("steps", [])
-        if step.get("name") == "add_zone_ids"
-        for geo in step.get("params", {}).get("zone_geographies", [])
-    ]
-    return {f"{prefix}_{name}" for name in names for prefix in _ZONE_PREFIXES}
-
-
-def test_computed_columns_are_declared(full_result, full_input_dir, full_output_dir):
+def test_computed_columns_are_declared(full_result, full_input_dir):
     """No pipeline-derived column reaches a canonical table undeclared."""
-    vendor = _raw_columns(full_input_dir) | _zone_columns(full_output_dir)
-    models = CanonicalData().models
+    vendor = _raw_columns(full_input_dir)
 
     undeclared: dict[str, list[str]] = {}
-    for table, model in models.items():
+    for table in CanonicalData().models:
         df = getattr(full_result, table, None)
         if df is None or not isinstance(df, pl.DataFrame):
             continue
-        declared = set(model.model_fields)
+        # Declared fields plus whatever the generating steps registered. Asking
+        # the run itself beats pattern-matching names: a typo'd zone column
+        # looks exactly like a real one, and only registration tells them apart.
+        public = full_result.public_columns(table)
         extra = [
-            c
-            for c in df.columns
-            if c not in declared
-            and c not in vendor
-            and not c.startswith("_")
-            and not c.endswith(_GENERATED_SUFFIXES)
+            c for c in df.columns if c not in public and c not in vendor and not c.startswith("_")
         ]
         if extra:
             undeclared[table] = sorted(extra)

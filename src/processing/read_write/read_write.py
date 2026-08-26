@@ -199,11 +199,34 @@ def _write_checks(
         )
 
 
+def _select_canonical_columns(
+    df: pl.DataFrame, table: str, canonical_data: CanonicalData
+) -> pl.DataFrame:
+    """Narrow *df* to the columns the pipeline stands behind, in their original order.
+
+    Everything else is vendor passthrough or a working column that outlived its
+    step. Neither is part of what this pipeline promises, and shipping them made
+    the delivered files unreadable: BATS-2023 ``persons`` carries 220 columns of
+    which 31 are declared.
+
+    A table with no model is left alone -- it is not ours to narrow.
+    """
+    if table not in canonical_data.models:
+        return df
+    public = canonical_data.public_columns(table)
+    keep = [c for c in df.columns if c in public]
+    dropped = len(df.columns) - len(keep)
+    if dropped:
+        logger.info("  %s: keeping %d canonical columns, dropping %d", table, len(keep), dropped)
+    return df.select(keep)
+
+
 @step()
-def write_data(  # noqa: C901
+def write_data(  # noqa: C901, PLR0912
     output_paths: dict[str, str],
     canonical_data: CanonicalData,
     validate_input: bool,
+    write_only_canonical: bool | None = None,
     create_dirs: bool = True,
     enum_codebook_path: str | None = None,
 ) -> None:
@@ -213,6 +236,12 @@ def write_data(  # noqa: C901
         output_paths: Dictionary mapping table names to output file paths.
         canonical_data: CanonicalData instance containing DataFrames to write.
         validate_input: Whether to run validation before writing.
+        write_only_canonical: Keep only columns the pipeline stands behind --
+            declared model fields plus the config-named columns steps register
+            (zone ids, pre-imputation stashes). ``False`` dumps every column on
+            the frame, which is what you want for debugging. **Required**: there
+            is no sensible default, and silently choosing one would either drop
+            columns a project expected or ship hundreds it did not.
         create_dirs: Whether to create parent directories (default: True).
         enum_codebook_path: Optional path for an .xlsx enum codebook.
             When provided, a workbook is written with one worksheet per
@@ -239,11 +268,23 @@ def write_data(  # noqa: C901
         - Automatic directory creation prevents path errors
         - Supports multiple output formats for flexibility
     """
+    if write_only_canonical is None:
+        msg = (
+            "write_data requires write_only_canonical to be set explicitly. "
+            "Use true to deliver only the documented schema (declared fields "
+            "plus registered zone/pre-imputation columns), or false to dump "
+            "every column on the frame for debugging."
+        )
+        raise ValueError(msg)
+
     for table, path in output_paths.items():
         logger.info("Writing %s to:\n%s...", table, path)
 
         df = getattr(canonical_data, table)
         file_path = Path(path)
+
+        if write_only_canonical and isinstance(df, pl.DataFrame):
+            df = _select_canonical_columns(df, table, canonical_data)
 
         # Sort by hh_id then person_id where available so related tables
         # (e.g. householdData and personData) are in the same order and

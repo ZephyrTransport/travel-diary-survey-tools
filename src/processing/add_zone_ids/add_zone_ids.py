@@ -5,6 +5,7 @@ import logging
 import geopandas as gpd
 import polars as pl
 
+from data_canon.core.dataclass import CanonicalData
 from pipeline.decoration import step
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,9 @@ def add_zone_to_dataframe(
         projected_crs: EPSG string for the metric CRS used during the
             nearest-neighbour fallback (e.g. ``"EPSG:26910"``).  If ``None``,
             no fallback is performed and unmatched points remain null.
+        canonical_data: Canonical data container. When present, each generated
+            ``{prefix}_{zone_name}`` column is registered on it so the writer
+            knows the column is ours rather than vendor passthrough.
         max_snap_distance: Maximum distance (in ``projected_crs`` units, i.e.
             metres for UTM) within which an unmatched point is snapped to the
             nearest zone polygon.  Points farther than this are left null
@@ -176,6 +180,7 @@ def add_zone_ids(
     joint_trips: pl.DataFrame | None = None,
     projected_crs: str | None = None,
     max_snap_distance: float | None = None,
+    canonical_data: CanonicalData | None = None,
 ) -> dict:
     """Add zone IDs for multiple geographic levels based on locations.
 
@@ -193,6 +198,9 @@ def add_zone_ids(
         linked_trips: Linked trips dataframe
         tours: Tours dataframe
         joint_trips: Joint trips dataframe
+        canonical_data: Canonical data container. When present, each generated
+            ``{prefix}_{zone_name}`` column is registered on it, so the writer
+            can tell a column the pipeline created from vendor passthrough.
         zone_geographies: List of dicts, each containing:
             - shapefile: Path to shapefile with zone boundaries (str)
             - zone_id_field: Field name in shapefile for zone ID
@@ -287,6 +295,11 @@ def add_zone_ids(
                 projected_crs=projected_crs,
                 max_snap_distance=max_snap_distance,
             )
+
+            # The name comes from config, so no model can declare it. Say what
+            # was created rather than leaving the writer to pattern-match it.
+            if canonical_data is not None:
+                canonical_data.register_generated_columns(table, [output_col])
 
             if table == "linked_trips":
                 _log_joint_members_split_across_zones(results[table], output_col, zone_name)

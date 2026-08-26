@@ -261,9 +261,13 @@ def _validates(
     bound = sig.bind(*args, **kwargs)
     bound.apply_defaults()
 
-    # Use provided instance or check if one exists in kwargs
+    # Use provided instance or check if one exists in kwargs. apply_defaults()
+    # above fills in a step's own default, so a step that declares
+    # ``canonical_data: CanonicalData | None = None`` -- to register the columns
+    # it generates -- binds None when called directly. Fall back rather than
+    # dereference it.
     validator = canonical_data
-    if "canonical_data" in bound.arguments:
+    if bound.arguments.get("canonical_data") is not None:
         validator = bound.arguments["canonical_data"]
 
     # Get models for checking
