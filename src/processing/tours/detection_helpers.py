@@ -216,9 +216,73 @@ def expand_anchor_periods(linked_trips: pl.DataFrame) -> pl.DataFrame:
     return linked_trips
 
 
-# NOTE: This function is complex due to the loop-based subtour detection logic.
-# It has been marked to ignore complexity/style checks (C901, PLR0915).
-def detect_anchor_based_subtours(  # noqa: C901, PLR0915
+def _assign_subtour_nums(
+    trip_nums: list[int],
+    o_at_anchor: list[bool],
+    d_at_anchor: list[bool],
+    anchor_start: int,
+    anchor_end: int,
+) -> tuple[list[int], int]:
+    """Number the subtours inside one tour's anchor period.
+
+    A subtour opens on a trip leaving the anchor and closes on one returning to
+    it. ``anchor_start`` and ``anchor_end`` are the first and last trips
+    *touching* the anchor, which normally are the commute in and the commute
+    out and belong to the parent tour.
+
+    That holds only while something leaves the anchor again after the subtour.
+    When the tour ends at the anchor -- ``Home -> Work -> Lunch -> Work`` --
+    the last trip touching it *is* the subtour's return leg, so excluding it by
+    position dropped that leg and left the subtour open. Exclude the trailing
+    trip only when it leaves.
+
+    Args:
+        trip_nums: Trip sequence numbers within the tour, in order.
+        o_at_anchor: Whether each trip's origin is at the anchor.
+        d_at_anchor: Whether each trip's destination is at the anchor.
+        anchor_start: First trip number touching the anchor.
+        anchor_end: Last trip number touching the anchor.
+
+    Returns:
+        Subtour number per trip (0 for parent-tour trips), and how many
+        subtours closed.
+    """
+    subtour_nums = [0] * len(trip_nums)
+    subtour_num = 0
+    closed = 0
+    in_subtour = False
+
+    for idx, trip_num in enumerate(trip_nums):
+        is_leaving_anchor = o_at_anchor[idx] and not d_at_anchor[idx]
+        is_returning_anchor = not o_at_anchor[idx] and d_at_anchor[idx]
+
+        if trip_num <= anchor_start or trip_num > anchor_end:
+            continue
+        if trip_num == anchor_end and not is_returning_anchor:
+            continue
+
+        if is_leaving_anchor and not in_subtour:
+            in_subtour = True
+            subtour_num += 1
+            subtour_nums[idx] = subtour_num
+        elif in_subtour and not is_returning_anchor:
+            subtour_nums[idx] = subtour_num
+        elif in_subtour:
+            subtour_nums[idx] = subtour_num
+            in_subtour = False
+            closed += 1
+
+    # A chain that never came back is not a subtour. The boundary rule closes
+    # the common case, but a trip both leaving and arriving at an anchor (two
+    # habitual worksites) counts as neither, so a chain can still end open.
+    # Hand those trips back rather than claim a round trip the trips do not show.
+    if in_subtour:
+        subtour_nums = [0 if n == subtour_num else n for n in subtour_nums]
+
+    return subtour_nums, closed
+
+
+def detect_anchor_based_subtours(
     linked_trips: pl.DataFrame,
 ) -> pl.DataFrame:
     """Detect anchor-based subtours using hybrid loop approach.
@@ -301,12 +365,7 @@ def detect_anchor_based_subtours(  # noqa: C901, PLR0915
             modified_tours.append(tour_df)
             continue
 
-        # Detect subtours within the anchor period
         # Work with Polars columns directly to avoid dict conversion issues
-        subtour_num = 0
-        in_subtour = False
-
-        # Get columns as lists for efficient access
         trip_nums = tour_df["_trip_num_in_tour"].to_list()
 
         # Get anchor location flags based on anchor type
@@ -325,36 +384,14 @@ def detect_anchor_based_subtours(  # noqa: C901, PLR0915
             modified_tours.append(tour_df)
             continue
 
-        # Track which trips are subtours
-        subtour_nums = [0] * len(trip_nums)
-
-        for idx, trip_num in enumerate(trip_nums):
-            # Only check trips within anchor period (exclusive of boundaries)
-            # anchor_start is first trip AT anchor, anchor_end is last trip
-            # AT anchor. We want trips BETWEEN these, so:
-            # anchor_start < trip_num < anchor_end
-            if trip_num <= anchor_start or trip_num >= anchor_end:
-                continue
-
-            # Check if leaving/returning to anchor
-            is_leaving_anchor = o_at_anchor[idx] and not d_at_anchor[idx]
-            is_returning_anchor = not o_at_anchor[idx] and d_at_anchor[idx]
-
-            # Subtour starts when leaving anchor
-            if is_leaving_anchor and not is_returning_anchor and not in_subtour:
-                in_subtour = True
-                subtour_num += 1
-                subtour_nums[idx] = subtour_num
-
-            # Subtour continues
-            elif in_subtour and not is_returning_anchor:
-                subtour_nums[idx] = subtour_num
-
-            # Subtour ends when returning to anchor
-            elif in_subtour and is_returning_anchor:
-                subtour_nums[idx] = subtour_num
-                in_subtour = False
-                subtour_counter += 1
+        subtour_nums, closed = _assign_subtour_nums(
+            trip_nums,
+            o_at_anchor,
+            d_at_anchor,
+            anchor_start,
+            anchor_end,
+        )
+        subtour_counter += closed
 
         # Update tour DataFrame with subtour assignments
         updated_tour_df = tour_df.with_columns(
