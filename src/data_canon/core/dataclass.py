@@ -3,7 +3,7 @@
 import inspect
 import logging
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 
 import polars as pl
@@ -66,9 +66,12 @@ class CanonicalData:
     )
 
     # Columns a step generated whose names come from configuration rather than
-    # a model field: zone ids, pre-imputation stashes. Populated at runtime by
-    # the steps that create them; read when deciding what to deliver.
-    generated_columns: dict[str, set[str]] = field(default_factory=dict, repr=False)
+    # a model field: zone ids, pre-imputation stashes, usability profiles.
+    # Populated at runtime by the steps that create them; read when deciding
+    # what to deliver. Maps table -> column -> description, so a column named by
+    # a project can still explain itself in the delivered output. The
+    # description is "" where the generating step offered none.
+    generated_columns: dict[str, dict[str, str]] = field(default_factory=dict, repr=False)
 
     # Custom validators: table_name -> list of validator functions
     # Populated from custom_validation.CUSTOM_VALIDATORS
@@ -100,27 +103,45 @@ class CanonicalData:
         """Validate FK references point to unique fields."""
         validate_fk_references(self.models)
 
-    def register_generated_columns(self, table: str, columns: Iterable[str]) -> None:
+    def register_generated_columns(
+        self,
+        table: str,
+        columns: Iterable[str] | Mapping[str, str],
+    ) -> None:
         """Record columns a step generated whose names come from configuration.
 
-        ``add_zone_ids`` emits ``{prefix}_{zone_name}`` and the imputation step
-        emits ``{column}_preimputed``, so the names differ per project and
-        cannot be declared as model fields. They are still ours -- computed,
-        documented in config, and wanted in the delivered output -- so a step
-        that creates them says so here rather than leaving a consumer to guess
-        from the name.
+        ``add_zone_ids`` emits ``{prefix}_{zone_name}``, the imputation step
+        emits ``{column}_preimputed``, and ``cascade_completeness`` emits one
+        column per usability profile, so the names differ per project and cannot
+        be declared as model fields. They are still ours -- computed, named in
+        config, and wanted in the delivered output -- so a step that creates them
+        says so here rather than leaving a consumer to guess from the name.
+
+        Pass a mapping to describe them as well. A model field carries its
+        description to the codebook; a generated column has nowhere else to say
+        what it means, so a column whose name a project chose can still explain
+        itself. Passing a bare iterable records the names with no description.
 
         Args:
             table: Canonical table the columns were added to.
-            columns: Column names generated for that table.
+            columns: Column names, or column name -> description.
         """
-        self.generated_columns.setdefault(table, set()).update(columns)
+        described = dict(columns) if isinstance(columns, Mapping) else dict.fromkeys(columns, "")
+        registry = self.generated_columns.setdefault(table, {})
+        for column, description in described.items():
+            # Never let a later bare registration blank an existing description.
+            if description or column not in registry:
+                registry[column] = description
 
     def public_columns(self, table: str) -> set[str]:
         """Columns of *table* the pipeline stands behind: declared or generated."""
         model = self.models.get(table)
         declared = set(model.model_fields) if model is not None else set()
-        return declared | self.generated_columns.get(table, set())
+        return declared | set(self.generated_columns.get(table, {}))
+
+    def describe_generated(self, table: str) -> dict[str, str]:
+        """Descriptions for *table*'s generated columns, empty string where none."""
+        return dict(self.generated_columns.get(table, {}))
 
     def as_dict(self) -> dict[str, pl.DataFrame | None]:
         """Return all canonical tables as a dict (including None entries)."""

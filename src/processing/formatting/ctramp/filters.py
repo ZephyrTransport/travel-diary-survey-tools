@@ -23,8 +23,8 @@ import logging
 
 import polars as pl
 
-from data_canon.codebook.tours import TourCategory, TourDataQuality
-from processing.completeness import MIN_JOINT_PARTICIPANTS
+from data_canon.codebook.tours import TourDataQuality
+from processing.completeness import MIN_JOINT_PARTICIPANTS, suggest_usability_columns
 
 from .ctramp_config import CTRAMPConfig
 
@@ -214,63 +214,64 @@ def _drop_invalid_tours(
     tours: pl.DataFrame,
     linked_trips: pl.DataFrame,
     joint_trips: pl.DataFrame,
+    usability_flag_col: str,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
     """Remove tours not admissible to the model, cascading to linked and joint trips.
 
-    Keeps only tours the ``model_usable`` gate admits -- cascaded survey
-    completeness AND an admissible tour structure (VALID quality, COMPLETE
-    home-to-home category). That gate is stamped upstream by the
-    ``cascade_completeness`` step (see [`processing.completeness`]
-    [processing.completeness]) and is shared with the DaySim formatter and the
-    weighting, so all three agree on the tour universe. Without this,
-    single-trip/loop tours (which carry a null ``tour_purpose``) survive into
-    CT-RAMP output and are silently coerced to the ``OTHDISCR`` catch-all purpose.
+    Keeps only the tours *usability_flag_col* admits. That column is one of the
+    usability profiles stamped upstream by the ``cascade_completeness`` step (see
+    [`processing.completeness`][processing.completeness]), so this formatter, the
+    DaySim formatter and the weighting can be pointed at the same profile and
+    agree on the tour universe. Without the filter, single-trip/loop tours (which
+    carry a null ``tour_purpose``) survive into CT-RAMP output and are silently
+    coerced to the ``OTHDISCR`` catch-all purpose.
 
-    When ``model_usable`` is absent (schema-only frames, unit tests that predate
-    the gate) the criterion is re-derived from ``tour_data_quality`` /
-    ``tour_category`` so the behaviour is unchanged.
+    The verdict is read, never re-derived: if the named column is absent this
+    raises rather than inventing a criterion of its own, which is how the three
+    consumers used to drift apart. The error offers the frame's boolean columns
+    as candidates, since a profile's name comes from config and so cannot be
+    recognised by its shape.
 
     Args:
-        tours: Canonical tour data with ``model_usable`` (or the
-            ``tour_data_quality`` / ``tour_category`` descriptors)
+        tours: Canonical tour data carrying *usability_flag_col*
         linked_trips: Canonical linked trip data
         joint_trips: Aggregated joint trip data
+        usability_flag_col: Which usability profile decides the tour universe.
+            Naming a looser profile admits more, at the cost of no longer
+            matching whichever profile the weighting and the DaySim formatter
+            were given.
 
     Returns:
         Tuple of (tours, linked_trips, joint_trips) with inadmissible tours and
         their orphaned trips removed.
     """
-    has_gate = "model_usable" in tours.columns
+    if usability_flag_col not in tours.columns:
+        msg = (
+            f"Tours carry no '{usability_flag_col}' column, so there is nothing to "
+            f"gate on. Declare it in cascade_completeness's usability_profiles, or "
+            f"set drop_invalid_tours: false to keep every tour. "
+            f"{suggest_usability_columns(tours)}"
+        )
+        raise ValueError(msg)
+
+    # Name the profile in the log: several may be stamped, and two formatters
+    # reading different ones is legitimate but must not be invisible.
+    logger.info("CT-RAMP tour universe gated on %s", usability_flag_col)
+
     has_quality = "tour_data_quality" in tours.columns
-    has_category = "tour_category" in tours.columns
-    if not (has_gate or has_quality or has_category):
-        return tours, linked_trips, joint_trips
 
-    is_valid = pl.col("tour_data_quality") == TourDataQuality.VALID.value
-    is_complete = pl.col("tour_category") == TourCategory.COMPLETE.value
-
-    # Re-derive the criterion from the descriptors as a fallback. The column may
-    # exist but be unstamped (null) on frames that never passed through
-    # ``cascade_completeness`` -- e.g. schema-built fixtures -- so fall back per row
-    # rather than treating null as "drop".
-    if has_quality and has_category:
-        derived = is_valid & is_complete
-    elif has_quality:
-        derived = is_valid
-    elif has_category:
-        derived = is_complete
-    else:
-        derived = pl.lit(value=True)
-
-    # The upstream gate is authoritative wherever it has been stamped.
-    keep = pl.col("model_usable").fill_null(derived) if has_gate else derived
+    # The gate is the only criterion. A null means cascade_completeness never
+    # reached this row, which is a broken frame rather than licence to guess:
+    # re-deriving one here would be a second definition of admissibility that
+    # cannot know which profile was asked for.
+    keep = pl.col(usability_flag_col).fill_null(value=False)
 
     # Tag each dropped tour's reason so the log can distinguish structurally
-    # invalid tours from partial/open ones (valid but not home-based).
-    if has_quality and has_category:
+    # invalid tours from partial/open ones (valid but not home-based). This
+    # only labels what the gate already decided; it never decides anything.
+    if has_quality:
+        is_valid = pl.col("tour_data_quality") == TourDataQuality.VALID.value
         reason = pl.when(~is_valid).then(pl.lit("invalid")).otherwise(pl.lit("partial/open"))
-    elif has_quality:
-        reason = pl.lit("invalid")
     else:
         reason = pl.lit("partial/open")
 

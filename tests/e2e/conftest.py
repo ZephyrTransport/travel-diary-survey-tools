@@ -189,6 +189,29 @@ def _step_blocks(data_dir: Path, output_dir: Path, enabled: frozenset) -> dict:
             "name": "cascade_completeness",
             "validate_input": False,
             "cache": False,
+            # Two profiles so the e2e exercises the loop, not just one pass:
+            # the strict gate the formatters read, and a relaxed one that has
+            # to reach the delivered output as a registered generated column.
+            "params": {
+                "usability_profiles": {
+                    # Two strict profiles the formatters name separately, plus a
+                    # relaxed one, so the e2e exercises the loop, per-consumer
+                    # selection, and a relaxed column reaching the delivered
+                    # output as a registered generated column.
+                    "ctramp_usable": {
+                        "tour_closes_at": "primary_home",
+                        "household_day_needs": "all_members",
+                    },
+                    "daysim_usable": {
+                        "tour_closes_at": "primary_home",
+                        "household_day_needs": "all_members",
+                    },
+                    "analysis_usable": {
+                        "tour_closes_at": "anywhere",
+                        "household_day_needs": "nothing",
+                    },
+                }
+            },
         },
         "add_zone_ids": {
             "name": "add_zone_ids",
@@ -214,6 +237,7 @@ def _step_blocks(data_dir: Path, output_dir: Path, enabled: frozenset) -> dict:
             "validate_input": False,
             "cache": False,
             "params": {
+                "usability_flag_col": "ctramp_usable",
                 "income_low_threshold": 60000,
                 "income_med_threshold": 150000,
                 "income_high_threshold": 240000,
@@ -233,6 +257,7 @@ def _step_blocks(data_dir: Path, output_dir: Path, enabled: frozenset) -> dict:
             "validate_input": False,
             "validate_output": True,
             "cache": False,
+            "params": {"usability_flag_col": "daysim_usable"},
         },
         "write_data": {
             "name": "write_data",

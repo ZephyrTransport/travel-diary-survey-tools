@@ -139,7 +139,7 @@ class TestPropagateCarryForward:
         tables = _make_tables()
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight)
+        propagate_weights(tables, has_weight, usability_flag_col="usable")
 
         # persons get hh_weight via hh_id
         assert "person_weight" in tables["persons"].columns
@@ -180,7 +180,7 @@ class TestPropagateCarryForward:
         has_weight: dict[str, str] = {}
 
         with pytest.raises(ValueError, match="has no weight column"):
-            propagate_weights(tables, has_weight)
+            propagate_weights(tables, has_weight, usability_flag_col="usable")
 
     def test_error_parent_df_is_none(self):
         """Error when has_weight says parent has weight but its DataFrame is None."""
@@ -189,7 +189,7 @@ class TestPropagateCarryForward:
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
         with pytest.raises(ValueError, match="parent table households is None"):
-            propagate_weights(tables, has_weight)
+            propagate_weights(tables, has_weight, usability_flag_col="usable")
 
     def test_error_child_missing_join_key(self):
         """Error when child table is missing the join key column."""
@@ -199,7 +199,7 @@ class TestPropagateCarryForward:
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
         with pytest.raises(ValueError, match="missing join key hh_id"):
-            propagate_weights(tables, has_weight)
+            propagate_weights(tables, has_weight, usability_flag_col="usable")
 
     def test_skip_prevents_carry_forward(self):
         """Tables in the skip set are not overwritten."""
@@ -213,6 +213,7 @@ class TestPropagateCarryForward:
             tables,
             has_weight,
             skip={"persons", "days", "unlinked_trips", "linked_trips", "tours"},
+            usability_flag_col="usable",
         )
 
         # persons weight should stay at 99, not be overwritten
@@ -231,7 +232,7 @@ class TestPropagateCarryForward:
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
         # Should not raise -- all downstream tables are None
-        propagate_weights(tables, has_weight)
+        propagate_weights(tables, has_weight, usability_flag_col="usable")
 
         assert has_weight == {"households": "hh_weight"}
 
@@ -249,7 +250,7 @@ class TestPropagateAggregate:
         tables = _make_tables()
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight)
+        propagate_weights(tables, has_weight, usability_flag_col="usable")
 
         assert "linked_trip_weight" in tables["linked_trips"].columns
         lt = tables["linked_trips"].sort("linked_trip_id")
@@ -262,7 +263,7 @@ class TestPropagateAggregate:
         tables = _make_tables()
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight)
+        propagate_weights(tables, has_weight, usability_flag_col="usable")
 
         assert "tour_weight" in tables["tours"].columns
         # tour 1 has linked_trips 1 (wt=10) and 2 (wt=15) -> mean=12.5
@@ -287,7 +288,12 @@ class TestPropagateAggregate:
             "unlinked_trips": "unlinked_trip_weight",
         }
 
-        propagate_weights(tables, has_weight, skip={"persons", "days", "unlinked_trips"})
+        propagate_weights(
+            tables,
+            has_weight,
+            skip={"persons", "days", "unlinked_trips"},
+            usability_flag_col="usable",
+        )
 
         lt = tables["linked_trips"].sort("linked_trip_id")
         # linked_trip 1: mean(5.0) = 5.0  (zero excluded)
@@ -317,6 +323,7 @@ class TestPropagateAggregate:
                 tables,
                 has_weight,
                 skip={"persons", "days", "unlinked_trips"},
+                usability_flag_col="usable",
             )
 
     def test_aggregate_skip_when_target_none(self):
@@ -326,7 +333,7 @@ class TestPropagateAggregate:
         tables["tours"] = None
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight)
+        propagate_weights(tables, has_weight, usability_flag_col="usable")
 
         assert "linked_trips" not in has_weight
         assert "tours" not in has_weight
@@ -348,6 +355,7 @@ class TestPropagateAggregate:
                 tables,
                 has_weight,
                 skip={"persons", "days", "unlinked_trips"},
+                usability_flag_col="usable",
             )
 
     def test_error_aggregate_source_no_weight(self):
@@ -365,6 +373,7 @@ class TestPropagateAggregate:
                 tables,
                 has_weight,
                 skip={"persons", "days", "unlinked_trips"},
+                usability_flag_col="usable",
             )
 
 
@@ -462,7 +471,7 @@ def _make_tables_partial_usability():
 class TestPropagateUsableColumn:
     """Tests for spreading each parent's weight across its usable children.
 
-    Usability defaults to ``model_usable``; these exercise it against
+    Usability defaults to ``usable``; these exercise it against
     ``complete``, the other supported column.
     """
 
@@ -532,7 +541,7 @@ class TestPropagateUsableColumn:
 
     def test_missing_usable_column_propagates_normally(self):
         """Without the usability column present, weights propagate as before."""
-        tables = _make_tables()  # no complete/model_usable column
+        tables = _make_tables()  # no complete/usable column
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
         propagate_weights(tables, has_weight, usability_flag_col="complete")
@@ -711,14 +720,14 @@ def _make_tables_with_joints():
     grouping has a party of two and only one *represented* member. That gap is
     the whole point: it is what separates the party size from the divisor.
     """
-    households = pl.DataFrame({"hh_id": [1], "hh_weight": [10.0], "model_usable": [True]})
-    persons = pl.DataFrame({"person_id": [1, 2], "hh_id": [1, 1], "model_usable": [True, True]})
+    households = pl.DataFrame({"hh_id": [1], "hh_weight": [10.0], "usable": [True]})
+    persons = pl.DataFrame({"person_id": [1, 2], "hh_id": [1, 1], "usable": [True, True]})
     days = pl.DataFrame(
         {
             "day_id": [10, 20],
             "person_id": [1, 2],
             "hh_id": [1, 1],
-            "model_usable": [True, True],
+            "usable": [True, True],
         }
     )
     unlinked_trips = pl.DataFrame(
@@ -726,7 +735,7 @@ def _make_tables_with_joints():
             "unlinked_trip_id": [100, 200],
             "day_id": [10, 20],
             "linked_trip_id": [1, 2],
-            "model_usable": [True, False],
+            "usable": [True, False],
         }
     )
     linked_trips = pl.DataFrame(
@@ -735,7 +744,7 @@ def _make_tables_with_joints():
             "day_id": [10, 20],
             "tour_id": [1, 2],
             "joint_trip_id": [500, 500],
-            "model_usable": [True, False],
+            "usable": [True, False],
         }
     )
     tours = pl.DataFrame(
@@ -743,7 +752,7 @@ def _make_tables_with_joints():
             "tour_id": [1, 2],
             "day_id": [10, 20],
             "joint_tour_id": [900, 900],
-            "model_usable": [True, False],
+            "usable": [True, False],
         }
     )
     return {
@@ -752,9 +761,9 @@ def _make_tables_with_joints():
         "days": days,
         "unlinked_trips": unlinked_trips,
         "linked_trips": linked_trips,
-        "joint_trips": pl.DataFrame({"joint_trip_id": [500], "model_usable": [True]}),
+        "joint_trips": pl.DataFrame({"joint_trip_id": [500], "usable": [True]}),
         "tours": tours,
-        "joint_tours": pl.DataFrame({"joint_tour_id": [900], "model_usable": [True]}),
+        "joint_tours": pl.DataFrame({"joint_tour_id": [900], "usable": [True]}),
     }
 
 
@@ -764,7 +773,7 @@ class TestJointLevelsSum:
     def test_joint_weight_is_the_sum_of_its_members(self):
         """joint_trip_weight equals the total of the member linked_trip_weights."""
         tables = _make_tables_with_joints()
-        propagate_weights(tables, {"households": "hh_weight"})
+        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
 
         members = tables["linked_trips"]["linked_trip_weight"].sum()
         assert tables["joint_trips"]["joint_trip_weight"][0] == pytest.approx(members)
@@ -776,7 +785,7 @@ class TestJointLevelsSum:
     def test_joint_tour_weight_is_the_sum_of_its_members(self):
         """joint_tour_weight equals the total of the member tour_weights."""
         tables = _make_tables_with_joints()
-        propagate_weights(tables, {"households": "hh_weight"})
+        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
 
         members = tables["tours"]["tour_weight"].sum()
         assert tables["joint_tours"]["joint_tour_weight"][0] == pytest.approx(members)
@@ -784,7 +793,7 @@ class TestJointLevelsSum:
     def test_no_member_count_is_published(self):
         """The weight is the only column an UP level adds; counts stay derivable."""
         tables = _make_tables_with_joints()
-        propagate_weights(tables, {"households": "hh_weight"})
+        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
 
         assert "num_represented_members" not in tables["joint_trips"].columns
         assert "num_represented_members" not in tables["joint_tours"].columns
@@ -792,7 +801,7 @@ class TestJointLevelsSum:
     def test_dividing_by_the_member_count_recovers_the_event_weight(self):
         """Sum / count == mean, with the count taken from the member table."""
         tables = _make_tables_with_joints()
-        propagate_weights(tables, {"households": "hh_weight"})
+        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
 
         weighted_members = tables["linked_trips"].filter(pl.col("linked_trip_weight") != 0)
         events = tables["joint_trips"]["joint_trip_weight"][0] / len(weighted_members)
@@ -801,7 +810,7 @@ class TestJointLevelsSum:
     def test_mean_levels_are_untouched(self):
         """Only the joint levels sum; tours and linked trips still average."""
         tables = _make_tables_with_joints()
-        propagate_weights(tables, {"households": "hh_weight"})
+        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
 
         # Tour 1 holds a single linked trip, so its mean is that trip's weight.
         tour = tables["tours"].filter(pl.col("tour_id") == 1)
@@ -817,14 +826,14 @@ def _make_tables_with_unequal_joint_members():
     first and the max all coincide with the sum or half of it; unequal ones
     separate every candidate: sum 45, mean 22.5, first 15, max 30.
     """
-    households = pl.DataFrame({"hh_id": [1], "hh_weight": [30.0], "model_usable": [True]})
-    persons = pl.DataFrame({"person_id": [1, 2], "hh_id": [1, 1], "model_usable": [True, True]})
+    households = pl.DataFrame({"hh_id": [1], "hh_weight": [30.0], "usable": [True]})
+    persons = pl.DataFrame({"person_id": [1, 2], "hh_id": [1, 1], "usable": [True, True]})
     days = pl.DataFrame(
         {
             "day_id": [10, 11, 20],
             "person_id": [1, 1, 2],
             "hh_id": [1, 1, 1],
-            "model_usable": [True, True, True],
+            "usable": [True, True, True],
         }
     )
     unlinked_trips = pl.DataFrame(
@@ -832,7 +841,7 @@ def _make_tables_with_unequal_joint_members():
             "unlinked_trip_id": [100, 200],
             "day_id": [10, 20],
             "linked_trip_id": [1, 2],
-            "model_usable": [True, True],
+            "usable": [True, True],
         }
     )
     linked_trips = pl.DataFrame(
@@ -841,7 +850,7 @@ def _make_tables_with_unequal_joint_members():
             "day_id": [10, 20],
             "tour_id": [1, 2],
             "joint_trip_id": [500, 500],
-            "model_usable": [True, True],
+            "usable": [True, True],
         }
     )
     tours = pl.DataFrame(
@@ -849,7 +858,7 @@ def _make_tables_with_unequal_joint_members():
             "tour_id": [1, 2],
             "day_id": [10, 20],
             "joint_tour_id": [900, 900],
-            "model_usable": [True, True],
+            "usable": [True, True],
         }
     )
     return {
@@ -858,9 +867,9 @@ def _make_tables_with_unequal_joint_members():
         "days": days,
         "unlinked_trips": unlinked_trips,
         "linked_trips": linked_trips,
-        "joint_trips": pl.DataFrame({"joint_trip_id": [500], "model_usable": [True]}),
+        "joint_trips": pl.DataFrame({"joint_trip_id": [500], "usable": [True]}),
         "tours": tours,
-        "joint_tours": pl.DataFrame({"joint_tour_id": [900], "model_usable": [True]}),
+        "joint_tours": pl.DataFrame({"joint_tour_id": [900], "usable": [True]}),
     }
 
 
@@ -870,7 +879,7 @@ class TestUnequalJointMembers:
     def test_members_carry_the_expected_unequal_weights(self):
         """The premise: the split really does leave the two members apart."""
         tables = _make_tables_with_unequal_joint_members()
-        propagate_weights(tables, {"households": "hh_weight"})
+        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
 
         members = tables["linked_trips"].sort("linked_trip_id")["linked_trip_weight"].to_list()
         assert members == pytest.approx([15.0, 30.0])
@@ -878,7 +887,7 @@ class TestUnequalJointMembers:
     def test_joint_trip_weight_is_the_sum_and_nothing_else(self):
         """45 is the sum; the mean, the first and the max are 22.5, 15 and 30."""
         tables = _make_tables_with_unequal_joint_members()
-        propagate_weights(tables, {"households": "hh_weight"})
+        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
 
         weight = tables["joint_trips"]["joint_trip_weight"][0]
         assert weight == pytest.approx(45.0)
@@ -888,7 +897,7 @@ class TestUnequalJointMembers:
     def test_joint_tour_weight_is_the_sum_and_nothing_else(self):
         """The same separation on the tour side."""
         tables = _make_tables_with_unequal_joint_members()
-        propagate_weights(tables, {"households": "hh_weight"})
+        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
 
         weight = tables["joint_tours"]["joint_tour_weight"][0]
         assert weight == pytest.approx(45.0)
@@ -909,12 +918,12 @@ class TestJointEdgeCases:
         tables = _make_tables_with_joints()
         # Member 2 becomes usable, so both members carry weight on their own days.
         tables["unlinked_trips"] = tables["unlinked_trips"].with_columns(
-            pl.lit(value=True).alias("model_usable")
+            pl.lit(value=True).alias("usable")
         )
         tables["linked_trips"] = tables["linked_trips"].with_columns(
-            pl.lit(value=True).alias("model_usable")
+            pl.lit(value=True).alias("usable")
         )
-        propagate_weights(tables, {"households": "hh_weight"})
+        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
 
         members = tables["linked_trips"]
         assert members["day_id"].n_unique() == 2
@@ -925,7 +934,7 @@ class TestJointEdgeCases:
     def test_unusable_member_contributes_nothing(self):
         """A member the weighting excluded is absent from the sum, not zero-padded."""
         tables = _make_tables_with_joints()
-        propagate_weights(tables, {"households": "hh_weight"})
+        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
 
         weighted = tables["linked_trips"].filter(pl.col("linked_trip_weight") != 0)
         assert len(weighted) == 1
@@ -937,9 +946,9 @@ class TestJointEdgeCases:
         """A grouping is never more usable than its members allow."""
         tables = _make_tables_with_joints()
         tables["joint_trips"] = tables["joint_trips"].with_columns(
-            pl.lit(value=False).alias("model_usable")
+            pl.lit(value=False).alias("usable")
         )
-        propagate_weights(tables, {"households": "hh_weight"})
+        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
 
         assert tables["joint_trips"]["joint_trip_weight"][0] == 0.0
 
@@ -947,12 +956,12 @@ class TestJointEdgeCases:
         """Zero is a weight; null would silently drop out of downstream sums."""
         tables = _make_tables_with_joints()
         tables["unlinked_trips"] = tables["unlinked_trips"].with_columns(
-            pl.lit(value=False).alias("model_usable")
+            pl.lit(value=False).alias("usable")
         )
         tables["linked_trips"] = tables["linked_trips"].with_columns(
-            pl.lit(value=False).alias("model_usable")
+            pl.lit(value=False).alias("usable")
         )
-        propagate_weights(tables, {"households": "hh_weight"})
+        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
 
         weight = tables["joint_trips"]["joint_trip_weight"][0]
         assert weight is not None

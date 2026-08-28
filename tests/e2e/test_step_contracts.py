@@ -65,6 +65,9 @@ def test_format_ctramp_requires_nothing_it_does_not_read(full_result):
     fn = getattr(format_ctramp, "__wrapped__", format_ctramp)
     tables = full_result.as_dict_non_null()
     params = {
+        # The e2e stamps ctramp_usable; the step now requires the profile it
+        # gates on rather than assuming a conventional name.
+        "usability_flag_col": "ctramp_usable",
         "income_low_threshold": 30000,
         "income_med_threshold": 60000,
         "income_high_threshold": 100000,

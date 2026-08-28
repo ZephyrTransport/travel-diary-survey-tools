@@ -73,11 +73,11 @@ class TourDataQuality(LabeledEnum):
 
     This is a **leaf** fact, computed from the tour's own trips plus the
     surrounding trips of the same person, so the completeness cascade can read
-    it without the derivation ever pointing back at ``model_usable``. Reporting
-    completeness (``complete``), household-date coherence (``hh_day_complete``)
-    and the model gate (``model_usable``) live in their own columns and never
-    leak in here: a tour can be flawless and still be dropped because a
-    housemate skipped that date, which is not a fact about this tour.
+    it without the derivation ever pointing back at a usability verdict.
+    Reporting completeness (``complete``), household-date coherence
+    (``hh_day_complete``) and each usability profile's gate live in their own
+    columns and never leak in here: a tour can be flawless and still be dropped
+    because a housemate skipped that date, which is not a fact about this tour.
     """
 
     VALID = (0, "Valid tour")

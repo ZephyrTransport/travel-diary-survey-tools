@@ -6,11 +6,11 @@ steps. The shape being walked is declared in [`processing.weighting.core.hierarc
 
 # The distribution rule
 
-A record is admitted by a *usability flag* -- ``model_usable``, stamped once by
-the ``cascade_completeness`` step (see [`processing.completeness`]
-[processing.completeness]), so the weighted sample matches the tours the travel
-models actually keep.  Pass ``complete`` instead to weight the whole valid
-survey, including partial and overnight tours.
+A record is admitted by a *usability flag* -- one of the usability profiles
+stamped by the ``cascade_completeness`` step (see [`processing.completeness`]
+[processing.completeness]), so the weighted sample matches the records that
+profile's consumer actually keeps.  Pass ``complete`` instead to weight the whole
+valid survey, including partial and overnight tours.
 
 Unusable records carry no weight, but their population does not vanish: it is
 carried by the usable records in the same *scope*.  Give each record a **claim**
@@ -362,7 +362,7 @@ def propagate_weights(
     has_weight: dict[str, str],
     *,
     skip: set[str] | None = None,
-    usability_flag_col: str | None = "model_usable",
+    usability_flag_col: str | None,
 ) -> None:
     """Walk the hierarchy, deriving every weight that is not already supplied.
 
@@ -375,10 +375,10 @@ def propagate_weights(
             column and its name. E.g. ``{"households": "hh_weight"}``.
         skip: Table names to leave alone (e.g. externally supplied weights).
         usability_flag_col: Boolean column deciding which records may carry
-            weight. Defaults to ``model_usable``; pass ``complete`` to weight the
-            whole valid survey including partial/overnight tours, or None to give
-            every record its claim regardless of usability (split levels still
-            divide the parent weight equally, over *all* children).
+            weight -- a usability profile stamped upstream. Pass ``complete`` to
+            weight the whole valid survey including partial/overnight tours, or
+            None to give every record its claim regardless of usability (split
+            levels still divide the parent weight equally, over *all* children).
     """
     skip = skip or set()
 

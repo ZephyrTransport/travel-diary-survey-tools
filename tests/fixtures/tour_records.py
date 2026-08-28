@@ -51,6 +51,7 @@ def create_tour(
     joint_tour_id: int | None = None,
     parent_tour_id: int | None = None,
     subtour_num: int = 0,
+    usable: bool = True,
     **overrides,
 ) -> dict:
     """Create a complete canonical tour record.
@@ -93,6 +94,11 @@ def create_tour(
         parent_tour_id: Parent tour (None for primary tours)
         subtour_num: Subtour number (0 for primary tours)
         **overrides: Override any default values
+
+        usable: Value for the usability gate the formatters read.
+            Named by a project's profile in production, so not a model
+            field. True by default: these records exist to exercise
+            formatting, and a test about gating sets it explicitly.
 
     Returns:
         Complete tour record dict
@@ -152,6 +158,13 @@ def create_tour(
         "joint_tour_id": joint_tour_id,
         "parent_tour_id": tour_id if parent_tour_id is None else parent_tour_id,
         "subtour_num": subtour_num,
+        # The usability gate the formatters read. Stamped by cascade_completeness
+        # under whatever name a project's profile carries, so it is not a model
+        # field -- but every tours frame reaching a formatter has one, and the
+        # formatters require it rather than re-deriving a criterion of their own.
+        # Default True: these records exist to exercise formatting. A test about
+        # gating passes usable=... explicitly.
+        "usable": usable,
     }
 
     # Add optional MAZ fields
@@ -185,6 +198,9 @@ def get_tour_schema() -> dict[str, type]:
             "d_TAZ1454": pl.Int64,
             "travel_dow": pl.Int64,
             "student_category": pl.String,
+            # The usability gate. Named by a project's profile, so not a model
+            # field, but present on every tours frame a formatter sees.
+            "usable": pl.Boolean,
         }
     )
 

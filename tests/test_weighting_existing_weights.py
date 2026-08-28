@@ -39,8 +39,7 @@ class TestAddExistingWeights:
         }
 
         result = add_existing_weights(
-            weights=weights_config,
-            households=households,
+            weights=weights_config, households=households, usability_flag_col="usable"
         )
 
         assert "households" in result
@@ -79,8 +78,7 @@ class TestAddExistingWeights:
         }
 
         result = add_existing_weights(
-            weights=weights_config,
-            persons=persons,
+            weights=weights_config, persons=persons, usability_flag_col="usable"
         )
 
         assert "persons" in result
@@ -114,8 +112,7 @@ class TestAddExistingWeights:
         }
 
         result = add_existing_weights(
-            weights=weights_config,
-            unlinked_trips=trips,
+            weights=weights_config, unlinked_trips=trips, usability_flag_col="usable"
         )
 
         assert "unlinked_trips" in result
@@ -164,6 +161,7 @@ class TestAddExistingWeights:
             households=households,
             persons=persons,
             derive_missing_weights=True,
+            usability_flag_col="usable",
         )
 
         # Check households have weights
@@ -213,6 +211,7 @@ class TestAddExistingWeights:
             unlinked_trips=unlinked_trips,
             linked_trips=linked_trips,
             derive_missing_weights=True,
+            usability_flag_col="usable",
         )
 
         # Check linked trips have derived weights (mean of component trips, excluding zeros)
@@ -257,6 +256,7 @@ class TestAddExistingWeights:
             unlinked_trips=unlinked_trips,
             linked_trips=linked_trips,
             derive_missing_weights=True,
+            usability_flag_col="usable",
         )
 
         # Linked trip 1: mean(1.0) = 1.0 (zero excluded)
@@ -282,8 +282,7 @@ class TestAddExistingWeights:
 
         with pytest.raises(ValueError, match="Invalid weight config key"):
             add_existing_weights(
-                weights=weights_config,
-                households=households,
+                weights=weights_config, households=households, usability_flag_col="usable"
             )
 
     def test_error_on_missing_weight_path(self):
@@ -302,8 +301,7 @@ class TestAddExistingWeights:
 
         with pytest.raises(ValidationError):
             add_existing_weights(
-                weights=weights_config,
-                households=households,
+                weights=weights_config, households=households, usability_flag_col="usable"
             )
 
     def test_error_on_nonexistent_file(self):
@@ -322,8 +320,7 @@ class TestAddExistingWeights:
 
         with pytest.raises(FileNotFoundError, match="Weight file does not exist"):
             add_existing_weights(
-                weights=weights_config,
-                households=households,
+                weights=weights_config, households=households, usability_flag_col="usable"
             )
 
     def test_error_on_missing_id_column_in_weight_file(self, tmp_path):
@@ -351,8 +348,7 @@ class TestAddExistingWeights:
 
         with pytest.raises(ValueError, match="missing required ID column"):
             add_existing_weights(
-                weights=weights_config,
-                households=households,
+                weights=weights_config, households=households, usability_flag_col="usable"
             )
 
     def test_error_on_missing_weight_column(self, tmp_path):
@@ -380,8 +376,7 @@ class TestAddExistingWeights:
 
         with pytest.raises(ValueError, match="missing required weight column"):
             add_existing_weights(
-                weights=weights_config,
-                households=households,
+                weights=weights_config, households=households, usability_flag_col="usable"
             )
 
     def test_multiple_tables_with_weights(self, tmp_path):
@@ -429,6 +424,7 @@ class TestAddExistingWeights:
             weights=weights_config,
             households=households,
             persons=persons,
+            usability_flag_col="usable",
         )
 
         assert "hh_weight" in result["households"].columns
@@ -456,6 +452,7 @@ class TestAddExistingWeights:
         result = add_existing_weights(
             weights=weights_config,
             households=None,  # Table not provided
+            usability_flag_col="usable",
         )
 
         # Should not raise error, just log warning
@@ -487,8 +484,7 @@ class TestAddExistingWeights:
         }
 
         result = add_existing_weights(
-            weights=weights_config,
-            households=households,
+            weights=weights_config, households=households, usability_flag_col="usable"
         )
 
         assert "hh_weight" in result["households"].columns
@@ -521,8 +517,7 @@ class TestAddExistingWeights:
         }
 
         result = add_existing_weights(
-            weights=weights_config,
-            persons=persons,
+            weights=weights_config, persons=persons, usability_flag_col="usable"
         )
 
         assert "person_weight" in result["persons"].columns
@@ -535,7 +530,7 @@ class TestSuppliedTotalPreserved:
     The vendor's anchor cannot be re-balanced from here -- their weights already
     sum to their population estimate -- so dropping records must leave each
     table's supplied total intact. These use ``complete`` rather than the
-    default ``model_usable``, since the fixtures carry no tour structure.
+    default ``usable``, since the fixtures carry no tour structure.
     """
 
     def _households(self) -> pl.DataFrame:

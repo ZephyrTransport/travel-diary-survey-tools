@@ -1270,6 +1270,7 @@ class TestEndToEndDaysimFormatting:
             data["linked_trips"],
             data["tours"],
             data["days"],
+            usability_flag_col="usable",
         )
 
         # Verify all expected keys present
@@ -1295,6 +1296,7 @@ class TestEndToEndDaysimFormatting:
             data["linked_trips"],
             data["tours"],
             data["days"],
+            usability_flag_col="usable",
         )
 
         # Verify transit mode detected
@@ -1316,6 +1318,7 @@ class TestEndToEndDaysimFormatting:
             data["linked_trips"],
             data["tours"],
             data["days"],
+            usability_flag_col="usable",
         )
 
         # Verify household composition
@@ -1432,8 +1435,12 @@ class TestEndToEndDaysimFormatting:
                 "days": days,
             }
         )
+        # The pipeline stamps the usability gate between extraction and
+        # formatting; this test drives the two directly, so it stamps its own.
+        # Every extracted tour is usable here -- the subject is the TAZ filter.
+        data["tours"] = data["tours"].with_columns(pl.lit(value=True).alias("usable"))
 
-        result = format_daysim(**data)
+        result = format_daysim(**data, usability_flag_col="usable")
 
         # Only household 1 should remain
         assert len(result["households_daysim"]) == 1
@@ -1454,6 +1461,7 @@ class TestEndToEndDaysimFormatting:
             data["linked_trips"],
             data["tours"],
             data["days"],
+            usability_flag_col="usable",
         )
 
         # Check household columns

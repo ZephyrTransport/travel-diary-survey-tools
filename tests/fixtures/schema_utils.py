@@ -116,16 +116,27 @@ def empty_linked_trips() -> pl.DataFrame:
     return pl.DataFrame(schema=model_to_polars_schema(LinkedTripModel))
 
 
-def empty_tours() -> pl.DataFrame:
+def empty_tours(usability_flag_col: str = "usable") -> pl.DataFrame:
     """Create empty tours DataFrame with complete schema.
 
     Returns properly typed empty DataFrame that passes @step validation checks
     for TourModel.
 
+    The usability flag is added on top of the model fields. It is stamped by
+    ``cascade_completeness`` under whatever name a project's usability profile
+    carries, so it cannot be a model field -- but every tours frame reaching a
+    formatter has been through that step, and the formatters now require it
+    rather than re-deriving a criterion of their own.
+
+    Args:
+        usability_flag_col: Name of the usability column to include.
+
     Returns:
-        Empty DataFrame with TourModel schema
+        Empty DataFrame with TourModel schema plus the usability flag
     """
-    return pl.DataFrame(schema=model_to_polars_schema(TourModel))
+    schema = model_to_polars_schema(TourModel)
+    schema[usability_flag_col] = pl.Boolean
+    return pl.DataFrame(schema=schema)
 
 
 def empty_unlinked_trips() -> pl.DataFrame:

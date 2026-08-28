@@ -148,7 +148,7 @@ class TestTourExtraction:
         assert subtours["tour_data_quality"].to_list() == [TourDataQuality.VALID.value]
 
     def test_at_work_subtour_reaches_ctramp(self, full_result):
-        # The whole point of #85: the subtour must survive the model_usable gate
+        # The whole point of #85: the subtour must survive the usable gate
         # and the CT-RAMP drop, and be emitted as an AT_WORK tour whose parent
         # reports it in atWork_freq.
         tours = full_result.individual_tours_ctramp

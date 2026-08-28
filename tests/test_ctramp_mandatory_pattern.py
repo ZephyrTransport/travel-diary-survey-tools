@@ -32,6 +32,7 @@ from tests.fixtures import (
 def standard_config():
     """Standard test configuration with explicit parameters."""
     return CTRAMPConfig(
+        usability_flag_col="usable",
         income_low_threshold=30000,  # $30k ($2000, MTC)
         income_med_threshold=60000,  # $60k ($2000, MTC)
         income_high_threshold=100000,  # $100k ($2000, MTC)

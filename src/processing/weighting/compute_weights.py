@@ -128,7 +128,7 @@ def compute_weights(  # noqa: PLR0913
     strict_survey_nulls: bool = False,
     # -- Completeness handling ------------------------------------------
     exclude_incompletes: bool = True,
-    usability_flag_col: str = "model_usable",
+    usability_flag_col: str,
     # -- Canonical tables (auto-injected by pipeline) -------------------
     households: pl.DataFrame | None = None,
     persons: pl.DataFrame | None = None,

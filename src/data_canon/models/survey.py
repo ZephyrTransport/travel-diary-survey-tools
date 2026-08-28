@@ -10,18 +10,25 @@ Any field without None as an allowed type is considered required core data.
 
 # Completeness vs. model admissibility
 
-Two flags answer two different questions and must not be conflated:
+Two kinds of flag answer two different questions and must not be conflated:
 
 * ``complete`` -- *did we collect this record?* Survey reporting completeness,
   cascaded from household down. Partial and overnight tours stay ``True``: they
-  are valid survey data, useful for survey analysis.
-* ``model_usable`` -- *do the travel models take this record?* Reporting
-  completeness AND an admissible tour structure. Stamped once by the
-  ``cascade_completeness`` step and read by the travel-model drop and the
-  weighting.
+  are valid survey data, useful for survey analysis. Declared here, because
+  every run produces it.
+* one column per **usability profile** -- *do the travel models take this
+  record?* Reporting completeness AND an admissible tour structure.
 
-Gate on ``model_usable``; ``complete`` is the descriptor it derives from. See
-[`processing.completeness`][processing.completeness] for the per-level rules.
+The usability columns are deliberately **not** declared below. A project names
+its profiles in config -- ``ctramp_usable`` and ``analysis_usable`` are this
+project's names, not the schema's -- so which of them a run produces is a
+project's choice. Declaring one would promise a column that a config need never
+ask for. ``cascade_completeness`` registers whichever it stamps as generated
+columns, each described by what it admits, which says more than a fixed field
+could: the description names the actual rules that profile relaxed.
+
+See [`processing.completeness`][processing.completeness] for the per-level rules
+and the admission vocabulary.
 """
 
 from datetime import datetime
@@ -77,15 +84,6 @@ class HouseholdModel(BaseModel):
     hh_weight: float | None = schema_field(ge=0)
     num_vehicles: int = schema_field(ge=0)
     complete: bool = schema_field()
-    model_usable: bool | None = schema_field(
-        default=None,
-        description=(
-            "Admissible to the tour-based model: survey-complete AND part of a "
-            "well-formed tour structure. Stamped by the cascade_completeness step; "
-            "gates the travel-model drop and the weighting. Not a data-quality "
-            "verdict - see `complete`."
-        ),
-    )
 
 
 class PersonModel(BaseModel):
@@ -152,15 +150,6 @@ class PersonModel(BaseModel):
     )
     num_days_complete: int = schema_field(ge=0, default=0)
     complete: bool | None = schema_field(default=None)
-    model_usable: bool | None = schema_field(
-        default=None,
-        description=(
-            "Admissible to the tour-based model: survey-complete AND part of a "
-            "well-formed tour structure. Stamped by the cascade_completeness step; "
-            "gates the travel-model drop and the weighting. Not a data-quality "
-            "verdict - see `complete`."
-        ),
-    )
     person_weight: float | None = schema_field(default=None, ge=0)
 
 
@@ -187,27 +176,14 @@ class PersonDayModel(BaseModel):
         description=(
             "Household-day coherence: every member of the household reported a "
             "complete day on this travel_date. Stamped by the cascade_completeness "
-            "step as an ALL reduction over member-days. A day is only "
-            "model_usable within a complete household-day."
+            "step as an ALL reduction over member-days. Under a profile that "
+            "asks for whole household-days, a day is only usable within one."
         ),
     )
-    hh_day_usable: bool | None = schema_field(
-        default=None,
-        description=(
-            "Usable-side mirror of hh_day_complete: every member's day on this "
-            "travel_date is model_usable. Stamped by cascade_completeness; a "
-            "household is admissible only with >=1 usable household-day."
-        ),
-    )
-    model_usable: bool | None = schema_field(
-        default=None,
-        description=(
-            "Admissible to the tour-based model: survey-complete AND a coherent "
-            "household-day AND part of a well-formed tour structure. Stamped by "
-            "the cascade_completeness step; gates the travel-model drop and the "
-            "weighting. Not a data-quality verdict - see `complete`."
-        ),
-    )
+    # The usable-side mirror of hh_day_complete is now stamped once per
+    # usability profile, as hh_day_{profile}. Those names come from config, so
+    # they cannot be model fields; cascade_completeness registers them as
+    # generated columns with a description of what each one gated.
     day_weight: float | None = schema_field(default=None, ge=0)
 
 
@@ -253,15 +229,6 @@ class UnlinkedTripModel(BaseModel):
     arrive_time: datetime | None = schema_field()
     num_travelers: int = schema_field(ge=1)
     complete: bool | None = schema_field(default=None)
-    model_usable: bool | None = schema_field(
-        default=None,
-        description=(
-            "Admissible to the tour-based model: survey-complete AND part of a "
-            "well-formed tour structure. Stamped by the cascade_completeness step; "
-            "gates the travel-model drop and the weighting. Not a data-quality "
-            "verdict - see `complete`."
-        ),
-    )
     unlinked_trip_weight: float | None = schema_field(default=None, ge=0)
 
     # You can add custom row-level validators here
@@ -400,15 +367,6 @@ class LinkedTripModel(BaseModel):
         description="Classified location type of the trip destination (Home/Work/School/Other).",
     )
     complete: bool | None = schema_field(default=None)
-    model_usable: bool | None = schema_field(
-        default=None,
-        description=(
-            "Admissible to the tour-based model: survey-complete AND part of a "
-            "well-formed tour structure. Stamped by the cascade_completeness step; "
-            "gates the travel-model drop and the weighting. Not a data-quality "
-            "verdict - see `complete`."
-        ),
-    )
     linked_trip_weight: float | None = schema_field(default=None, ge=0)
 
 
@@ -449,8 +407,8 @@ class TourModel(BaseModel):
             "What is structurally wrong with this tour, or VALID. Derived from "
             "the tour's own trips only -- never from survey completeness or "
             "household coherence, which have their own columns. Codes 2-4 "
-            "mirror `tour_category` value for value. Not the model gate: see "
-            "`model_usable`."
+            "mirror `tour_category` value for value. Not itself a gate: which "
+            "codes are admissible is a usability profile's decision."
         ),
     )
     trip_count: int = schema_field(
@@ -493,15 +451,6 @@ class TourModel(BaseModel):
     inbound_mode: ModeType | None = schema_field()
     num_travelers: int = schema_field(ge=1, default=1)
     complete: bool | None = schema_field(default=None)
-    model_usable: bool | None = schema_field(
-        default=None,
-        description=(
-            "Admissible to the tour-based model: survey-complete AND part of a "
-            "well-formed tour structure. Stamped by the cascade_completeness step; "
-            "gates the travel-model drop and the weighting. Not a data-quality "
-            "verdict - see `complete`."
-        ),
-    )
     tour_weight: float | None = schema_field(default=None, ge=0)
 
     @model_validator(mode="after")
@@ -560,15 +509,6 @@ class JointTripModel(BaseModel):
         ),
     )
     complete: bool | None = schema_field(default=None)
-    model_usable: bool | None = schema_field(
-        default=None,
-        description=(
-            "Admissible to the tour-based model: survey-complete AND part of a "
-            "well-formed tour structure. Stamped by the cascade_completeness step; "
-            "gates the travel-model drop and the weighting. Not a data-quality "
-            "verdict - see `complete`."
-        ),
-    )
     joint_trip_weight: float | None = schema_field(
         default=None,
         ge=0,
@@ -606,15 +546,6 @@ class JointTourModel(BaseModel):
         ),
     )
     complete: bool | None = schema_field(default=None)
-    model_usable: bool | None = schema_field(
-        default=None,
-        description=(
-            "Admissible to the tour-based model: at least two member tours are "
-            "themselves model-usable, so the group is still joint. Stamped by the "
-            "cascade_completeness step; gates the travel-model drop and the "
-            "weighting. Not a data-quality verdict - see `complete`."
-        ),
-    )
     joint_tour_weight: float | None = schema_field(
         default=None,
         ge=0,

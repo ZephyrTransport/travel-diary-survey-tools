@@ -5,10 +5,13 @@ import pytest
 
 from data_canon.codebook.tours import TourCategory, TourDataQuality
 from processing.completeness import (
+    ALL_MEMBERS,
+    PRIMARY_HOME,
+    UsabilityProfile,
     _flag_households,
     _flag_joint_groupings,
     cascade_completeness,
-    compute_model_usable,
+    compute_usability,
     flag_household_day_complete,
     rollup_completeness,
     rollup_household_complete,
@@ -136,26 +139,26 @@ def _gate_tables(
 
 
 class TestComputeModelUsable:
-    """Tests for compute_model_usable (the modelling gate)."""
+    """Tests for compute_usability (the modelling gate)."""
 
     def test_only_admissible_tours_are_usable(self):
         """VALID + COMPLETE-category tours pass; invalid and partial ones do not."""
         tables = _gate_tables()
-        compute_model_usable(tables)
-        assert tables["tours"].sort("tour_id")["model_usable"].to_list() == [True, False, False]
+        compute_usability(tables, profile=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
+        assert tables["tours"].sort("tour_id")["usable"].to_list() == [True, False, False]
 
     def test_complete_is_never_overwritten(self):
         """Partials/overnights remain valid survey data: `complete` is untouched."""
         tables = _gate_tables()
-        compute_model_usable(tables)
+        compute_usability(tables, profile=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
         # all three tours were reported completely, even though two are inadmissible
         assert tables["tours"].sort("tour_id")["complete"].to_list() == [True, True, True]
 
     def test_member_trips_follow_their_tour(self):
         """A trip is usable only if its tour is."""
         tables = _gate_tables()
-        compute_model_usable(tables)
-        assert tables["linked_trips"].sort("linked_trip_id")["model_usable"].to_list() == [
+        compute_usability(tables, profile=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
+        assert tables["linked_trips"].sort("linked_trip_id")["usable"].to_list() == [
             True,
             False,
             False,
@@ -164,8 +167,8 @@ class TestComputeModelUsable:
     def test_day_with_one_usable_tour_stays_usable(self):
         """A day keeps its gate as long as at least one tour is admissible."""
         tables = _gate_tables()
-        compute_model_usable(tables)
-        assert tables["days"]["model_usable"].to_list() == [True]
+        compute_usability(tables, profile=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
+        assert tables["days"]["usable"].to_list() == [True]
 
     def test_day_with_tours_but_none_usable_is_gated_out(self):
         """A day whose travel yields no admissible tour is not model-usable."""
@@ -173,8 +176,8 @@ class TestComputeModelUsable:
             tour_quality=[TourDataQuality.NO_DESTINATION.value] * 3,
             tour_category=[TourCategory.PARTIAL_BOTH.value] * 3,
         )
-        compute_model_usable(tables)
-        assert tables["days"]["model_usable"].to_list() == [False]
+        compute_usability(tables, profile=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
+        assert tables["days"]["usable"].to_list() == [False]
         # ...but it is still valid survey data
         assert tables["days"]["complete"].to_list() == [True]
 
@@ -183,8 +186,8 @@ class TestComputeModelUsable:
         tables = _gate_tables()
         tables["tours"] = tables["tours"].clear()
         tables["linked_trips"] = tables["linked_trips"].clear()
-        compute_model_usable(tables)
-        assert tables["days"]["model_usable"].to_list() == [True]
+        compute_usability(tables, profile=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
+        assert tables["days"]["usable"].to_list() == [True]
 
     def test_incomplete_day_rolls_up_and_down(self):
         """An incomplete day makes its records unusable and its person incomplete.
@@ -195,17 +198,17 @@ class TestComputeModelUsable:
         """
         tables = _gate_tables()
         tables["days"] = pl.DataFrame({"day_id": [1], "person_id": [1], "complete": [False]})
-        compute_model_usable(tables)
-        assert tables["persons"]["model_usable"].to_list() == [False]
-        assert tables["days"]["model_usable"].to_list() == [False]
-        assert tables["tours"]["model_usable"].to_list() == [False, False, False]
+        compute_usability(tables, profile=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
+        assert tables["persons"]["usable"].to_list() == [False]
+        assert tables["days"]["usable"].to_list() == [False]
+        assert tables["tours"]["usable"].to_list() == [False, False, False]
 
     def test_missing_descriptors_fall_back_to_completeness(self):
         """Tours without quality/category columns are gated on completeness alone."""
         tables = _gate_tables()
         tables["tours"] = tables["tours"].drop("tour_data_quality", "tour_category")
-        compute_model_usable(tables)
-        assert tables["tours"].sort("tour_id")["model_usable"].to_list() == [True, True, True]
+        compute_usability(tables, profile=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
+        assert tables["tours"].sort("tour_id")["usable"].to_list() == [True, True, True]
 
 
 def _joint_tables(*, tour_usable: list[bool]):
@@ -252,16 +255,16 @@ class TestJointGroupingsNeedTwoMembers:
     def test_joint_group_with_two_usable_members_survives(self):
         """Two surviving participants still make a joint group."""
         tables = _joint_tables(tour_usable=[True, True, False])
-        compute_model_usable(tables)
-        assert tables["joint_tours"]["model_usable"].to_list() == [True]
-        assert tables["joint_trips"]["model_usable"].to_list() == [True]
+        compute_usability(tables, profile=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
+        assert tables["joint_tours"]["usable"].to_list() == [True]
+        assert tables["joint_trips"]["usable"].to_list() == [True]
 
     def test_joint_group_down_to_one_member_is_not_joint(self):
         """One surviving participant is not a joint tour, so it is not usable."""
         tables = _joint_tables(tour_usable=[True, False, False])
-        compute_model_usable(tables)
-        assert tables["joint_tours"]["model_usable"].to_list() == [False]
-        assert tables["joint_trips"]["model_usable"].to_list() == [False]
+        compute_usability(tables, profile=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
+        assert tables["joint_tours"]["usable"].to_list() == [False]
+        assert tables["joint_trips"]["usable"].to_list() == [False]
 
     def test_joint_trip_follows_its_member_trips(self):
         """A joint trip whose tours were all dropped cannot stay usable.
@@ -270,9 +273,9 @@ class TestJointGroupingsNeedTwoMembers:
         survived its own members being dropped.
         """
         tables = _joint_tables(tour_usable=[False, False, False])
-        compute_model_usable(tables)
+        compute_usability(tables, profile=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
         assert tables["joint_trips"]["complete"].to_list() == [True]
-        assert tables["joint_trips"]["model_usable"].to_list() == [False]
+        assert tables["joint_trips"]["usable"].to_list() == [False]
 
 
 def _hh_day_tables(*, day_complete, dates, hh_ids, persons=None, surveyable=None):
@@ -342,9 +345,9 @@ class TestHouseholdDayCoherence:
             hh_ids=[1, 1],
             persons=[1, 2],
         )
-        compute_model_usable(t)
+        compute_usability(t, profile=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
         assert t["days"]["hh_day_complete"].to_list() == [True, True]
-        assert t["days"]["model_usable"].to_list() == [True, True]
+        assert t["days"]["usable"].to_list() == [True, True]
 
     def test_one_incomplete_member_breaks_the_whole_household_day(self):
         """Strict: if any member's day is incomplete, no member's day is usable."""
@@ -354,11 +357,11 @@ class TestHouseholdDayCoherence:
             hh_ids=[1, 1],
             persons=[1, 2],
         )
-        compute_model_usable(t)
+        compute_usability(t, profile=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
         # member 1 reported a complete day, but member 2 did not, so the whole
         # household-date is incoherent and neither day is usable
         assert t["days"]["hh_day_complete"].to_list() == [False, False]
-        assert t["days"]["model_usable"].to_list() == [False, False]
+        assert t["days"]["usable"].to_list() == [False, False]
 
     def test_each_date_is_independent(self):
         """A household is complete on the dates where all members reported."""
@@ -369,7 +372,7 @@ class TestHouseholdDayCoherence:
             hh_ids=[1, 1, 1, 1],
             persons=[1, 1, 2, 2],
         )
-        compute_model_usable(t)
+        compute_usability(t, profile=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
         d = t["days"].sort("day_id")
         # date A (days 1,3) coherent; date B (days 2,4) not
         assert d["hh_day_complete"].to_list() == [True, False, True, False]
@@ -382,8 +385,8 @@ class TestHouseholdDayCoherence:
             hh_ids=[1, 1, 1, 1],
             persons=[1, 1, 2, 2],
         )
-        compute_model_usable(t)
-        assert t["households"]["model_usable"].to_list() == [True]
+        compute_usability(t, profile=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
+        assert t["households"]["usable"].to_list() == [True]
 
     def test_household_with_no_complete_day_is_dropped(self):
         """No date where all members reported -> household is not admissible."""
@@ -393,8 +396,8 @@ class TestHouseholdDayCoherence:
             hh_ids=[1, 1],
             persons=[1, 2],
         )
-        compute_model_usable(t)
-        assert t["households"]["model_usable"].to_list() == [False]
+        compute_usability(t, profile=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
+        assert t["households"]["usable"].to_list() == [False]
 
     def test_unsurveyable_member_does_not_veto_the_household_day(self):
         """An unsurveyable member's day neither vetoes the date nor becomes usable.
@@ -412,12 +415,12 @@ class TestHouseholdDayCoherence:
             persons=[1, 2],
             surveyable={2: 0},
         )
-        compute_model_usable(t)
+        compute_usability(t, profile=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
         d = t["days"].sort("day_id")
         assert d["hh_day_complete"].to_list() == [True, False]
-        assert d["model_usable"].to_list() == [True, False]
+        assert d["usable"].to_list() == [True, False]
         # The household is admissible through its surveyable member's date.
-        assert t["households"]["model_usable"].to_list() == [True]
+        assert t["households"]["usable"].to_list() == [True]
 
     def test_surveyable_member_still_vetoes_the_household_day(self):
         """A surveyable member's incomplete day still breaks the date.
@@ -432,15 +435,15 @@ class TestHouseholdDayCoherence:
             persons=[1, 2],
             surveyable={2: 1},
         )
-        compute_model_usable(t)
+        compute_usability(t, profile=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
         assert t["days"].sort("day_id")["hh_day_complete"].to_list() == [False, False]
-        assert t["households"]["model_usable"].to_list() == [False]
+        assert t["households"]["usable"].to_list() == [False]
 
 
 class TestUnflaggedMemberTablesRaise:
     """An unflagged member table must fail loudly, never silently pass.
 
-    Each of these rules reads a child's ``model_usable``. If that column has not
+    Each of these rules reads a child's ``usable``. If that column has not
     been stamped yet the old guards fell back to bare ``complete``, which passes
     every record -- the exact behaviour the rules exist to replace, with no error
     to notice. They now raise instead.
@@ -451,16 +454,21 @@ class TestUnflaggedMemberTablesRaise:
         tables = _joint_tables(tour_usable=[True, False, False])
         # linked_trips present but never flagged: calling the rule directly is
         # the ordering mistake this guards against.
-        with pytest.raises(ValueError, match="no model_usable column yet"):
-            _flag_joint_groupings(tables)
+        with pytest.raises(ValueError, match="no usable column yet"):
+            _flag_joint_groupings(
+                tables, cols=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS)
+            )
 
     def test_households_with_uncohered_days_raise(self):
-        """The household rule reads days.hh_day_usable; unflagged days must raise."""
+        """The household rule reads the profile's household-day column.
+
+        Days present but unflagged must raise rather than pass silently.
+        """
         tables = _joint_tables(tour_usable=[True, True])
         # days present but flag_household_day_usable not run yet
         assert "hh_day_usable" not in tables["days"].columns
         with pytest.raises(ValueError, match="no hh_day_usable column yet"):
-            _flag_households(tables)
+            _flag_households(tables, cols=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
 
     def test_partial_call_without_the_member_table_is_still_allowed(self):
         """Omitting the member table entirely is a legitimate partial call."""
@@ -468,14 +476,14 @@ class TestUnflaggedMemberTablesRaise:
         # No linked_trips at all -> joint_trips falls back to its own `complete`.
         del tables["linked_trips"]
         del tables["joint_tours"]
-        _flag_joint_groupings(tables)
-        assert tables["joint_trips"]["model_usable"].to_list() == [True]
+        _flag_joint_groupings(tables, cols=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
+        assert tables["joint_trips"]["usable"].to_list() == [True]
 
 
 class TestCascadeCompletenessStep:
     """Tests for the cascade_completeness pipeline step.
 
-    The step is a thin wrapper over :func:`compute_model_usable` (covered above);
+    The step is a thin wrapper over :func:`compute_usability` (covered above);
     the full pipeline wiring is exercised by the synthetic end-to-end run. Here we
     only assert it is registered and returns just the tables it was given.
     """
@@ -483,6 +491,14 @@ class TestCascadeCompletenessStep:
     def test_omits_tables_not_supplied(self):
         """Tables passed as None are not present in the result."""
         tables = _gate_tables()
-        result = cascade_completeness(households=tables["households"])
+        result = cascade_completeness(
+            households=tables["households"],
+            usability_profiles={
+                "usable": {
+                    "tour_closes_at": "primary_home",
+                    "household_day_needs": "all_members",
+                }
+            },
+        )
         assert set(result) == {"households"}
-        assert "model_usable" in result["households"].columns
+        assert "usable" in result["households"].columns

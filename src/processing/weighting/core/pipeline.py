@@ -587,9 +587,8 @@ class WeightingPipeline:
         tables = self.data.as_dict()
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        # Usability is a single flag stamped upstream by the ``cascade_completeness``
-        # step (default ``model_usable``: cascaded survey completeness AND an
-        # admissible tour structure). Nothing is re-derived here.
+        # Usability is a flag stamped upstream by the ``cascade_completeness``
+        # step -- the profile this project named. Nothing is re-derived here.
         usability_flag_col = self.config.usability_flag_col
 
         # Unusable households were held out of the seed, so they never received a

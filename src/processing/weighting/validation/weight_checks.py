@@ -176,9 +176,7 @@ def _compare_and_log(
 _MAX_REPORTED = 5
 
 
-def _check_joint_sums(
-    tables: dict[str, pl.DataFrame], usability_flag_col: str = "model_usable"
-) -> None:
+def _check_joint_sums(tables: dict[str, pl.DataFrame], usability_flag_col: str) -> None:
     """Verify each SUM grouping equals its members' combined weight, or raise.
 
     The joint levels carry person-trips rather than events (see [`Agg.SUM`]
@@ -255,9 +253,7 @@ def _check_joint_sums(
         raise ValueError(msg)
 
 
-def _check_hierarchy(
-    tables: dict[str, pl.DataFrame], usability_flag_col: str = "model_usable"
-) -> None:
+def _check_hierarchy(tables: dict[str, pl.DataFrame], usability_flag_col: str) -> None:
     """Verify that children sum to what their parents represent, or raise.
 
     Each DOWN edge is checked against the identity its rule actually maintains,

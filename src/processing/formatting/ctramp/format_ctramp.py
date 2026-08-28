@@ -399,7 +399,7 @@ def _incorporate_day_into_ids(
     # Derived by ablation against the 2023 canonical output: every column below was
     # dropped in turn and the step re-run, keeping those whose absence raised. Columns
     # whose absence merely degrades the output (weights, `industry`, `tnc_type`,
-    # `model_usable`, the `day_id`s) are deliberately excluded - see module note.
+    # the usability flag, the `day_id`s) are deliberately excluded - see module note.
     # Zone columns are omitted because their names come from the `taz_field` param
     # (e.g. `o_TAZ1454`) and so cannot be expressed statically.
     requires={
@@ -473,6 +473,7 @@ def format_ctramp(  # noqa: PLR0913
     joint_trips: pl.DataFrame,
     joint_tours: pl.DataFrame,
     days: pl.DataFrame,
+    usability_flag_col: str,
     income_low_threshold: int,
     income_med_threshold: int,
     income_high_threshold: int,
@@ -510,6 +511,10 @@ def format_ctramp(  # noqa: PLR0913
         days: Canonical person-days data. Required columns: person_id, hh_id,
             day_id. Used to expand persons and households to the person-day
             level and encode the survey day into CTRAMP hh_id / person_id so
+        usability_flag_col: Which usability profile decides the tour universe.
+            Required: with several profiles stamped there is no defensible
+            default, and naming a different one from the DaySim formatter or
+            the weighting means those outputs describe different universes.
             that multi-day respondents produce one distinct CTRAMP record per
             day rather than one record that conflates all survey days.
         income_low_threshold: Dollar value dividing low from medium income bracket.
@@ -583,6 +588,7 @@ def format_ctramp(  # noqa: PLR0913
     """
     # Validate configuration parameters
     config = CTRAMPConfig(
+        usability_flag_col=usability_flag_col,
         income_low_threshold=income_low_threshold,
         income_med_threshold=income_med_threshold,
         income_high_threshold=income_high_threshold,
@@ -597,7 +603,9 @@ def format_ctramp(  # noqa: PLR0913
     # Drop invalid/partial tours before anything else so CT-RAMP and DaySim
     # outputs contain the same set of tours (and no null-purpose leakage).
     if config.drop_invalid_tours:
-        tours, linked_trips, joint_trips = _drop_invalid_tours(tours, linked_trips, joint_trips)
+        tours, linked_trips, joint_trips = _drop_invalid_tours(
+            tours, linked_trips, joint_trips, config.usability_flag_col
+        )
 
     # Ensure TAZ columns are Int64 for filtering
     households = households.with_columns(pl.col(f"home_{config.taz_field}").cast(pl.Int64))

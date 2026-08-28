@@ -305,6 +305,15 @@ def process_scenario_through_pipeline(
     )
     data_with_zones["days"] = days  # Days do not need zone IDs
 
+    # Stamp the usability gate the formatters read. The real pipeline gets it
+    # from cascade_completeness, which needs reporting flags these synthetic
+    # scenarios do not carry -- so mark every extracted tour usable, which is
+    # what these fixtures mean: they exist to exercise formatting, not gating.
+    # A test about gating stamps its own values.
+    data_with_zones["tours"] = data_with_zones["tours"].with_columns(
+        pl.lit(value=True).alias("usable")
+    )
+
     return data_with_zones
 
 

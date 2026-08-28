@@ -137,14 +137,47 @@ steps:
       spatial_gap_threshold_meters: 1000.0
 
   # Cascade `complete` (survey reporting) through hh <-> person <-> day <->
-  # trip/tour so it is consistent with any upstream adjustments, and stamp
-  # `model_usable`: the subset of complete records admissible to the tour-based
-  # models (VALID tour structure + COMPLETE home-to-home category + household-
-  # day coherence). Parameterless: downstream consumers choose which flag to
-  # honour (weighting: usability_flag_col; formatters: drop_invalid_tours).
+  # trip/tour so it is consistent with any upstream adjustments, then stamp one
+  # usability column per profile declared below.
   - name: cascade_completeness
     validate_input: false
     cache: true
+    params:
+      # One boolean column per profile. A profile states its standard on two
+      # axes, and every profile answers both, so a column's meaning reads off
+      # this block without knowing a base rule. Consumers then name the profile
+      # they read (usability_flag_col, below). `complete` -- what the survey
+      # collected -- is always available as the floor beneath all of them.
+      #
+      #   tour_closes_at:      primary_home  the tour returns to the home it left
+      #                        any_home      ...or to another home this person is
+      #                                      known to have; the trips are whole,
+      #                                      only the anchor differs
+      #                        anywhere      ...or nowhere: cut by the diary edge
+      #                                      or resuming next day. Trips are whole;
+      #                                      the tour just does not close
+      #
+      #   household_day_needs: all_members   every surveyable member reported that
+      #                                      date -- needed to model how a
+      #                                      household coordinates
+      #                        nothing       no household-date requirement. Buys
+      #                                      sample size; the household's weight
+      #                                      redistributes onto whoever reported,
+      #                                      so they stand in for the whole
+      #                                      household
+      #
+      # No setting admits a tour with a missing leg or no activity to anchor on.
+      # Those are missing data, not an open end.
+      usability_profiles:
+        ctramp_usable:
+          tour_closes_at: primary_home
+          household_day_needs: all_members
+        daysim_usable:
+          tour_closes_at: primary_home
+          household_day_needs: all_members
+        analysis_usable:
+          tour_closes_at: anywhere
+          household_day_needs: nothing
 
   - name: compute_weights
     validate_input: false
@@ -207,14 +240,13 @@ steps:
       # keep incomplete households in the seed and give them computed weights.
       exclude_incompletes: true
 
-      # Which flag decides who carries weight (stamped by cascade_completeness):
-      #   model_usable -> only model-admissible records, so the weighted tour
-      #                   universe matches what CT-RAMP/DaySim keep.
-      #   complete     -> the whole valid survey, including partial/overnight
-      #                   tours (survey-analysis weights).
+      # Which flag decides who carries weight. Name one of the profiles
+      # cascade_completeness stamps above, so the weighted tour universe matches
+      # what that consumer keeps -- or `complete` to weight the whole valid
+      # survey, including partial/overnight tours (survey-analysis weights).
       # Each parent's weight is spread across its usable children, so dropping a
       # record does not shrink the expansion.
-      usability_flag_col: model_usable
+      usability_flag_col: ctramp_usable
 
       # -- EF grid search (optional) -----------------------------------
       # Re-run balancing across a grid of max_expansion_factor values and
@@ -335,7 +367,7 @@ steps:
   #   cache: false
   #   params:
   #     derive_missing_weights: true
-  #     usability_flag_col: model_usable  # supplied weights are redistributed onto usable records, preserving each supplied total
+  #     usability_flag_col: ctramp_usable  # supplied weights are redistributed onto usable records, preserving each supplied total
   #     weights:
   #       hh_weight:
   #         weight_path: "{{ weights_dir }}/hh_weights.csv"
@@ -374,6 +406,7 @@ steps:
     validate_input: false
     cache: false
     params:
+      usability_flag_col: ctramp_usable
       # Income thresholds (in year 2000 dollars, per CT-RAMP convention).
       # From MTC CT-RAMP INCOME_SEGMENT_DOLLAR_LIMITS = {30000, 60000, 100000, MAX}:
       # https://github.com/BayAreaMetro/travel-model-one/blob/a1c6cfb48ed3397a436170d810db91c5f9474c08/core/projects/mtc/src/java/com/pb/mtc/ctramp/MtcModelStructure.java#L14
@@ -403,6 +436,10 @@ steps:
     validate_output: true
     cache: false
     params:
+      # Which profile decides the tour universe. DaySim and CT-RAMP name their
+      # own, so a project can let them differ -- but while both say the same
+      # thing, both outputs describe the same tours.
+      usability_flag_col: daysim_usable
       drop_partial_tours: true
       drop_missing_taz: true
       drop_invalid_tours: true

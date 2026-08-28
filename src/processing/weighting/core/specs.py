@@ -242,6 +242,10 @@ class WeightingConfig:
     geography: dict
     state_fips: str
     pums_year: int
+    # Which usability profile decides who carries weight. Required: with
+    # several stamped there is no defensible default, and picking silently
+    # would weight a different universe than the formatters emit.
+    usability_flag_col: str
     pums_households: str | None = None
     pums_persons: str | None = None
     sample_plan: str | None = None
@@ -249,7 +253,6 @@ class WeightingConfig:
     expansion_factor_grid: list[float] | None = None
     strict_survey_nulls: bool = False
     exclude_incompletes: bool = True
-    usability_flag_col: str = "model_usable"
 
 
 @dataclass

@@ -84,6 +84,7 @@ def get_required_non_null_fields(model):
 def standard_config():
     """Standard test configuration with explicit parameters."""
     return CTRAMPConfig(
+        usability_flag_col="usable",
         income_low_threshold=30000,  # $30k ($2000, MTC)
         income_med_threshold=60000,  # $60k ($2000, MTC)
         income_high_threshold=100000,  # $100k ($2000, MTC)
@@ -115,6 +116,7 @@ class TestEndToEndFormatting:
             income_med_threshold=standard_config.income_med_threshold,
             income_high_threshold=standard_config.income_high_threshold,
             income_survey_year_to_ctramp_year=standard_config.income_survey_year_to_ctramp_year,
+            usability_flag_col="usable",
         )
 
         households_ctramp = result["households_ctramp"]
@@ -143,6 +145,7 @@ class TestEndToEndFormatting:
             income_med_threshold=standard_config.income_med_threshold,
             income_high_threshold=standard_config.income_high_threshold,
             income_survey_year_to_ctramp_year=standard_config.income_survey_year_to_ctramp_year,
+            usability_flag_col="usable",
         )
 
         households_ctramp = result["households_ctramp"]
@@ -175,6 +178,7 @@ class TestEndToEndFormatting:
             income_med_threshold=standard_config.income_med_threshold,
             income_high_threshold=standard_config.income_high_threshold,
             income_survey_year_to_ctramp_year=standard_config.income_survey_year_to_ctramp_year,
+            usability_flag_col="usable",
         )
 
         persons_ctramp = result["persons_ctramp"]
@@ -202,6 +206,7 @@ class TestEndToEndFormatting:
             income_med_threshold=standard_config.income_med_threshold,
             income_high_threshold=standard_config.income_high_threshold,
             income_survey_year_to_ctramp_year=standard_config.income_survey_year_to_ctramp_year,
+            usability_flag_col="usable",
         )
 
         persons_ctramp = result["persons_ctramp"]
@@ -241,6 +246,7 @@ class TestEndToEndFormatting:
             income_high_threshold=standard_config.income_high_threshold,
             income_survey_year_to_ctramp_year=standard_config.income_survey_year_to_ctramp_year,
             drop_missing_taz=True,
+            usability_flag_col="usable",
         )
 
         households_ctramp = result["households_ctramp"]
@@ -282,6 +288,7 @@ class TestEndToEndFormatting:
             income_high_threshold=standard_config.income_high_threshold,
             income_survey_year_to_ctramp_year=standard_config.income_survey_year_to_ctramp_year,
             drop_missing_taz=False,
+            usability_flag_col="usable",
         )
 
         households_ctramp = result["households_ctramp"]
@@ -295,10 +302,14 @@ class TestEndToEndFormatting:
 class TestDropInvalidTours:
     """Tests for dropping unusable tours in the CT-RAMP formatter.
 
-    Drops tours that are not VALID or not COMPLETE, mirroring the DaySim
-    formatter, so single-trip/loop tours (which carry a null tour_purpose) do
-    not leak into CT-RAMP output as the OTHDISCR catch-all, and both outputs
-    keep the same tours.
+    The usability gate stamped by ``cascade_completeness`` is the only
+    criterion. The formatter no longer re-derives one from ``tour_data_quality``
+    / ``tour_category``: that was a second definition of admissibility, it
+    disagreed with the DaySim formatter's own version, and once the gate is
+    named by config it cannot know which profile was asked for.
+
+    The descriptors remain on these fixtures because the drop *log* still uses
+    them to label why each tour went -- but they no longer decide anything.
     """
 
     def _linked_trips(self, tour_ids: list[int]) -> pl.DataFrame:
@@ -336,10 +347,14 @@ class TestDropInvalidTours:
                     TourCategory.COMPLETE.value,
                     TourCategory.PARTIAL_END.value,  # valid but partial
                 ],
+                "usable": [True, False, True, False],
             }
         )
         tours_out, linked_out, _ = _drop_invalid_tours(
-            tours, self._linked_trips([1, 2, 3, 4]), self._empty_joint_trips()
+            tours,
+            self._linked_trips([1, 2, 3, 4]),
+            self._empty_joint_trips(),
+            usability_flag_col="usable",
         )
         # Tour 2 (invalid) and tour 4 (valid-but-partial) dropped
         assert sorted(tours_out["tour_id"].to_list()) == [1, 3]
@@ -352,27 +367,39 @@ class TestDropInvalidTours:
                 "tour_id": [1, 2],
                 "tour_data_quality": [TourDataQuality.VALID.value] * 2,
                 "tour_category": [TourCategory.COMPLETE.value] * 2,
+                "usable": [True, True],
             }
         )
         tours_out, linked_out, _ = _drop_invalid_tours(
-            tours, self._linked_trips([1, 2]), self._empty_joint_trips()
+            tours,
+            self._linked_trips([1, 2]),
+            self._empty_joint_trips(),
+            usability_flag_col="usable",
         )
         assert sorted(tours_out["tour_id"].to_list()) == [1, 2]
         assert sorted(linked_out["tour_id"].to_list()) == [1, 2]
 
-    def test_only_category_present_still_drops_partial(self):
-        """A frame with tour_category but no tour_data_quality still drops partials."""
+    def test_descriptors_alone_do_not_gate(self):
+        """Tour descriptors are not a substitute for the stamped gate.
+
+        A frame carrying ``tour_category`` but no usability column used to be
+        filtered on the category alone. That answered a different question --
+        it has no reporting completeness and no household-day coherence in it --
+        so it silently kept tours the gate rejects.
+        """
         tours = pl.DataFrame(
             {
                 "tour_id": [1, 2],
                 "tour_category": [TourCategory.COMPLETE.value, TourCategory.PARTIAL_END.value],
             }
         )
-        tours_out, linked_out, _ = _drop_invalid_tours(
-            tours, self._linked_trips([1, 2]), self._empty_joint_trips()
-        )
-        assert tours_out["tour_id"].to_list() == [1]
-        assert linked_out["tour_id"].to_list() == [1]
+        with pytest.raises(ValueError, match="no 'usable' column"):
+            _drop_invalid_tours(
+                tours,
+                self._linked_trips([1, 2]),
+                self._empty_joint_trips(),
+                usability_flag_col="usable",
+            )
 
     def test_cascades_to_joint_trips(self):
         """A joint trip belonging only to a dropped tour is removed."""
@@ -397,21 +424,66 @@ class TestDropInvalidTours:
                     TourDataQuality.NO_DESTINATION.value,
                 ],
                 "tour_category": [TourCategory.COMPLETE.value, TourCategory.PARTIAL_BOTH.value],
+                "usable": [True, False],
             }
         )
 
-        _, _, joint_trips_out = _drop_invalid_tours(tours, linked_trips, joint_trips)
+        _, _, joint_trips_out = _drop_invalid_tours(
+            tours, linked_trips, joint_trips, usability_flag_col="usable"
+        )
         # Joint trip 500 belonged only to dropped tour 2, so it is removed
         assert joint_trips_out["joint_trip_id"].to_list() == []
 
-    def test_no_filter_columns_is_noop(self):
-        """Tours with neither quality nor category column are left untouched."""
-        tours = pl.DataFrame({"tour_id": [1, 2]})
-        tours_out, linked_out, _ = _drop_invalid_tours(
-            tours, self._linked_trips([1, 2]), self._empty_joint_trips()
+    def test_a_missing_gate_names_what_is_present(self):
+        """The error has to be actionable: which columns *are* there.
+
+        Silently keeping every tour was the old behaviour, and it is the worst
+        one available -- a formatter that quietly stops filtering produces a
+        larger dataset that looks right.
+        """
+        tours = pl.DataFrame({"tour_id": [1, 2], "ctramp_usable": [True, False]})
+        with pytest.raises(ValueError, match="ctramp_usable"):
+            _drop_invalid_tours(
+                tours,
+                self._linked_trips([1, 2]),
+                self._empty_joint_trips(),
+                usability_flag_col="usable",
+            )
+
+    def test_a_profile_named_freely_is_still_offered(self):
+        """The candidates cannot be found by name shape; nothing requires a suffix.
+
+        A project may call its profile whatever it likes. An error that only
+        recognised some naming convention would report nothing here -- reading
+        as "the cascade stamped none", and sending the reader to debug the
+        wrong step.
+        """
+        tours = pl.DataFrame({"tour_id": [1, 2], "keep_for_ctramp": [True, False]})
+        with pytest.raises(ValueError, match="keep_for_ctramp"):
+            _drop_invalid_tours(
+                tours,
+                self._linked_trips([1, 2]),
+                self._empty_joint_trips(),
+                usability_flag_col="ctramp_usable",
+            )
+
+    def test_a_null_verdict_drops_rather_than_guesses(self):
+        """A null means the cascade never reached the row: a broken frame."""
+        tours = pl.DataFrame(
+            {
+                "tour_id": [1, 2],
+                "tour_data_quality": [TourDataQuality.VALID.value] * 2,
+                "tour_category": [TourCategory.COMPLETE.value] * 2,
+                "usable": [True, None],
+            }
         )
-        assert sorted(tours_out["tour_id"].to_list()) == [1, 2]
-        assert sorted(linked_out["tour_id"].to_list()) == [1, 2]
+        tours_out, _, _ = _drop_invalid_tours(
+            tours,
+            self._linked_trips([1, 2]),
+            self._empty_joint_trips(),
+            usability_flag_col="usable",
+        )
+        assert tours_out["tour_id"].to_list() == [1]
 
 
 class TestColumnPresence:

@@ -26,6 +26,7 @@ from processing.formatting.ctramp.student_mappings import (
 def standard_config():
     """Standard test configuration."""
     return CTRAMPConfig(
+        usability_flag_col="usable",
         income_low_threshold=30000,
         income_med_threshold=60000,
         income_high_threshold=100000,

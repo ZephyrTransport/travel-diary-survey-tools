@@ -6,7 +6,7 @@ write ``TourType.WORK_BASED`` into the ``tour_category`` column -- and those
 enums collide, ``WORK_BASED == 2 == TourCategory.PARTIAL_END`` -- which left
 every subtour permanently non-COMPLETE. Each ``tour_category == COMPLETE`` gate
 (the DaySim drop since the first commit, the CT-RAMP drop since #79, the
-``model_usable`` fuse since #83) then discarded it, and ``atWork_freq`` could
+``usable`` fuse since #83) then discarded it, and ``atWork_freq`` could
 only ever be zero.
 
 The fix splits the two facts: ``tour_type`` says what a tour is anchored on and
@@ -30,7 +30,12 @@ from data_canon.codebook.tours import (
 )
 from data_canon.codebook.trips import Driver, ModeType, Purpose, PurposeCategory
 from processing import link_trips
-from processing.completeness import compute_model_usable
+from processing.completeness import (
+    ALL_MEMBERS,
+    PRIMARY_HOME,
+    UsabilityProfile,
+    compute_usability,
+)
 from processing.formatting.ctramp.ctramp_config import CTRAMPConfig
 from processing.formatting.ctramp.filters import _drop_invalid_tours
 from processing.formatting.ctramp.format_households import format_households
@@ -154,6 +159,7 @@ def _lunch_subtour_day() -> pl.DataFrame:
 def standard_config():
     """CT-RAMP config matching the other formatter tests."""
     return CTRAMPConfig(
+        usability_flag_col="usable",
         income_low_threshold=60000,
         income_med_threshold=150000,
         income_high_threshold=240000,
@@ -249,7 +255,7 @@ class TestSubtourClassification:
 
 
 def _gate(tours: pl.DataFrame) -> dict[int, bool]:
-    """Run the real ``model_usable`` gate over *tours*, keyed by canonical tour_id.
+    """Run the real ``usable`` gate over *tours*, keyed by canonical tour_id.
 
     Feeds the gate genuinely extracted tours rather than hand-written ones, so a
     misclassification upstream shows up here as a dropped tour -- which is
@@ -267,14 +273,14 @@ def _gate(tours: pl.DataFrame) -> dict[int, bool]:
         ),
         "tours": tours.with_columns(pl.lit(value=True).alias("complete")),
     }
-    compute_model_usable(tables)
-    return dict(zip(*tables["tours"].select("tour_id", "model_usable"), strict=True))
+    compute_usability(tables, profile=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
+    return dict(zip(*tables["tours"].select("tour_id", "usable"), strict=True))
 
 
 class TestSubtourModelUsability:
-    """The ``model_usable`` gate admits subtours, but not orphaned ones."""
+    """The ``usable`` gate admits subtours, but not orphaned ones."""
 
-    def test_subtour_is_model_usable(self, extracted, subtour_and_parent):
+    def test_subtour_is_usable(self, extracted, subtour_and_parent):
         """A well-formed subtour on a coherent household-day is admissible."""
         parent, subtour = subtour_and_parent
         usable = _gate(extracted[0]["tours"])
@@ -306,16 +312,21 @@ class TestSubtourReachesCtramp:
     def test_drop_invalid_tours_keeps_the_subtour(self, extracted, subtour_and_parent):
         """The CT-RAMP pre-format drop must not remove at-work subtours.
 
-        Runs on genuinely extracted tours: the drop re-derives its criterion
-        from ``tour_data_quality`` / ``tour_category``, so a subtour misclassified
-        upstream is discarded right here -- the mechanism behind #85.
+        Runs on genuinely extracted tours carrying the real gate, so this pins
+        the whole path: a subtour misclassified upstream fails the gate and is
+        discarded right here, which is the mechanism behind #85.
         """
         parent, subtour = subtour_and_parent
-        tours = extracted[0]["tours"]
+        usable = _gate(extracted[0]["tours"])
+        tours = extracted[0]["tours"].with_columns(
+            pl.col("tour_id").replace_strict(usable).alias("usable")
+        )
         linked_trips = extracted[0]["linked_trips"]
         joint_trips = pl.DataFrame({"joint_trip_id": [], "hh_id": []})
 
-        kept, kept_trips, _ = _drop_invalid_tours(tours, linked_trips, joint_trips)
+        kept, kept_trips, _ = _drop_invalid_tours(
+            tours, linked_trips, joint_trips, usability_flag_col="usable"
+        )
 
         assert sorted(kept["tour_id"].to_list()) == sorted(
             [parent["tour_id"], subtour["tour_id"]]

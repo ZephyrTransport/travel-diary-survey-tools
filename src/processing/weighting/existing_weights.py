@@ -196,8 +196,8 @@ def _apply_usability(
         tables: Mutable dict of table_name → DataFrame (or None).
         has_weight: Dict of table_name → weight column name.
         usability_flag_col: Boolean column deciding which records may carry weight
-            (``model_usable`` by default; ``complete`` to weight the whole
-            valid survey).
+            -- a usability profile stamped upstream, or ``complete`` to weight the
+            whole valid survey.
     """
     for table_name, weight_col in has_weight.items():
         df = tables.get(table_name)
@@ -253,8 +253,8 @@ def _apply_usability(
 @step()
 def add_existing_weights(  # noqa: C901, PLR0912, PLR0915
     weights: dict[str, ExistingWeightConfig | dict],
+    usability_flag_col: str,
     derive_missing_weights: bool = False,
-    usability_flag_col: str = "model_usable",
     households: pl.DataFrame | None = None,
     persons: pl.DataFrame | None = None,
     days: pl.DataFrame | None = None,
@@ -333,13 +333,14 @@ def add_existing_weights(  # noqa: C901, PLR0912, PLR0915
 
         derive_missing_weights: Whether to derive weights for tables
             without provided weight files (default: False).
-        usability_flag_col: Boolean column deciding which records may carry weight,
-            stamped upstream by the ``cascade_completeness`` step. Defaults to
-            ``model_usable`` (matching the tours the travel models keep); pass
-            ``complete`` to weight the whole valid survey including partial and
-            overnight tours. Supplied weights are redistributed onto the usable
-            records rather than simply zeroed, so each table's supplied total is
-            preserved — the vendor's anchor cannot be re-balanced from here.
+        usability_flag_col: Boolean column deciding which records may carry
+            weight -- one of the usability profiles stamped upstream by the
+            ``cascade_completeness`` step, matching the tours that profile's
+            consumer keeps; pass ``complete`` to weight the whole valid survey
+            including partial and overnight tours. Supplied weights are
+            redistributed onto the usable records rather than simply zeroed, so
+            each table's supplied total is preserved — the vendor's anchor
+            cannot be re-balanced from here.
         households: Households DataFrame.
         persons: Persons DataFrame.
         days: Days DataFrame.
