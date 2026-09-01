@@ -10,6 +10,42 @@ representative spread of scenarios. Weighting is excluded (not hermetic; covered
 Coverage is **enforced** by `TestEdgeCaseCoverage` in `test_e2e_pipeline.py` — those tests
 fail if a scenario is removed and a bucket disappears.
 
+## Bit-exact output baseline
+
+`test_e2e_baseline.py` fingerprints every canonical table on the `full` profile and
+compares it to `baselines/full.json`. **Any** change in any column fails, including a
+correct one — that is the point. The suite otherwise answers "does it run" and "does
+behaviour X hold", neither of which notices that a number moved; a batch of PRs altered
+production output while the suite stayed green, and only a hand-run against real data
+surfaced it weeks later.
+
+Promoting an intended change:
+
+```
+E2E_BASELINE_UPDATE=1 uv run pytest tests/e2e/test_e2e_baseline.py
+```
+
+That rewrites the baseline; committing it puts the movement in the PR diff where a
+reviewer can judge it.
+
+**No record-level values are stored.** Each column contributes a hash plus aggregates —
+null count, distinct count, numeric range and sum, and for low-cardinality
+non-identifier columns a value-count histogram. The hash detects the change; the
+aggregates make the failure readable (`tours.analysis_usable: counts {'True': 37} ->
+{'True': 33}`) without putting data in the repository. Identifier and coordinate columns
+never get a histogram. The fixture is synthetic, but the rule holds regardless so the
+harness stays safe to point at real output.
+
+Tables are sorted by their own unique key before hashing (`PRIMARY_KEYS` in
+`baseline.py`). A non-unique sort key leaves ties in arbitrary order and reports drift
+where the rows are the same set — worth knowing before adding a table.
+
+Two limits found by deliberately breaking the pipeline and checking the gate fires: the
+toy fixture does not discriminate `household_day_needs: all_members` from `nothing` (no
+household has a partially-reporting day), and at `tour_closes_at: primary_home` the
+`tour_category` term masks changes to the admitted quality codes. Scenarios covering
+either would strengthen the fixture.
+
 ## Step-toggle profiles (parametrized)
 
 Rather than fixed "2019 / 2023" configs, the suite builds the pipeline config
