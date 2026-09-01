@@ -1,8 +1,14 @@
-name: Deploy Documentation
+name: Documentation
 
 on:
   push:
     branches: [main, mkdocs, weighting]
+  # Build (but do not deploy) on pull requests, so a docs break is caught at
+  # review rather than when develop reaches main. A reference to a module that
+  # had been split apart sat broken on develop precisely because nothing built
+  # the docs until a deploying branch was touched.
+  pull_request:
+    branches: [develop, main]
   workflow_dispatch:
 
 permissions:
@@ -39,7 +45,10 @@ jobs:
       - name: Build documentation
         run: uv run mkdocs build
 
+      # Only a deploying push needs the artifact; a pull request is checked by
+      # the build step above and stops there.
       - name: Upload artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: ./site
@@ -47,6 +56,7 @@ jobs:
   deploy:
     name: Deploy to GitHub Pages
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

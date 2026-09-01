@@ -252,19 +252,46 @@ configuration parameters.  Key parameters from `config_tm17_calibration.yaml`:
         - "!^logger$"
         - "!^_"
 
-::: processing.formatting.ctramp.mappings
+::: processing.formatting.ctramp.person_mappings
     options:
       show_root_heading: true
       show_root_toc_entry: false
       members:
         - GENDER_MAP
         - EMPLOYMENT_TO_CTRAMP
+        - ctramp_person_type_expression
+        - log_person_type_warnings
+      filters:
+        - "!^logger$"
+        - "!^_"
+
+::: processing.formatting.ctramp.purpose_mappings
+    options:
+      show_root_heading: true
+      show_root_toc_entry: false
+      members:
         - PURPOSECATEGORY_TO_JTF_GROUP
         - ctramp_purpose_category_expression
+      filters:
+        - "!^logger$"
+        - "!^_"
+
+::: processing.formatting.ctramp.mode_mappings
+    options:
+      show_root_heading: true
+      show_root_toc_entry: false
+      members:
         - ctramp_mode_expression
-        - ctramp_person_type_expression
+      filters:
+        - "!^logger$"
+        - "!^_"
+
+::: processing.formatting.ctramp.student_mappings
+    options:
+      show_root_heading: true
+      show_root_toc_entry: false
+      members:
         - ctramp_student_category_expression
-        - log_person_type_warnings
         - log_student_category_warnings
       filters:
         - "!^logger$"
