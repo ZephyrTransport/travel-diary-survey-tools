@@ -22,13 +22,20 @@ import shutil
 import tempfile
 from pathlib import Path
 
+import polars as pl
 import pytest
 import yaml
 
 E2E_DIR = Path(__file__).parent
 
 # Optional steps that can be toggled (canonical execution order preserved below).
-OPTIONAL_STEPS = ("detect_joint_trips", "imputation", "format_ctramp", "format_daysim")
+OPTIONAL_STEPS = (
+    "detect_joint_trips",
+    "imputation",
+    "add_existing_weights",
+    "format_ctramp",
+    "format_daysim",
+)
 
 # Inter-step dependencies: a step may only run if its requirements also run.
 # format_ctramp consumes the joint_trips table (and emits joint-tour/joint-trip
@@ -80,6 +87,7 @@ _STEP_ORDER = (
     "imputation",
     "extract_tours",
     "cascade_completeness",
+    "add_existing_weights",
     "add_zone_ids",
     "format_ctramp",
     "format_daysim",
@@ -101,7 +109,30 @@ def _materialize_data(tmp: Path) -> Path:
     zones_dir = tmp / "zones"
     zones_dir.mkdir()
     (zones_dir / "test_zones.geojson").write_text(json.dumps(ZONE_GEOJSON))
+
+    _write_household_weights(build_survey_dataframes()["households"], tmp / "weights")
     return tmp
+
+
+def _write_household_weights(households: pl.DataFrame, weights_dir: Path) -> None:
+    """Write a household weight file for ``add_existing_weights`` to propagate.
+
+    Only households are supplied. Everything below is derived, which is the
+    point: the run then exercises the copy rule down to persons and the split
+    rule from a person across their days, rather than being handed an answer at
+    each level.
+
+    The weights are distinct per household rather than a constant. A constant
+    hides arithmetic errors -- halving one weight and doubling another still
+    sums correctly -- so a checksum over identical numbers proves much less than
+    it appears to.
+    """
+    weights_dir.mkdir(parents=True, exist_ok=True)
+    households.select(
+        "hh_id",
+        # Distinct, non-round, and none a multiple of another.
+        (pl.lit(100.0) + pl.col("hh_id").cast(pl.Float64) * 7.0).alias("hh_weight"),
+    ).write_csv(weights_dir / "hh_weights.csv")
 
 
 def _p(path: Path) -> str:
@@ -213,6 +244,24 @@ def _step_blocks(data_dir: Path, output_dir: Path, enabled: frozenset) -> dict:
                 }
             },
         },
+        "add_existing_weights": {
+            "name": "add_existing_weights",
+            "validate_input": False,
+            "cache": False,
+            # Only household weights are supplied; everything below is derived,
+            # so the run exercises the copy rule down to persons and the split
+            # rule from a person across their days. Gated on ctramp_usable, the
+            # strict profile, so a dropped day changes the split's divisor --
+            # which is where "nothing lost" is a real question rather than a
+            # tautology.
+            "params": {
+                "derive_missing_weights": True,
+                "usability_flag_col": "ctramp_usable",
+                "weights": {
+                    "hh_weight": {"weight_path": _p(data_dir / "weights" / "hh_weights.csv")},
+                },
+            },
+        },
         "add_zone_ids": {
             "name": "add_zone_ids",
             "validate_input": False,
@@ -278,6 +327,7 @@ def _run_pipeline(enabled: frozenset):
     """Run the pipeline for a set of enabled optional steps. Returns (result, output_dir, tmp)."""
     from pipeline.pipeline import Pipeline
     from processing import (
+        add_existing_weights,
         add_zone_ids,
         cascade_completeness,
         detect_joint_trips,
@@ -300,6 +350,7 @@ def _run_pipeline(enabled: frozenset):
 
     # All step functions are passed; the config decides which actually run.
     steps = [
+        add_existing_weights,
         load_data,
         link_trips,
         detect_joint_trips,

@@ -961,6 +961,70 @@ def _build_records():
             m1=MODE_WALK,
         )
 
+    # HH 26 - the weight-propagation household. Two members, and each travels on
+    # BOTH diary dates, which is what makes the persons -> days split rule real:
+    # a person's weight divides between the days that survive the usability gate,
+    # so the divisor changes when a day is dropped. Everywhere else in this
+    # fixture a person has a single day, and weight passes through untouched --
+    # a split that divided by *all* days rather than the usable ones would be
+    # invisible.
+    #
+    # Person 2601 has one clean day and one whose tour never reaches home
+    # (PARTIAL_DIARY_EDGE), so a strict profile keeps one day of the two and a
+    # loose one keeps both. Person 2602 has two clean days. The household
+    # therefore exercises: a split with every day usable, a split with a day
+    # dropped, and a copy level over two members.
+    s.household(26, "home_a", income=INC_100_200K, npeople=2, veh=2, nworkers=2)
+    for pn, pid in [(1, 2601), (2, 2602)]:
+        s.person(
+            pid,
+            26,
+            pn,
+            AGE_35_TO_44,
+            MALE if pn == 1 else FEMALE,
+            EMP_FULLTIME,
+            STU_NONSTUDENT,
+            wloc="work_1",
+            cf=CF_NEVER,
+        )
+
+    # Day one: both members commute home -> work -> home. Clean, closed tours.
+    for pid in (2601, 2602):
+        s.day(pid, 26, DAY_DATE_1, DOW_MONDAY, pnum=1 if pid == 2601 else 2, dnum=1).round_trip(
+            "home_a",
+            "work_1",
+            PC_HOME,
+            PC_WORK,
+            MT_CAR,
+            ((8, 0), (8, 30)),
+            ((17, 0), (17, 30)),
+            drv=1,
+        )
+
+    # Day two: 2602 commutes again, closed. 2601 leaves home and the diary stops
+    # there -- an open tour, so a primary_home profile drops that day and its
+    # weight must land entirely on day one rather than vanishing.
+    s.day(2602, 26, DAY_DATE_2, DOW_TUESDAY, pnum=2, dnum=2).round_trip(
+        "home_a",
+        "work_1",
+        PC_HOME,
+        PC_WORK,
+        MT_CAR,
+        ((8, 0), (8, 30)),
+        ((17, 0), (17, 30)),
+        drv=1,
+    )
+    s.day(2601, 26, DAY_DATE_2, DOW_TUESDAY, pnum=1, dnum=2).trip(
+        "home_a",
+        "work_1",
+        PC_HOME,
+        PC_WORK,
+        MT_CAR,
+        (8, 0),
+        (8, 30),
+        drv=1,
+    )
+
     return s.hhs, s.pers, s.days, s.trips
 
 

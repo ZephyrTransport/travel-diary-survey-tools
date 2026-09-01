@@ -6,8 +6,21 @@ end-to-end run guards the offline data-processing path (`load → link → detec
 imputation → tours → cascade_completeness → add_zone_ids → format_ctramp → format_daysim →
 write_data`) across a representative spread of scenarios.
 
-**Weighting is excluded** — it needs PUMS microdata and control totals, so it is not
-hermetic — and is covered by `tests/test_weighting_*.py` instead. That deferral only holds
+**`compute_weights` is excluded** — it fetches PUMS microdata, so it is not hermetic.
+`add_existing_weights` *is* hermetic (it reads a weight file) and now runs in the e2e, so
+weight propagation is covered end to end: see `test_e2e_weight_propagation.py`. Only
+household weights are supplied and the rest are derived, which exercises the copy rule
+down to persons and the split rule from a person across their days. The assertions call
+the pipeline's own `_check_hierarchy` and `_check_joint_sums`, so they cannot drift from
+the rules they test — and those had never been executed by any integration test, which is
+how a signature change to `_check_hierarchy` reached two projects before the suite.
+
+Household 26 exists for this. Both members travel on both diary dates, and one member's
+second day never closes its tour, so a strict profile drops it and the split's divisor
+changes. Everywhere else a person has a single day and weight passes through untouched,
+where a split dividing by *all* days rather than the usable ones would look correct.
+
+The rest of the weighting is covered by `tests/test_weighting_*.py`. That deferral only holds
 while those tests reach the *entry points* the pipeline actually calls. They did not once:
 `weight_sanity_checks` had no test, so when `_check_hierarchy` grew a required
 `usability_flag_col` its caller was never updated and both projects died on the last line of
