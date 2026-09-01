@@ -3,9 +3,17 @@
 The synthetic dataset in `generate_toy_data.py` is a **branch-coverage fixture**: each
 household is authored to exercise specific pipeline classification outputs, so the
 end-to-end run guards the offline data-processing path (`load → link → detect_joint →
-imputation → tours → add_zone_ids → format_ctramp → format_daysim → write_data`) across a
-representative spread of scenarios. Weighting is excluded (not hermetic; covered by
-`tests/test_weighting_*.py`).
+imputation → tours → cascade_completeness → add_zone_ids → format_ctramp → format_daysim →
+write_data`) across a representative spread of scenarios.
+
+**Weighting is excluded** — it needs PUMS microdata and control totals, so it is not
+hermetic — and is covered by `tests/test_weighting_*.py` instead. That deferral only holds
+while those tests reach the *entry points* the pipeline actually calls. They did not once:
+`weight_sanity_checks` had no test, so when `_check_hierarchy` grew a required
+`usability_flag_col` its caller was never updated and both projects died on the last line of
+`compute_weights` with the suite green. `TestNoCallerOmitsTheFlag` in
+`tests/test_weighting_sanity_checks.py` now walks the source for calls that drop that
+argument, because a seam no test enters cannot be guarded by coverage.
 
 Coverage is **enforced** by `TestEdgeCaseCoverage` in `test_e2e_pipeline.py` — those tests
 fail if a scenario is removed and a bucket disappears.

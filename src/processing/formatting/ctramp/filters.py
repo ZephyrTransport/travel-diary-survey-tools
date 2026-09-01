@@ -66,18 +66,20 @@ def _drop_by_tour_ids(
             pl.col("joint_trip_id").is_in(valid_joint_trip_ids.implode())
         )
 
-    tours, linked_trips, joint_trips = _drop_lone_joint_participants(
-        tours, linked_trips, joint_trips
-    )
-    return tours, linked_trips, joint_trips
+    # Tours and trips are separate groupings, so quorum is checked on each. A
+    # joint trip can exist where no joint tour does -- members who travelled
+    # together on tours that were not themselves joint -- so neither rule stands
+    # in for the other, and neither one's outcome gates the other.
+    tours, linked_trips, joint_trips = _drop_lone_joint_tours(tours, linked_trips, joint_trips)
+    return _drop_lone_joint_trips(tours, linked_trips, joint_trips)
 
 
-def _drop_lone_joint_participants(
+def _drop_lone_joint_tours(
     tours: pl.DataFrame,
     linked_trips: pl.DataFrame,
     joint_trips: pl.DataFrame,
 ) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
-    """Un-joint any joint group left with a single surviving participant.
+    """Un-joint any joint tour left with a single surviving participant.
 
     Dropping tours can strip a joint tour down to one member, and CT-RAMP's
     ``num_participants >= 2`` makes a group of one meaningless. Rather than
@@ -142,6 +144,61 @@ def _drop_lone_joint_participants(
         ].unique()
         joint_trips = joint_trips.filter(pl.col("joint_trip_id").is_in(still_joint.implode()))
 
+    return tours, linked_trips, joint_trips
+
+
+def _drop_lone_joint_trips(
+    tours: pl.DataFrame,
+    linked_trips: pl.DataFrame,
+    joint_trips: pl.DataFrame,
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """Un-joint any joint *trip* left with a single surviving member trip.
+
+    Quorum has to be checked on both groupings, not just the tour. A joint trip
+    is its own grouping: it can exist where no joint tour does -- the members
+    travelled together on tours that were not themselves joint -- so a rule
+    keyed on ``joint_tour_id`` never sees it. And even within a surviving joint
+    tour, one leg can lose a member while the tour keeps two.
+
+    The formatter counts ``num_participants`` from the member trips that
+    survive, so a group of one reaches CT-RAMP as ``num_participants = 1``,
+    which its schema forbids.
+
+    Args:
+        tours: Tours surviving the filter.
+        linked_trips: Linked trips already pruned to the surviving tours.
+        joint_trips: Joint trips already pruned to the surviving linked trips.
+
+    Returns:
+        Tuple of (tours, linked_trips, joint_trips) with singleton joint trips
+        demoted to individual travel.
+    """
+    if "joint_trip_id" not in linked_trips.columns or len(joint_trips) == 0:
+        return tours, linked_trips, joint_trips
+
+    lone = (
+        linked_trips.filter(pl.col("joint_trip_id").is_not_null())
+        .group_by("joint_trip_id")
+        .agg(pl.len().alias("_n"))
+        .filter(pl.col("_n") < MIN_JOINT_PARTICIPANTS)
+        .select("joint_trip_id")
+    )
+    if lone.is_empty():
+        return tours, linked_trips, joint_trips
+
+    lone_ids = lone["joint_trip_id"]
+    logger.info(
+        "Demoted %d joint trip(s) to individual travel: the tour drop left them "
+        "with a single member trip",
+        lone_ids.len(),
+    )
+    linked_trips = linked_trips.with_columns(
+        pl.when(pl.col("joint_trip_id").is_in(lone_ids.implode()))
+        .then(None)
+        .otherwise(pl.col("joint_trip_id"))
+        .alias("joint_trip_id")
+    )
+    joint_trips = joint_trips.filter(~pl.col("joint_trip_id").is_in(lone_ids.implode()))
     return tours, linked_trips, joint_trips
 
 

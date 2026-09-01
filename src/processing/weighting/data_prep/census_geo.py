@@ -12,6 +12,7 @@ Processed GeoDataFrames are cached as GeoParquet under
 
 import logging
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -122,6 +123,24 @@ def _parse_block_response(data: list[list[str]], pop_var: str) -> dict[str, int]
     return {r[st_i] + r[co_i] + r[tr_i] + r[bl_i]: int(r[pop_i]) for r in rows}
 
 
+#: Attempts per county request before giving up. The Census API returns 5xx
+#: under load often enough that a single failure must not end a run that is
+#: making 58 of these; the delay grows so a struggling server is not hammered.
+_MAX_CENSUS_ATTEMPTS = 4
+_RETRY_BACKOFF_SECONDS = 2.0
+
+#: Server-side statuses worth retrying. A 4xx is our request being wrong and
+#: will fail identically however many times it is sent.
+_TRANSIENT_STATUS = frozenset({500, 502, 503, 504})
+
+
+def _is_transient(err: Exception) -> bool:
+    """Whether *err* is a server-side failure that a later attempt may clear."""
+    if isinstance(err, requests.HTTPError) and err.response is not None:
+        return err.response.status_code in _TRANSIENT_STATUS
+    return isinstance(err, requests.ConnectionError | requests.Timeout)
+
+
 def _fetch_county_blocks(
     url: str,
     pop_var: str,
@@ -129,18 +148,38 @@ def _fetch_county_blocks(
     county: str,
     key: str,
 ) -> dict[str, int]:
-    """Fetch block population for a single county."""
-    r = requests.get(
-        url,
-        params={
-            "get": pop_var,
-            "for": "block:*",
-            "in": f"state:{state_fips} county:{county}",
-            "key": key,
-        },
-        timeout=120,
-    )
-    return _parse_block_response(_census_json(r), pop_var)
+    """Fetch block population for a single county, retrying server failures.
+
+    Raises:
+        requests.RequestException: If the request fails for a reason a retry
+            cannot clear, or still fails after :data:`_MAX_CENSUS_ATTEMPTS`.
+    """
+    params = {
+        "get": pop_var,
+        "for": "block:*",
+        "in": f"state:{state_fips} county:{county}",
+        "key": key,
+    }
+    for attempt in range(1, _MAX_CENSUS_ATTEMPTS + 1):
+        try:
+            return _parse_block_response(
+                _census_json(requests.get(url, params=params, timeout=120)), pop_var
+            )
+        except Exception as err:
+            if not _is_transient(err) or attempt == _MAX_CENSUS_ATTEMPTS:
+                raise
+            delay = _RETRY_BACKOFF_SECONDS * attempt
+            logger.warning(
+                "County %s block request failed (attempt %d/%d): %s. Retrying in %.0fs.",
+                county,
+                attempt,
+                _MAX_CENSUS_ATTEMPTS,
+                err,
+                delay,
+            )
+            time.sleep(delay)
+    msg = f"County {county}: exhausted retries"  # pragma: no cover - loop always returns/raises
+    raise RuntimeError(msg)
 
 
 def _fetch_block_population(state_fips: str, vintage: int) -> dict[str, int]:
@@ -160,23 +199,35 @@ def _fetch_block_population(state_fips: str, vintage: int) -> dict[str, int]:
         state_fips,
     )
 
-    # 2020 PL supports a single statewide request.
+    # 2020 PL accepts a single statewide request -- every block in the state in
+    # one response, which for California is around half a million rows. The API
+    # returns 500 for it often enough that it cannot be the only route, so a
+    # failure falls through to the same county-by-county walk 2010 requires
+    # rather than ending the run.
     if vintage >= 2020:  # noqa: PLR2004
-        resp = requests.get(
-            url,
-            params={
-                "get": pop_var,
-                "for": "block:*",
-                "in": f"state:{state_fips} county:* tract:*",
-                "key": key,
-            },
-            timeout=300,
-        )
-        result = _parse_block_response(_census_json(resp), pop_var)
-        logger.info("Fetched population for %d blocks", len(result))
-        return result
+        try:
+            resp = requests.get(
+                url,
+                params={
+                    "get": pop_var,
+                    "for": "block:*",
+                    "in": f"state:{state_fips} county:* tract:*",
+                    "key": key,
+                },
+                timeout=300,
+            )
+            result = _parse_block_response(_census_json(resp), pop_var)
+        except (requests.RequestException, RuntimeError) as err:
+            logger.warning(
+                "Statewide block request failed (%s); falling back to one request "
+                "per county, which asks the API for far less at a time.",
+                err,
+            )
+        else:
+            logger.info("Fetched population for %d blocks", len(result))
+            return result
 
-    # 2010 SF1 requires county-by-county iteration.
+    # County-by-county: required for 2010 SF1, and the fallback for 2020.
     resp = requests.get(
         url,
         params={"get": "NAME", "for": "county:*", "in": f"state:{state_fips}", "key": key},

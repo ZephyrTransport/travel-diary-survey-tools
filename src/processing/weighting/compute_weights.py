@@ -232,6 +232,7 @@ def compute_weights(  # noqa: PLR0913
         result_tables,
         wt_pipeline.control_totals,
         wt_pipeline.controls.specs,
+        usability_flag_col,
     )
 
     # After the checks, which still read the seed off households.

@@ -30,10 +30,23 @@ def weight_sanity_checks(
     tables: dict[str, pl.DataFrame],
     control_totals: ControlTotals,
     specs: list[ControlSpec],
+    usability_flag_col: str,
     *,
     geo_col: str = "ctrl_geoid",
 ) -> None:
-    """Run weight sanity checks and log a summary report."""
+    """Run weight sanity checks and log a summary report.
+
+    Args:
+        tables: Weighted canonical tables.
+        control_totals: The targets weights were balanced to.
+        specs: Control specifications, for picking a household- and a
+            person-level control to compare against.
+        usability_flag_col: The flag the weighting was run under. The hierarchy
+            identities only hold over the records that carried weight, so the
+            checks have to read the same column the propagation did -- checking
+            a different universe than was weighted would fail on correct output.
+        geo_col: Geography column the control totals are keyed on.
+    """
     hh = tables.get("households")
     per = tables.get("persons")
     if hh is None or per is None:
@@ -71,8 +84,8 @@ def weight_sanity_checks(
             label="Person",
         )
 
-    _check_hierarchy(tables)
-    _check_joint_sums(tables)
+    _check_hierarchy(tables, usability_flag_col)
+    _check_joint_sums(tables, usability_flag_col)
 
 
 # ---------------------------------------------------------------------------

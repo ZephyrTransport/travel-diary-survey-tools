@@ -1225,16 +1225,16 @@
    },
    "tour_direction": {
     "counts": {
-     "1": 45,
-     "2": 41
+     "1": 47,
+     "2": 39
     },
     "distinct": 2,
     "dtype": "Int32",
-    "hash": "d8362569b1680435",
+    "hash": "f2e5993bbaef3a22",
     "max": 2.0,
     "min": 1.0,
     "nulls": 0,
-    "sum": 127.0
+    "sum": 125.0
    },
    "tour_id": {
     "distinct": 40,
@@ -1854,25 +1854,25 @@
     "nulls": 0
    },
    "dest_arrive_time": {
-    "distinct": 24,
+    "distinct": 26,
     "dtype": "Datetime(time_unit='us', time_zone=None)",
-    "hash": "00e7bc3da58d7a73",
+    "hash": "a99d25c622552206",
     "nulls": 2
    },
    "dest_depart_time": {
-    "distinct": 17,
+    "distinct": 16,
     "dtype": "Datetime(time_unit='us', time_zone=None)",
-    "hash": "2401086cf64ba03c",
-    "nulls": 2
+    "hash": "028911fd0c4db5f8",
+    "nulls": 3
    },
    "dest_linked_trip_id": {
     "distinct": 39,
     "dtype": "Int64",
-    "hash": "816915854989778c",
+    "hash": "8591e8389c1adeae",
     "max": 25020101.0,
     "min": 1010101.0,
     "nulls": 2,
-    "sum": 531543950.0
+    "sum": 519543951.0
    },
    "hh_id": {
     "distinct": 25,
@@ -1892,16 +1892,16 @@
      "3": 1,
      "5": 1,
      "6": 1,
-     "8": 22,
-     "None": 2
+     "8": 20,
+     "None": 4
     },
     "distinct": 9,
     "dtype": "Int64",
-    "hash": "e4a3602b6f8c2a26",
+    "hash": "79db066dddf32b4b",
     "max": 13.0,
     "min": 1.0,
-    "nulls": 2,
-    "sum": 237.0
+    "nulls": 4,
+    "sum": 221.0
    },
    "joint_tour_id": {
     "distinct": 6,

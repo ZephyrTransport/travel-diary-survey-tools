@@ -461,19 +461,30 @@ class TourModel(BaseModel):
         whose every candidate stop was the return leg or a mode change has no
         activity to anchor on, and extraction records that as
         ``TourDataQuality.NO_DESTINATION``. What must hold is the converse --
-        once a tour *has* a purpose, it has a primary destination, so the
-        timings and the trip it was drawn from cannot be missing.
+        once a tour *has* a purpose, it reached a primary destination, so the
+        arrival and the trip it was drawn from cannot be missing.
+
+        Departure is not in that set. A tour only leaves its destination if the
+        diary kept watching: one cut at the diary edge, or resuming the next
+        day, arrived somewhere and stopped. ``tour_category`` already records
+        which end is open, so a departure is required exactly of the tours that
+        closed -- demanding it of the rest would reject a partial tour for being
+        partial, which is what the quality codes exist to describe.
         """
-        if self.tour_purpose is not None:
-            if self.dest_arrive_time is None:
-                msg = f"Tour {self.tour_id}: a tour with a purpose must have dest_arrive_time"
-                raise ValueError(msg)
-            if self.dest_depart_time is None:
-                msg = f"Tour {self.tour_id}: a tour with a purpose must have dest_depart_time"
-                raise ValueError(msg)
-            if self.dest_linked_trip_id is None:
-                msg = f"Tour {self.tour_id}: a tour with a purpose must have dest_linked_trip_id"
-                raise ValueError(msg)
+        if self.tour_purpose is None:
+            return self
+        if self.dest_arrive_time is None:
+            msg = f"Tour {self.tour_id}: a tour with a purpose must have dest_arrive_time"
+            raise ValueError(msg)
+        if self.dest_linked_trip_id is None:
+            msg = f"Tour {self.tour_id}: a tour with a purpose must have dest_linked_trip_id"
+            raise ValueError(msg)
+        if self.tour_category == TourCategory.COMPLETE and self.dest_depart_time is None:
+            msg = (
+                f"Tour {self.tour_id}: a closed tour with a purpose must have "
+                "dest_depart_time -- it left its destination to come back"
+            )
+            raise ValueError(msg)
         return self
 
 

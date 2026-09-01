@@ -154,6 +154,17 @@ def _calculate_destination_times(
     Uses distance thresholds based on location type to identify when trips
     arrive at or depart from the primary destination.
 
+    Candidate trips are the ones that could *be* the destination -- the same
+    ``_is_not_a_destination`` test purpose selection uses, so the two cannot
+    disagree about which trip the destination is. Selecting on "not the last
+    trip" instead assumed every tour returns to its anchor: a one-trip tour's
+    only trip is also its last, so it matched no candidate rule and came out
+    with no destination at all, while purpose selection had already given it one.
+
+    ``dest_depart_time`` stays null when nothing departed the destination. A
+    tour cut by the diary edge arrived somewhere and stopped being observed;
+    inventing a departure would put a time on an event that did not happen.
+
     Args:
         linked_trips: Enhanced trip data with primary destination coordinates
         config: TourConfig with distance thresholds
@@ -197,7 +208,7 @@ def _calculate_destination_times(
     # Aggregate arrive times (exclude last trip) and depart times (all trips)
     # Use distance filtering with fallback to trip sequence
     dest_arrive = (
-        linked_trips.filter(~pl.col("_is_last_trip") & pl.col("_arrives_at_primary"))
+        linked_trips.filter(~pl.col("_is_not_a_destination") & pl.col("_arrives_at_primary"))
         .group_by("tour_id")
         .agg(
             [
@@ -207,9 +218,9 @@ def _calculate_destination_times(
         )
     )
 
-    # Fallback: use first non-last trip if distance threshold too restrictive
+    # Fallback: first candidate trip, if the distance threshold was too tight.
     dest_arrive_fallback = (
-        linked_trips.filter(~pl.col("_is_last_trip"))
+        linked_trips.filter(~pl.col("_is_not_a_destination"))
         .group_by("tour_id")
         .agg(
             [
@@ -250,6 +261,11 @@ def _calculate_destination_times(
             ]
         )
         .select(["tour_id", "dest_arrive_time", "dest_linked_trip_id"])
+        # Left, not full: a departure is a departure *from the destination*, so a
+        # tour with no destination has none. Joining outer let a tour whose every
+        # trip was ruled out as a candidate still pick up a departure time, and
+        # every one of its trips then classified as inbound -- leaving the tour
+        # with no outbound leg and no mode for it.
         .join(
             dest_depart_fallback.join(dest_depart, on="tour_id", how="left", suffix="_dist")
             .with_columns(
@@ -257,8 +273,7 @@ def _calculate_destination_times(
             )
             .select(["tour_id", "dest_depart_time"]),
             on="tour_id",
-            how="full",
-            coalesce=True,
+            how="left",
         )
     )
 
