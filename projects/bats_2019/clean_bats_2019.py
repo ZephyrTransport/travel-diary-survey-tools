@@ -360,6 +360,13 @@ def clean_persons(persons: pl.DataFrame, unlinked_trips: pl.DataFrame) -> pl.Dat
         .alias("race")
     )
 
+    # Whether the survey could collect this person's travel at all. bats_2023
+    # gets this from the vendor; 2019 records it as is_active_participant, and
+    # the two agree in structure -- every non-participant has no day rows, and
+    # no non-participant has any. The cascade reads it so unsurveyable members
+    # neither veto a household-date nor inherit its verdict.
+    persons = persons.with_columns((pl.col("is_active_participant") == 1).alias("surveyable"))
+
     # Derive ethnicity from ethnicity_hisp flag
     # 2019 does not distinguish Hispanic subtypes, so map to OTHER (Hispanic or Latino)
     persons = persons.with_columns(
@@ -390,10 +397,22 @@ def clean_days(
         day_id=(pl.col("person_id") * 100 + pl.col("day_num")),
     )
 
-    # Add day entries for persons without any days recorded
-    # Find persons without days
+    # Add day entries for surveyable persons without any days recorded.
+    #
+    # Only surveyable ones. A person who never agreed to participate was never
+    # going to report travel, and the vendor gives them no day rows at all --
+    # 4,688 of them here, none with a real day between them. Handing each a
+    # synthesised all-null day would make them veto the household-day
+    # completeness reduction, which is an ALL over members, so a household with
+    # one roommate could never have a complete date. That alone put 2,821 of
+    # 4,540 households out of the weighting seed.
+    #
+    # The 97 active participants who still reported no day are a different
+    # thing: that is missing data from someone who was meant to report, and it
+    # should count against the household.
     persons_without_days = persons.filter(
         ~pl.col("person_id").is_in(days["person_id"].unique().implode())
+        & (pl.col("is_active_participant") == 1)
     )
 
     # Get travel_dow from other household members' days
@@ -737,29 +756,41 @@ def clean_trips(unlinked_trips: pl.DataFrame) -> pl.DataFrame:
     return unlinked_trips
 
 
-def cascade_complete_flags(
-    households: pl.DataFrame,
-    persons: pl.DataFrame,
+def flag_measured_completeness(
     days: pl.DataFrame,
     unlinked_trips: pl.DataFrame,
-) -> dict[str, pl.DataFrame]:
-    """Cascade complete flags from days to persons to households, and from days to unlinked trips.
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Set the two measured leaves: was each trip surveyed, was each day completed.
 
-    Survey completion logic works like this:
-    - A person-day is complete if the survey was "completed" for that day (survey_complete_day == 1)
-    - A person is complete if they have at least one complete day
-    - A household-day is complete if ALL persons in the household have a complete day for that day
-    - A household is complete if the household has at least one complete household-day
-    - An unlinked trip is complete if the day it belongs to is complete
+    ``survey_complete_day`` is what the vendor recorded, so this is the one
+    completeness fact the project owns. Everything above it -- person,
+    household-day, household, and every trip and tour hanging off a day -- is
+    derived upward by the ``cascade_completeness`` step, which is also where the
+    usability profiles are stamped.
 
-    We start with the day complete field and work up to household.
+    This used to cascade here as well, and the two did not agree: the docstring
+    described a household as complete when it had at least one date on which
+    *every* member reported, while the code marked it complete if *any* member
+    ever did. Deriving it in one place removes the chance of that drifting again.
 
-    Although trips are the smallest unit, the day is really the key unit of completion
-    since it is the basis for the survey design and weighting.
-    So we will cascade completion flags from days to trips,
-    and then separately cascade from days to persons to households.
+    Both are facts the vendor recorded, so they are the project's to set. The
+    trip leaf matters as much as the day one: tours are built from trips, and
+    ``cascade_completeness`` broadcasts a day's verdict onto the records that sit
+    on it rather than inventing one, so a trip table with no ``complete`` leaves
+    tours with none either and the usability pass has nothing to stand on.
+
+    Args:
+        days: Person-days carrying ``survey_complete_day``.
+        unlinked_trips: Trips carrying ``survey_complete_trip``.
+
+    Returns:
+        Tuple of (days, unlinked_trips), each carrying ``complete``, plus the
+        per-day trip counts kept for debugging.
     """
-    # First determine if the day is complete based on survey_complete_day
+    unlinked_trips = unlinked_trips.with_columns(
+        (pl.col("survey_complete_trip") == 1).alias("complete")
+    )
+
     # Add num_complete_trips column to help with debugging and weighting later
     days = days.join(
         unlinked_trips.select(["day_id", "survey_complete_trip"])
@@ -773,53 +804,22 @@ def cascade_complete_flags(
     ).with_columns(
         pl.col("num_complete_trips").fill_null(0),
         pl.col("total_trips").fill_null(0),
-        pl.when(pl.col("survey_complete_day") == 1)
-        .then(pl.lit(value=True))
-        .otherwise(pl.lit(value=False))
+        # The vendor's own verdict is taken as given. It already counts a
+        # genuine no-travel day as complete, which is the distinction 2023 has
+        # to reconstruct from trip counts and stated reasons, so it answers the
+        # right question rather than merely a similar one.
+        #
+        # Null is not missing information here, it is the absence of a day: the
+        # 33,495 rows with a null flag are the ones synthesised for persons who
+        # had no day record at all, and every vendor field on them is null with
+        # zero trips behind it. They are incomplete because nothing was
+        # observed, which `is_null()` says and `== 1` only implied.
+        pl.when(pl.col("survey_complete_day").is_null())
+        .then(pl.lit(value=False))
+        .otherwise(pl.col("survey_complete_day") == 1)
         .alias("complete"),
     )
-
-    # Then cascade to persons: a person is complete if they have at least one complete day
-    # Add a num_complete_days column to help with debugging and weighting later
-    persons = persons.join(
-        days.select(["person_id", "complete"])
-        .group_by("person_id")
-        .agg(
-            pl.any("complete"),
-            pl.sum("complete").alias("num_complete_days"),
-            pl.count("complete").alias("total_days"),
-        ),
-        on="person_id",
-        how="left",
-    )
-
-    # Then cascade to households: household is complete if all persons in the household are complete
-    # Add a num_complete_persons and total_persons column to help with debugging and weighting later
-    households = households.join(
-        persons.select(["hh_id", "complete"])
-        .group_by("hh_id")
-        .agg(
-            pl.any("complete"),
-            pl.sum("complete").alias("num_complete_persons"),
-            pl.count("complete").alias("total_persons"),
-        ),
-        on="hh_id",
-        how="left",
-    )
-
-    # Then cascade to unlinked trips: unlinked trip is complete if the day it belongs to is complete
-    unlinked_trips = unlinked_trips.join(
-        days.select(["day_id", "complete"]).group_by("day_id").agg(pl.any("complete")),
-        on="day_id",
-        how="left",
-    )
-
-    return {
-        "households": households,
-        "persons": persons,
-        "days": days,
-        "unlinked_trips": unlinked_trips,
-    }
+    return days, unlinked_trips
 
 
 @step()
@@ -844,8 +844,16 @@ def clean_2019_bats(
     # CLEAN HOUSEHOLDS ==================================
     households = clean_households(households)
 
-    # CASCADE COMPLETE FLAGS ==================================
-    results = cascade_complete_flags(households, persons, days, unlinked_trips)
+    # FLAG COMPLETE DAYS ==================================
+    # Only the measured leaf; cascade_completeness derives the rest.
+    days, unlinked_trips = flag_measured_completeness(days, unlinked_trips)
+
+    results = {
+        "households": households,
+        "persons": persons,
+        "days": days,
+        "unlinked_trips": unlinked_trips,
+    }
 
     # PREPARE WEIGHT COLUMNS ==================================
     # Weights are assumed not to be in the data and are appended/calculated after core processing

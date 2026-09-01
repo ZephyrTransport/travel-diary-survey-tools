@@ -33,6 +33,45 @@ steps:
   # - name: imputation
   #   validate_input: true
 
+  # Impute the fields the weighting controls on, so a household or person is not
+  # dropped from a control margin for a blank the survey simply did not capture.
+  # Mirrors the bats_2023 step: same method, same seed, same validation, so the
+  # two years' income and gender distributions are produced the same way and can
+  # be compared. The feature lists are shorter here only because 2019 does not
+  # collect occupation, industry, can_drive or num_trips.
+  - name: imputation
+    validate_input: false
+    cache: false
+    params:
+      impute_columns:
+        households:
+          - column: income_bin
+            method: rf
+            missing_values: [MISSING, PNTA]
+            categorical_features: [residence_type, residence_rent_own]
+            aggregate_from:
+              persons:
+                pivot_count: [employment, education, student]
+
+        persons:
+          # 995 (MISSING) on 5,393 of 9,795 persons, and p_gender is a weighting
+          # control, so leaving it blank costs over half the person margin.
+          - column: gender
+            method: rf
+            missing_values: [TRANS, NON_BINARY, MISSING, OTHER, PNTA]
+            join_tables: [households]
+            categorical_features:
+              [age, relationship, employment, education, student, work_mode,
+               income_bin, residence_type, residence_rent_own]
+
+      stash_preimputed: true
+      random_state: 42     # For reproducibility
+
+      validate_imputation:
+        enabled: true
+        n_folds: 5
+        sample_pct: 5.0
+
   - name: link_trips
     validate_input: true
     cache: true
@@ -77,6 +116,30 @@ steps:
       # teleports while ignoring same-place geocoding jitter.
       spatial_gap_threshold_meters: 1000.0
 
+  # Cascade `complete` (survey reporting) through hh <-> person <-> day <->
+  # trip/tour so it is consistent with what the cleaner measured, then stamp one
+  # usability column per profile declared below. The cleaner sets only the leaf
+  # -- whether the vendor completed each person-day -- and everything above it is
+  # derived here, so the rule lives in one place.
+  - name: cascade_completeness
+    validate_input: false
+    cache: true
+    params:
+      # One boolean column per profile, on two axes, both answered explicitly.
+      # See the bats_2023 config for the full vocabulary; the same three
+      # profiles are declared here so the two survey years are gated alike and
+      # can be compared without asking which standard each was built under.
+      usability_profiles:
+        ctramp_usable:
+          tour_closes_at: primary_home
+          household_day_needs: all_members
+        daysim_usable:
+          tour_closes_at: primary_home
+          household_day_needs: all_members
+        analysis_usable:
+          tour_closes_at: anywhere
+          household_day_needs: nothing
+
   # - name: weighting
   #   validate_input: true
   #   cache: true
@@ -110,6 +173,11 @@ steps:
 
       state_fips: "06"
       pums_year: 2019
+
+      # Which profile decides who carries weight. Named rather than defaulted:
+      # with several stamped there is no defensible default, and a silent choice
+      # would weight a different universe than the formatters emit.
+      usability_flag_col: ctramp_usable
 
       # -- Sample Plan Path ------------------------------------------------
       # sample_plan: "{{ survey_dir }}/prepared_sample_plan.csv"
