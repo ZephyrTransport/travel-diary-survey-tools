@@ -9,12 +9,13 @@ surveyed, and each tour's structural validity:
 * one column per **usability profile** -- can the model consume it? Fuses each
   tour's structure with its household-day coherence, then gates the rest.
 
-A profile states a standard on two axes -- which home has to close a tour, and
-what the household-date has to show -- and a run may stamp several, so different
-consumers can hold different standards. A joint-tour model needs whole
-households; a trip-level estimation does not.
+A profile states a standard on three axes -- which home has to close a tour,
+what the household-date has to show, and which zone system has to be able to
+address the record -- and a run may stamp several, so different consumers can
+hold different standards. A joint-tour model needs whole households; a
+trip-level estimation does not, and needs no model geography at all.
 
-Every profile is named in config and answers both axes, so a column's meaning
+Every profile is named in config and answers every axis, so a column's meaning
 reads off the config without knowing a base rule, and no verdict appears that
 nobody asked for. Consumers name the profile they read
 (``usability_flag_col``), and ``complete`` is always available as the floor
@@ -51,8 +52,8 @@ household ...........................   >=1       has >=1 usable household-day
  └ person ...........................   >=1       has >=1 usable day
     └ day ...........................   >=1       >=1 usable tour (or a no-travel day)
        └ tour .......................   fuse      complete AND admitted-quality AND
-                                                     hh-day complete (the last two are
-                                                     the profile's two axes)
+                                                     hh-day complete AND addressable
+                                                     (the last three are the axes)
           ├ linked trip .............   inherit   takes its tour's verdict
           |  └ unlinked trip ........   inherit   takes its linked trip's verdict
           ├ joint tour ..............   >=2       >=2 usable member tours
@@ -89,7 +90,7 @@ logger = logging.getLogger(__name__)
 
 
 # --- Profile axes ------------------------------------------------------------
-# A profile answers both, explicitly. There is no default for either: a column
+# A profile answers every one, explicitly. There is no default for any: a column
 # whose meaning depends on a value nobody wrote is the thing profiles exist to
 # stop.
 
@@ -104,6 +105,24 @@ TOUR_CLOSES_AT = (PRIMARY_HOME, ANY_HOME, ANYWHERE)
 ALL_MEMBERS = "all_members"  # every surveyable member's day complete
 NOTHING = "nothing"  # no household-date requirement
 HOUSEHOLD_DAY_NEEDS = (ALL_MEMBERS, NOTHING)
+
+# Which zone system has to be able to address the record. Unlike the other two
+# axes this vocabulary is open: the value names a zone geography the zone step
+# produced, so the legal set is whatever that step was configured to build.
+NO_ZONE_COVERAGE = "none"  # no geographic requirement
+
+# Zone columns the zone step writes, by table. A record is addressable when
+# every one of its locations landed in the named geography.
+_ZONE_PREFIXES: dict[str, tuple[str, ...]] = {
+    "households": ("home",),
+    "tours": ("o", "d"),
+    "linked_trips": ("o", "d"),
+    "unlinked_trips": ("o", "d"),
+}
+
+# The zone step leaves an unmatched location null; formatters have historically
+# also written -1 as a missing sentinel, so neither is addressable.
+_MISSING_ZONE = -1
 
 # Quality codes each closure setting admits, cumulatively. NO_DESTINATION and
 # SPATIAL_GAP appear nowhere: they are not open ends but missing data -- no
@@ -125,8 +144,13 @@ _ADMITTED_QUALITY: dict[str, tuple[TourDataQuality, ...]] = {
 class UsabilityProfile:
     """One usability standard, stated on both axes, and the columns it writes.
 
-    A profile says which home has to close a tour and what the household-date
-    has to show. Both are given explicitly; neither has a default.
+    A profile says which home has to close a tour, what the household-date has
+    to show, and which zone system has to be able to address the record. Config
+    gives all three explicitly; none may be left implicit there.
+
+    Coverage is an axis rather than a universal because the zone systems differ:
+    a trip outside one model's area may sit comfortably inside another's, so
+    "addressable" is a question only a named consumer can answer.
 
     Two things hold at every setting and so are not axes. A profile is always a
     subset of ``complete`` -- a usability column admitting unreported records
@@ -144,11 +168,20 @@ class UsabilityProfile:
     name: str
     tour_closes_at: str
     household_day_needs: str
+    # Config must state this like any other axis -- ``_one_profile`` rejects a
+    # profile that omits it. The default serves in-process construction only,
+    # where saying nothing about geography means asking nothing of it.
+    zone_coverage: str = NO_ZONE_COVERAGE
 
     @property
     def flag(self) -> str:
         """Per-record verdict column."""
         return self.name
+
+    @property
+    def requires_zones(self) -> bool:
+        """Whether this profile asks that a record be addressable in a geography."""
+        return self.zone_coverage != NO_ZONE_COVERAGE
 
     @property
     def household_day(self) -> str:
@@ -407,6 +440,70 @@ def _flag_person_usable(
     )
 
 
+def _zone_valid(column: str) -> pl.Expr:
+    """A location is addressable when the zone join actually placed it."""
+    col = pl.col(column)
+    return (col.is_not_null() & (col != _MISSING_ZONE)).fill_null(value=False)
+
+
+def _zone_expr(frame: pl.DataFrame, table: str, cols: UsabilityProfile) -> pl.Expr:
+    """Addressability of *table*'s own locations under this profile.
+
+    Constant-true when the profile asks for no coverage, so callers combine it
+    unconditionally rather than branching on the axis.
+
+    Raises:
+        ValueError: If the profile names a geography this frame does not carry,
+            which means the zone step either did not run before the cascade or
+            was not configured to build it.
+    """
+    if not cols.requires_zones:
+        return pl.lit(value=True)
+
+    wanted = [f"{prefix}_{cols.zone_coverage}" for prefix in _ZONE_PREFIXES.get(table, ())]
+    missing = [column for column in wanted if column not in frame.columns]
+    if missing:
+        msg = (
+            f"usability_profile '{cols.name}' sets zone_coverage: "
+            f"'{cols.zone_coverage}', but {table} carries no {', '.join(missing)}. "
+            f"Run add_zone_ids before cascade_completeness and declare a "
+            f"zone_geography named '{cols.zone_coverage}', or set zone_coverage: "
+            f"{NO_ZONE_COVERAGE} to ask nothing of geography."
+        )
+        raise ValueError(msg)
+
+    expr = pl.lit(value=True)
+    for column in wanted:
+        expr = expr & _zone_valid(column)
+    return expr
+
+
+def _home_zone_ok(
+    tables: dict[str, pl.DataFrame | None],
+    cols: UsabilityProfile,
+) -> pl.DataFrame | None:
+    """Per-household addressability of the home location, or None when unasked.
+
+    The cascade reduces *upward*, so a household-level fact cannot reach its
+    descendants by rolling up. It is joined into the tour and day verdicts
+    instead, which leaves the cascade's direction alone: with every tour and
+    every day of an unaddressable household failing, the person and household
+    verdicts follow on their own. Days need the term as well as tours, because a
+    genuine no-travel day passes the has-a-usable-tour test by design and would
+    otherwise survive in a household that cannot be written at all.
+    """
+    if not cols.requires_zones:
+        return None
+
+    households = tables.get("households")
+    if households is None or "hh_id" not in households.columns:
+        return None
+
+    return households.select(
+        "hh_id", _zone_expr(households, "households", cols).alias("_home_zone_ok")
+    )
+
+
 def _flag_tours(
     tables: dict[str, pl.DataFrame | None],
     cols: UsabilityProfile,
@@ -432,7 +529,18 @@ def _flag_tours(
         has_quality="tour_data_quality" in tours.columns,
         has_category="tour_category" in tours.columns,
         closes_at=cols.tour_closes_at,
-    )
+    ) & _zone_expr(tours, "tours", cols)
+
+    # The household's own home has to be addressable too, or the tour belongs to
+    # a household the consumer cannot write. See _home_zone_ok on why this is
+    # joined in rather than rolled down.
+    home = _home_zone_ok(tables, cols)
+    if home is not None and "hh_id" in tours.columns:
+        tours = tours.join(home, on="hh_id", how="left")
+        usable = usable & pl.col("_home_zone_ok").fill_null(value=False)
+    else:
+        home = None
+
     days = tables.get("days")
     coherence_required = cols.needs_whole_household_day
     if (
@@ -441,20 +549,22 @@ def _flag_tours(
         or "hh_day_complete" not in days.columns
         or "day_id" not in tours.columns
     ):
-        tables["tours"] = _flag_subtours_from_parent(
-            tours.with_columns(usable.alias(cols.flag)), cols
+        flagged = tours.with_columns(usable.alias(cols.flag))
+    else:
+        coherence = days.select(
+            "day_id", pl.col("hh_day_complete").alias("_hh_day_complete")
+        ).unique(subset="day_id")
+        flagged = (
+            tours.join(coherence, on="day_id", how="left")
+            .with_columns(
+                (usable & pl.col("_hh_day_complete").fill_null(value=False)).alias(cols.flag)
+            )
+            .drop("_hh_day_complete")
         )
-        return
 
-    coherence = days.select("day_id", pl.col("hh_day_complete").alias("_hh_day_complete")).unique(
-        subset="day_id"
-    )
-    tables["tours"] = _flag_subtours_from_parent(
-        tours.join(coherence, on="day_id", how="left")
-        .with_columns((usable & pl.col("_hh_day_complete").fill_null(value=False)).alias(cols.flag))
-        .drop("_hh_day_complete"),
-        cols,
-    )
+    if home is not None:
+        flagged = flagged.drop("_home_zone_ok")
+    tables["tours"] = _flag_subtours_from_parent(flagged, cols)
 
 
 def _flag_subtours_from_parent(
@@ -711,17 +821,29 @@ def stamp_usable(
                 "first, otherwise every day silently passes on completeness alone."
             )
             raise ValueError(msg)
+
+        # A no-travel day has no tour to carry the household's addressability, so
+        # it takes the term directly or it would outlive its own household.
+        home = _home_zone_ok(tables, cols)
+        if home is not None and "hh_id" in days.columns:
+            days = days.join(home, on="hh_id", how="left")
+            base = base & pl.col("_home_zone_ok").fill_null(value=False)
+        else:
+            home = None
+
         if tours is not None and "day_id" in tours.columns:
             day_has_usable = tours.group_by("day_id").agg(
                 pl.col(cols.flag).any().alias("_day_has_usable_tour")
             )
             days = days.join(day_has_usable, on="day_id", how="left")
             # null == the day has no tours at all -> a legitimate no-travel day.
-            tables["days"] = days.with_columns(
+            flagged = days.with_columns(
                 (base & pl.col("_day_has_usable_tour").fill_null(value=True)).alias(cols.flag)
             ).drop("_day_has_usable_tour")
         else:
-            tables["days"] = days.with_columns(base.alias(cols.flag))
+            flagged = days.with_columns(base.alias(cols.flag))
+
+        tables["days"] = flagged.drop("_home_zone_ok") if home is not None else flagged
 
     # -- Persons: usable = has >=1 usable day (mirror of complete) ------------
     # A person kept with no usable day contributes no travel but stays a real
@@ -778,6 +900,10 @@ _AXES: dict[str, tuple[str, ...]] = {
     "household_day_needs": HOUSEHOLD_DAY_NEEDS,
 }
 
+# The axis whose values come from the zone step's configuration rather than a
+# vocabulary fixed here, so it is required and typed but not membership-checked.
+_ZONE_AXIS = "zone_coverage"
+
 # Columns the reporting cascade owns. A profile taking one of these names would
 # overwrite a survey fact with a modelling judgement.
 _RESERVED_NAMES = ("complete", "hh_day_complete")
@@ -806,9 +932,9 @@ def parse_usability_profiles(spec: dict[str, dict[str, str]]) -> list[UsabilityP
         msg = (
             "usability_profiles is empty, so no usability column would be stamped and "
             "every downstream consumer would have nothing to read. Name at least one "
-            "profile, giving both axes: "
+            "profile, giving every axis: "
             + ", ".join(f"{axis} ({'|'.join(values)})" for axis, values in _AXES.items())
-            + "."
+            + f", {_ZONE_AXIS} (a zone_name add_zone_ids builds|{NO_ZONE_COVERAGE})."
         )
         raise ValueError(msg)
 
@@ -853,11 +979,30 @@ def _one_profile(name: str, axes: dict[str, str]) -> UsabilityProfile:
             )
             raise ValueError(msg)
 
-    unknown = sorted(set(axes) - set(_AXES))
+    # Coverage names a geography the zone step builds, so its legal values are
+    # not knowable here. It is still required: silently defaulting to "no
+    # geographic requirement" is exactly the implicit meaning profiles remove.
+    if _ZONE_AXIS not in axes:
+        msg = (
+            f"usability_profile '{name}' does not say '{_ZONE_AXIS}'. Every profile "
+            f"answers every axis. Give the zone_name of a geography add_zone_ids "
+            f"builds, or '{NO_ZONE_COVERAGE}' to ask nothing of geography."
+        )
+        raise ValueError(msg)
+    coverage = axes[_ZONE_AXIS]
+    if not isinstance(coverage, str) or not coverage:
+        msg = (
+            f"usability_profile '{name}' sets {_ZONE_AXIS}: {coverage!r}. Give the "
+            f"zone_name of a geography add_zone_ids builds, or "
+            f"'{NO_ZONE_COVERAGE}'."
+        )
+        raise ValueError(msg)
+
+    unknown = sorted(set(axes) - set(_AXES) - {_ZONE_AXIS})
     if unknown:
         msg = (
             f"usability_profile '{name}' names unknown axis/axes: "
-            f"{', '.join(unknown)}. Known axes: {', '.join(_AXES)}."
+            f"{', '.join(unknown)}. Known axes: {', '.join([*_AXES, _ZONE_AXIS])}."
         )
         raise ValueError(msg)
 
@@ -865,6 +1010,7 @@ def _one_profile(name: str, axes: dict[str, str]) -> UsabilityProfile:
         name=name,
         tour_closes_at=axes["tour_closes_at"],
         household_day_needs=axes["household_day_needs"],
+        zone_coverage=coverage,
     )
 
 
@@ -936,10 +1082,17 @@ def _describe(profile: UsabilityProfile) -> dict[str, str]:
             "reporters standing in for the whole household"
         )
     )
+    coverage = (
+        f", with every location addressable in '{profile.zone_coverage}' (the "
+        "household's home included, so a household the consumer cannot write "
+        "takes its tours and days with it)"
+        if profile.requires_zones
+        else ", asking nothing of geography"
+    )
     gate = (
         f"Usable under the '{profile.name}' profile: survey-complete, a tour "
-        f"{_CLOSURE_TEXT[profile.tour_closes_at]}, and {household}. Never admits a "
-        "tour with a missing leg or no activity to anchor on."
+        f"{_CLOSURE_TEXT[profile.tour_closes_at]}, and {household}{coverage}. Never "
+        "admits a tour with a missing leg or no activity to anchor on."
     )
     if profile.needs_whole_household_day:
         hh_day = (

@@ -86,9 +86,11 @@ _STEP_ORDER = (
     "detect_joint_trips",
     "imputation",
     "extract_tours",
+    # Zones precede the cascade: a profile can gate on whether a record is
+    # addressable, which it cannot do before the zone step has run.
+    "add_zone_ids",
     "cascade_completeness",
     "add_existing_weights",
-    "add_zone_ids",
     "format_ctramp",
     "format_daysim",
     "write_data",
@@ -232,14 +234,17 @@ def _step_blocks(data_dir: Path, output_dir: Path, enabled: frozenset) -> dict:
                     "ctramp_usable": {
                         "tour_closes_at": "primary_home",
                         "household_day_needs": "all_members",
+                        "zone_coverage": "taz",
                     },
                     "daysim_usable": {
                         "tour_closes_at": "primary_home",
                         "household_day_needs": "all_members",
+                        "zone_coverage": "taz",
                     },
                     "analysis_usable": {
                         "tour_closes_at": "anywhere",
                         "household_day_needs": "nothing",
+                        "zone_coverage": "none",
                     },
                 }
             },

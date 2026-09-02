@@ -136,6 +136,24 @@ steps:
       # teleports while ignoring same-place geocoding jitter.
       spatial_gap_threshold_meters: 1000.0
 
+  - name: add_zone_ids
+    validate_input: false
+    cache: true
+    params:
+      projected_crs: "EPSG:26910"  # UTM Zone 10N (Bay Area metric CRS for nearest-zone fallback)
+      max_snap_distance: 500  # metres; points farther from all zone boundaries remain null (out-of-region)
+      zone_geographies:
+        - zone_name: "taz"  # Primary TAZ for DaySim (TM1)
+          shapefile: "{{ TM2_shapefile_dir }}/tazs_TM2_2_5.shp"
+          zone_id_field: "TAZ_NODE"
+        - zone_name: "maz"  # Primary MAZ for DaySim (TM2)
+          shapefile: "{{ TM2_shapefile_dir }}/mazs_TM2_2_5.shp"
+          zone_id_field: "MAZ_NODE"
+        # Add additional zone geographies as needed:
+        - zone_name: "TAZ1454"
+          shapefile: "{{ TM1_shapefile_dir }}/bayarea_rtaz1454_rev1_WGS84.shp"
+          zone_id_field: "TAZ1454"
+
   # Cascade `complete` (survey reporting) through hh <-> person <-> day <->
   # trip/tour so it is consistent with any upstream adjustments, then stamp one
   # usability column per profile declared below.
@@ -166,18 +184,31 @@ steps:
       #                                      so they stand in for the whole
       #                                      household
       #
+      #   zone_coverage:       <zone_name>   every location -- the household's
+      #                                      home included -- must land in this
+      #                                      geography, named from the add_zone_ids
+      #                                      step above. Out-of-region travel is real
+      #                                      data this consumer cannot address,
+      #                                      so it is gated here rather than
+      #                                      dropped later, where the weighting
+      #                                      would already have counted it
+      #                        none          no geographic requirement
+      #
       # No setting admits a tour with a missing leg or no activity to anchor on.
       # Those are missing data, not an open end.
       usability_profiles:
         ctramp_usable:
           tour_closes_at: primary_home
           household_day_needs: all_members
+          zone_coverage: TAZ1454
         daysim_usable:
           tour_closes_at: primary_home
           household_day_needs: all_members
+          zone_coverage: taz
         analysis_usable:
           tour_closes_at: anywhere
           household_day_needs: nothing
+          zone_coverage: none
 
   - name: compute_weights
     validate_input: false
@@ -381,23 +412,6 @@ steps:
   #         weight_path: "{{ weights_dir }}/trip_weights.csv"
   #         keep_name: false # Defaults to false, but you could keep original name if desired
 
-  - name: add_zone_ids
-    validate_input: false
-    cache: true
-    params:
-      projected_crs: "EPSG:26910"  # UTM Zone 10N (Bay Area metric CRS for nearest-zone fallback)
-      max_snap_distance: 500  # metres; points farther from all zone boundaries remain null (out-of-region)
-      zone_geographies:
-        - zone_name: "taz"  # Primary TAZ for DaySim (TM1)
-          shapefile: "{{ TM2_shapefile_dir }}/tazs_TM2_2_5.shp"
-          zone_id_field: "TAZ_NODE"
-        - zone_name: "maz"  # Primary MAZ for DaySim (TM2)
-          shapefile: "{{ TM2_shapefile_dir }}/mazs_TM2_2_5.shp"
-          zone_id_field: "MAZ_NODE"
-        # Add additional zone geographies as needed:
-        - zone_name: "TAZ1454"
-          shapefile: "{{ TM1_shapefile_dir }}/bayarea_rtaz1454_rev1_WGS84.shp"
-          zone_id_field: "TAZ1454"
 
   # - name: final_check
   #   validate_input: true

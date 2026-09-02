@@ -25,6 +25,7 @@ from processing.completeness import (
     ALL_MEMBERS,
     ANYWHERE,
     MIN_JOINT_PARTICIPANTS,
+    NO_ZONE_COVERAGE,
     NOTHING,
     PRIMARY_HOME,
     UsabilityProfile,
@@ -485,7 +486,11 @@ class TestNamesThatWriteTheSameColumn:
     """
 
     def _axes(self, closes_at: str = PRIMARY_HOME, household: str = ALL_MEMBERS) -> dict:
-        return {"tour_closes_at": closes_at, "household_day_needs": household}
+        return {
+            "tour_closes_at": closes_at,
+            "household_day_needs": household,
+            "zone_coverage": NO_ZONE_COVERAGE,
+        }
 
     def test_a_profile_may_not_shadow_another_s_household_day_column(self):
         """The collision the two-column derivation makes possible."""

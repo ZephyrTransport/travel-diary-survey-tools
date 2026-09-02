@@ -30,6 +30,7 @@ from processing.completeness import (
     ALL_MEMBERS,
     ANY_HOME,
     ANYWHERE,
+    NO_ZONE_COVERAGE,
     NOTHING,
     PRIMARY_HOME,
     UsabilityProfile,
@@ -49,8 +50,12 @@ WIDEST = UsabilityProfile("widest", ANYWHERE, NOTHING)
 MISSING_DATA = [TourDataQuality.NO_DESTINATION, TourDataQuality.SPATIAL_GAP]
 
 
-def _axes(closes_at: str, household: str) -> dict[str, str]:
-    return {"tour_closes_at": closes_at, "household_day_needs": household}
+def _axes(closes_at: str, household: str, zones: str = NO_ZONE_COVERAGE) -> dict[str, str]:
+    return {
+        "tour_closes_at": closes_at,
+        "household_day_needs": household,
+        "zone_coverage": zones,
+    }
 
 
 def _one_household(quality: TourDataQuality, category: TourCategory) -> dict:

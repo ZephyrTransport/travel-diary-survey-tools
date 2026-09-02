@@ -116,34 +116,6 @@ steps:
       # teleports while ignoring same-place geocoding jitter.
       spatial_gap_threshold_meters: 1000.0
 
-  # Cascade `complete` (survey reporting) through hh <-> person <-> day <->
-  # trip/tour so it is consistent with what the cleaner measured, then stamp one
-  # usability column per profile declared below. The cleaner sets only the leaf
-  # -- whether the vendor completed each person-day -- and everything above it is
-  # derived here, so the rule lives in one place.
-  - name: cascade_completeness
-    validate_input: false
-    cache: true
-    params:
-      # One boolean column per profile, on two axes, both answered explicitly.
-      # See the bats_2023 config for the full vocabulary; the same three
-      # profiles are declared here so the two survey years are gated alike and
-      # can be compared without asking which standard each was built under.
-      usability_profiles:
-        ctramp_usable:
-          tour_closes_at: primary_home
-          household_day_needs: all_members
-        daysim_usable:
-          tour_closes_at: primary_home
-          household_day_needs: all_members
-        analysis_usable:
-          tour_closes_at: anywhere
-          household_day_needs: nothing
-
-  # - name: weighting
-  #   validate_input: true
-  #   cache: true
-
   - name: add_zone_ids
     validate_input: true
     cache: true
@@ -161,6 +133,38 @@ steps:
         - zone_name: "TAZ1454"
           shapefile: "{{ TM1_shapefile_dir }}/bayarea_rtaz1454_rev1_WGS84.shp"
           zone_id_field: "TAZ1454"
+
+  # Cascade `complete` (survey reporting) through hh <-> person <-> day <->
+  # trip/tour so it is consistent with what the cleaner measured, then stamp one
+  # usability column per profile declared below. The cleaner sets only the leaf
+  # -- whether the vendor completed each person-day -- and everything above it is
+  # derived here, so the rule lives in one place.
+  - name: cascade_completeness
+    validate_input: false
+    cache: true
+    params:
+      # One boolean column per profile, on two axes, both answered explicitly.
+      # See the bats_2023 config for the full vocabulary; the same three
+      # profiles are declared here so the two survey years are gated alike and
+      # can be compared without asking which standard each was built under.
+      usability_profiles:
+        ctramp_usable:
+          tour_closes_at: primary_home
+          household_day_needs: all_members
+          zone_coverage: TAZ1454
+        daysim_usable:
+          tour_closes_at: primary_home
+          household_day_needs: all_members
+          zone_coverage: taz
+        analysis_usable:
+          tour_closes_at: anywhere
+          household_day_needs: nothing
+          zone_coverage: none
+
+  # - name: weighting
+  #   validate_input: true
+  #   cache: true
+
 
   - name: compute_weights
     validate_input: true

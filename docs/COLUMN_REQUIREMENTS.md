@@ -160,12 +160,12 @@ Each tab shows the fields for one canonical table. Only steps that reference the
 
 === "tours"
 
-    | Field | Type | Constraints | cascade_completeness | add_zone_ids | format_ctramp | format_daysim |
+    | Field | Type | Constraints | add_zone_ids | cascade_completeness | format_ctramp | format_daysim |
     | --- | --- | --- | --- | --- | --- | --- |
     | `tour_id` | int | ≥ 1, UNIQUE | ✓ | ✓ | ✓ |  |
     | `hh_id` | int | ≥ 1, FK → `households.hh_id` |  |  | ✓ |  |
     | `person_id` | int | ≥ 1, FK → `persons.person_id` |  |  |  |  |
-    | `day_id` | int | ≥ 1, FK → `days.day_id` | ✓ |  |  |  |
+    | `day_id` | int | ≥ 1, FK → `days.day_id` |  | ✓ |  |  |
     | `tour_num` | int | ≥ 1 |  |  |  |  |
     | `subtour_num` | int | ≥ 0 |  |  | ✓ |  |
     | `parent_tour_id` | int | ≥ 1, FK → `tours.tour_id` |  |  | ✓ |  |
@@ -181,15 +181,15 @@ Each tab shows the fields for one canonical table. Only steps that reference the
     | `dest_depart_time` | datetime or None |  |  |  |  |  |
     | `origin_linked_trip_id` | int | ≥ 1, FK → `linked_trips.linked_trip_id` |  |  |  | ✓ |
     | `dest_linked_trip_id` | int or None | ≥ 1, FK → `linked_trips.linked_trip_id` |  |  |  | ✓ |
-    | `o_lat` | float | ≥ -90, ≤ 90 |  | ✓ |  |  |
-    | `o_lon` | float | ≥ -180, ≤ 180 |  | ✓ |  |  |
-    | `d_lat` | float | ≥ -90, ≤ 90 |  | ✓ |  |  |
-    | `d_lon` | float | ≥ -180, ≤ 180 |  | ✓ |  |  |
+    | `o_lat` | float | ≥ -90, ≤ 90 | ✓ |  |  |  |
+    | `o_lon` | float | ≥ -180, ≤ 180 | ✓ |  |  |  |
+    | `d_lat` | float | ≥ -90, ≤ 90 | ✓ |  |  |  |
+    | `d_lon` | float | ≥ -180, ≤ 180 | ✓ |  |  |  |
     | `o_location_type` | LocationType |  |  |  |  |  |
     | `d_location_type` | LocationType |  |  |  |  |  |
     | `tour_mode` | ModeType |  |  |  | ✓ |  |
     | `outbound_mode` | ModeType or None |  |  |  |  |  |
     | `inbound_mode` | ModeType or None |  |  |  |  |  |
     | `num_travelers` | int | ≥ 1 |  |  |  |  |
-    | `complete` | bool or None |  | ✓ |  |  |  |
+    | `complete` | bool or None |  |  | ✓ |  |  |
     | `tour_weight` | float or None | ≥ 0 |  |  |  |  |

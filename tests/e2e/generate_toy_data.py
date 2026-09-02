@@ -36,6 +36,10 @@ COORDS = {
     "home_m": (37.7450, -122.4300),
     "home_n": (37.7780, -122.4350),
     "home_o": (37.7300, -122.4150),
+    # Well outside the single zone polygon and far past max_snap_distance, so
+    # the zone join leaves these null rather than snapping them to an edge.
+    "home_remote": (38.5800, -121.4900),
+    "work_remote": (38.5650, -121.4700),
     "work_1": (37.7900, -122.3960),
     "work_2": (37.7850, -122.4010),
     "work_3": (37.7600, -122.3890),
@@ -1022,6 +1026,59 @@ def _build_records():
         MT_CAR,
         (8, 0),
         (8, 30),
+        drv=1,
+    )
+
+    # HH 27 and 28 - out of region, which a usability profile naming a
+    # zone_coverage gates on. Both travel perfectly: their diaries are complete
+    # and their tours close at home, so geography is the only thing that can
+    # exclude them and a test that sees them excluded knows why.
+    #
+    # 27 lives outside the zone file altogether, so nothing about it can be
+    # addressed -- the household record itself has no home zone. That failure
+    # has to reach its tours and days, which is the case that would otherwise
+    # slip through: the cascade reduces upward, so a household-level fact
+    # reaches its descendants only because it is joined into their verdicts.
+    s.household(27, "home_remote", income=INC_100_200K)
+    s.person(2701, 27, 1, AGE_35_TO_44, FEMALE, EMP_FULLTIME, STU_NONSTUDENT, cf=CF_NEVER)
+    s.day(2701, 27, DAY_DATE_1, DOW_MONDAY, pnum=1, dnum=1).round_trip(
+        "home_remote",
+        "work_remote",
+        PC_HOME,
+        PC_WORK,
+        MT_CAR,
+        ((8, 0), (8, 30)),
+        ((17, 0), (17, 30)),
+        drv=1,
+    )
+
+    # 28 lives in region and commutes out of it on the second date only. The
+    # household stays addressable, so this isolates the tour-level gate: one day
+    # is dropped for where it went while the person keeps the other and stays
+    # usable. Without it, "unaddressable" and "unaddressable household" would
+    # always fail together and neither term would be shown to do any work.
+    s.household(28, "home_b", income=INC_100_200K)
+    s.person(
+        2801, 28, 1, AGE_35_TO_44, MALE, EMP_FULLTIME, STU_NONSTUDENT, wloc="work_1", cf=CF_NEVER
+    )
+    s.day(2801, 28, DAY_DATE_1, DOW_MONDAY, pnum=1, dnum=1).round_trip(
+        "home_b",
+        "work_1",
+        PC_HOME,
+        PC_WORK,
+        MT_CAR,
+        ((8, 0), (8, 30)),
+        ((17, 0), (17, 30)),
+        drv=1,
+    )
+    s.day(2801, 28, DAY_DATE_2, DOW_TUESDAY, pnum=1, dnum=2).round_trip(
+        "home_b",
+        "work_remote",
+        PC_HOME,
+        PC_WORK,
+        MT_CAR,
+        ((8, 0), (9, 30)),
+        ((17, 0), (18, 30)),
         drv=1,
     )
 
