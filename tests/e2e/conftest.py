@@ -299,7 +299,6 @@ def _step_blocks(data_dir: Path, output_dir: Path, enabled: frozenset) -> dict:
                 "age_adult": 4,
                 "gender_default_for_missing": "f",
                 "taz_field": "taz",
-                "drop_missing_taz": True,
             },
         },
         # validate_output mirrors the shipping bats_2023 config. The DaySim row

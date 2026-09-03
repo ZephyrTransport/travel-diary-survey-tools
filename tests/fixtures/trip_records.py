@@ -67,6 +67,7 @@ def create_unlinked_trip(
     egress_mode: AccessEgressMode | None = None,
     num_travelers: int = 1,
     change_mode: bool = False,
+    usable: bool = True,
     **overrides,
 ) -> dict:
     """Create an unlinked trip record (raw trip segment before linking).
@@ -111,6 +112,8 @@ def create_unlinked_trip(
         egress_mode: Egress mode enum for transit (optional)
         num_travelers: Number of travelers
         change_mode: Whether this is a change mode location (for linking)
+        usable: The usability verdict cascade_completeness stamps. Formatters
+            read it rather than deriving a criterion of their own.
         **overrides: Override any default values
 
     Returns:
@@ -187,6 +190,8 @@ def create_unlinked_trip(
         egress_mode=egress_mode.value if egress_mode else None,
     )
 
+    record["usable"] = usable
+
     return {**record, **overrides}
 
 
@@ -224,6 +229,7 @@ def create_linked_trip(
     linked_trip_weight: float = 1.0,
     access_mode: AccessEgressMode | None = None,
     egress_mode: AccessEgressMode | None = None,
+    usable: bool = True,
     **overrides,
 ) -> dict:
     """Create a complete canonical linked trip record.
@@ -262,6 +268,8 @@ def create_linked_trip(
         linked_trip_weight: Linked trip expansion factor
         access_mode: Transit access mode enum (for transit trips)
         egress_mode: Transit egress mode enum (for transit trips)
+        usable: The usability verdict cascade_completeness stamps. Formatters
+            read it rather than deriving a criterion of their own.
         **overrides: Override any default values
 
     Returns:
@@ -319,5 +327,7 @@ def create_linked_trip(
 
     # Add optional fields
     add_optional_fields_batch(record, day_id=day_id)
+
+    record["usable"] = usable
 
     return {**record, **overrides}

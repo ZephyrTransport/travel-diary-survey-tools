@@ -441,8 +441,6 @@ steps:
       # This is not optimal, but model requires a binary gender
       gender_default_for_missing: "f"
       taz_field: "TAZ1454"  # TAZ field to use for CTRAMP formatting
-      drop_missing_taz: true  # Drop households without valid TAZ
-      drop_invalid_tours: true  # Drop non-VALID or non-COMPLETE tours (parity with DaySim)
 
   # This prepares a new set of files formatted for DaySim
   - name: format_daysim
@@ -454,9 +452,6 @@ steps:
       # own, so a project can let them differ -- but while both say the same
       # thing, both outputs describe the same tours.
       usability_flag_col: daysim_usable
-      drop_partial_tours: true
-      drop_missing_taz: true
-      drop_invalid_tours: true
 
   - name: write_data
     validate_input: true

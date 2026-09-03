@@ -41,6 +41,7 @@ def create_household(
     residence_type: ResidenceType | None = ResidenceType.SFH,
     residence_rent_own: ResidenceRentOwn | None = ResidenceRentOwn.OWN,
     hh_weight: float = 1.0,
+    usable: bool = True,
     **overrides,
 ) -> dict:
     """Create a complete canonical household record.
@@ -65,6 +66,9 @@ def create_household(
         residence_rent_own: Residence rent/own status enum (default OWN, for
             Daysim)
         hh_weight: Household expansion factor
+        usable: The usability verdict cascade_completeness stamps. Formatters
+            read it rather than deriving a criterion of their own, so a fixture
+            standing in for canonical output has to carry it.
         **overrides: Override any default values
 
     Returns:
@@ -88,6 +92,7 @@ def create_household(
     record["home_walk_subzone"] = home_walk_subzone
     record["residence_type"] = residence_type.value if residence_type else None
     record["residence_rent_own"] = residence_rent_own.value if residence_rent_own else None
+    record["usable"] = usable
 
     return {**record, **overrides}
 
@@ -126,6 +131,7 @@ def create_person(
     is_proxy: bool | None = None,
     num_complete_days: int = 0,
     days: list[dict] | None = None,
+    usable: bool = True,
     **overrides,
 ) -> dict:
     """Create a complete canonical person record.
@@ -166,6 +172,8 @@ def create_person(
         is_proxy: Is proxy interview (optional, for Daysim)
         num_complete_days: Number of complete days (default 0, for Daysim)
         days: Day records to compute num_complete_days from (optional)
+        usable: The usability verdict cascade_completeness stamps. Formatters
+            read it rather than deriving a criterion of their own.
         **overrides: Override any default values
 
     Returns:
@@ -248,6 +256,10 @@ def create_person(
     # Complete days
     record["num_days_complete"] = num_complete_days
 
+    # The verdict cascade_completeness stamps; formatters read it rather than
+    # deriving a criterion of their own.
+    record["usable"] = usable
+
     # Apply overrides
     record = {**record, **overrides}
 
@@ -265,6 +277,7 @@ def create_day(
     complete: bool = True,
     num_trips: int = 0,
     day_weight: float = 1.0,
+    usable: bool = True,
     **overrides,
 ) -> dict:
     """Create a day record for multi-day scenarios.
@@ -284,6 +297,8 @@ def create_day(
         complete: Day complete (person at home at start/end)
         num_trips: Number of trips on this day
         day_weight: Day expansion factor (for DaySim)
+        usable: The usability verdict cascade_completeness stamps. Formatters
+            read it rather than deriving a criterion of their own.
         **overrides: Override any default values
 
     Returns:
@@ -304,5 +319,7 @@ def create_day(
         "num_trips": num_trips,
         "day_weight": day_weight,
     }
+
+    record["usable"] = usable
 
     return {**record, **overrides}

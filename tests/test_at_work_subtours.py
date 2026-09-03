@@ -37,11 +37,11 @@ from processing.completeness import (
     compute_usability,
 )
 from processing.formatting.ctramp.ctramp_config import CTRAMPConfig
-from processing.formatting.ctramp.filters import _drop_invalid_tours
 from processing.formatting.ctramp.format_households import format_households
 from processing.formatting.ctramp.format_tours import format_individual_tour
 from processing.formatting.daysim.format_days import format_days as format_days_daysim
 from processing.formatting.daysim.format_tours import format_tours as format_tours_daysim
+from processing.formatting.usable_records import keep_usable
 from processing.tours.extraction import extract_tours
 from tests.fixtures import (
     create_household,
@@ -309,29 +309,30 @@ class TestSubtourModelUsability:
 class TestSubtourReachesCtramp:
     """The CT-RAMP formatter keeps subtours and gives them their own identity."""
 
-    def test_drop_invalid_tours_keeps_the_subtour(self, extracted, subtour_and_parent):
-        """The CT-RAMP pre-format drop must not remove at-work subtours.
+    def test_the_gate_keeps_the_subtour(self, extracted, subtour_and_parent):
+        """The formatter's gate must not exclude at-work subtours.
 
-        Runs on genuinely extracted tours carrying the real gate, so this pins
-        the whole path: a subtour misclassified upstream fails the gate and is
-        discarded right here, which is the mechanism behind #85.
+        Runs on genuinely extracted tours carrying the real verdict, so this
+        pins the whole path: a subtour misclassified upstream fails the gate and
+        is discarded right here, which is the mechanism behind #85.
         """
         parent, subtour = subtour_and_parent
         usable = _gate(extracted[0]["tours"])
         tours = extracted[0]["tours"].with_columns(
             pl.col("tour_id").replace_strict(usable).alias("usable")
         )
-        linked_trips = extracted[0]["linked_trips"]
-        joint_trips = pl.DataFrame({"joint_trip_id": [], "hh_id": []})
-
-        kept, kept_trips, _ = _drop_invalid_tours(
-            tours, linked_trips, joint_trips, usability_flag_col="usable"
+        linked_trips = extracted[0]["linked_trips"].with_columns(
+            pl.col("tour_id").replace_strict(usable).alias("usable")
         )
 
-        assert sorted(kept["tour_id"].to_list()) == sorted(
+        kept = keep_usable({"tours": tours, "linked_trips": linked_trips}, "usable")
+
+        assert sorted(kept["tours"]["tour_id"].to_list()) == sorted(
             [parent["tour_id"], subtour["tour_id"]]
-        ), "the at-work subtour must survive the CT-RAMP drop"
-        assert len(kept_trips) == len(linked_trips), "the subtour's trips must survive with it"
+        ), "the at-work subtour must survive the gate"
+        assert len(kept["linked_trips"]) == len(linked_trips), (
+            "the subtour's trips must survive with it"
+        )
 
     def _formatted(self, config):
         """Run the real CT-RAMP tour formatter over a work tour + its subtour."""

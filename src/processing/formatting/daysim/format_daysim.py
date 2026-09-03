@@ -45,9 +45,8 @@ import logging
 
 import polars as pl
 
-from data_canon.codebook.tours import TourCategory
 from pipeline.decoration import step
-from processing.completeness import suggest_usability_columns
+from processing.formatting.usable_records import keep_usable
 
 from .format_days import format_days
 from .format_households import format_households
@@ -82,9 +81,6 @@ def format_daysim(
     tours: pl.DataFrame,
     days: pl.DataFrame,
     usability_flag_col: str,
-    drop_partial_tours: bool = True,
-    drop_missing_taz: bool = True,
-    drop_invalid_tours: bool = True,
 ) -> dict[str, pl.DataFrame]:
     """Format canonical survey data to DaySim model specification.
 
@@ -100,17 +96,10 @@ def format_daysim(
         linked_trips: Journey records with coordinates, mode, purpose, and timing.
         tours: Tour records with purpose, timing, and location fields.
         days: Person-day records for completeness calculation.
-        drop_partial_tours: If True, remove tours not marked as complete
-            (default: True). Tours without return home are excluded.
-        drop_missing_taz: If True, remove households without valid TAZ/MAZ IDs
-            (default: True). Required for model application.
-        usability_flag_col: Which usability profile decides the tour universe.
+        usability_flag_col: Which usability profile decides the record universe.
             Required: with several profiles stamped there is no defensible
             default, and naming a different one from the CT-RAMP formatter or
             the weighting means those outputs describe different universes.
-        drop_invalid_tours: If True, remove tours marked as invalid
-            (default: True). Filters out zero distance, negative duration, and
-            data quality flagged tours.
 
     Returns:
         Dictionary containing:
@@ -145,85 +134,26 @@ def format_daysim(
     """
     logger.info("Starting DaySim formatting")
 
-    # Drop invalid tours if specified
-    if drop_invalid_tours:
-        n_og_tours = len(tours)
-        n_og_trips = len(linked_trips)
-        # The gate stamped by cascade_completeness is the only criterion, so
-        # DaySim, CT-RAMP and the weighting agree on the tour universe by
-        # construction rather than by three places implementing one rule.
-        if usability_flag_col not in tours.columns:
-            msg = (
-                f"Tours carry no '{usability_flag_col}' column, so there is nothing "
-                f"to gate on. Declare it in cascade_completeness's "
-                f"usability_profiles, or set drop_invalid_tours: false to keep "
-                f"every tour. {suggest_usability_columns(tours)}"
-            )
-            raise ValueError(msg)
-
-        logger.info("DaySim tour universe gated on %s", usability_flag_col)
-        # A null means the cascade never reached this row -- a broken frame, not
-        # licence to guess a criterion of our own.
-        keep = pl.col(usability_flag_col).fill_null(value=False)
-        tours = tours.filter(keep)
-        linked_trips = linked_trips.filter(pl.col("tour_id").is_in(tours["tour_id"].implode()))
-
-        # NOTE: We keep all days even if their tours are invalid
-        # Days with invalid tours become "no travel" days in the model
-
-        logger.info(
-            "Dropped %d invalid tours with %d linked trips; "
-            "%d tours remain and %d linked trips remain",
-            n_og_tours - len(tours),
-            n_og_trips - len(linked_trips),
-            len(tours),
-            len(linked_trips),
-        )
-
-    # Drop partial/incomplete tours if specified
-    if drop_partial_tours:
-        n_og_tours = len(tours)
-        n_og_trips = len(linked_trips)
-        tours = tours.filter(pl.col("tour_category") == TourCategory.COMPLETE.value)
-        linked_trips = linked_trips.filter(pl.col("tour_id").is_in(tours["tour_id"].implode()))
-        # NOTE: We keep all days even if their tours are partial/incomplete
-        # Days with partial tours become "no travel" days in the model
-        logger.info(
-            "Dropped %d partial tours with %d linked trips; "
-            "%d tours remain and %d linked trips remain",
-            n_og_tours - len(tours),
-            n_og_trips - len(linked_trips),
-            len(tours),
-            len(linked_trips),
-        )
-
-    # Drop any households that do not have a MAZ/TAZ assigned
-    if drop_missing_taz:
-        n_og_households = len(households)
-        n_og_persons = len(persons)
-        n_og_linked_trips = len(linked_trips)
-        n_og_tours = len(tours)
-
-        households = households.filter(
-            households["home_taz"].is_not_null() & (households["home_taz"] != -1)
-        )
-        persons = persons.filter(pl.col("hh_id").is_in(households["hh_id"].implode()))
-        days = days.filter(pl.col("hh_id").is_in(households["hh_id"].implode()))
-        linked_trips = linked_trips.filter(pl.col("hh_id").is_in(households["hh_id"].implode()))
-        tours = tours.filter(pl.col("hh_id").is_in(households["hh_id"].implode()))
-        logger.info(
-            "Dropped %d households without TAZ/MAZ with "
-            "%d persons, %d linked trips, and %d tours; "
-            "%d households, %d persons, %d linked trips, and %d tours remain",
-            n_og_households - len(households),
-            n_og_persons - len(persons),
-            n_og_linked_trips - len(linked_trips),
-            n_og_tours - len(tours),
-            len(households),
-            len(persons),
-            len(linked_trips),
-            len(tours),
-        )
+    # One gate, read from the profile the config names. DaySim selects nothing
+    # of its own: the same verdict decides the CT-RAMP output and the weighting,
+    # so the three describe one universe rather than three implementations of it.
+    gated = keep_usable(
+        {
+            "households": households,
+            "persons": persons,
+            "days": days,
+            "tours": tours,
+            "linked_trips": linked_trips,
+            "unlinked_trips": unlinked_trips,
+        },
+        usability_flag_col,
+    )
+    households = gated["households"]
+    persons = gated["persons"]
+    days = gated["days"]
+    tours = gated["tours"]
+    linked_trips = gated["linked_trips"]
+    unlinked_trips = gated["unlinked_trips"]
 
     # Format each table
 

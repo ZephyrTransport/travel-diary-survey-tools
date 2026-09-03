@@ -104,7 +104,7 @@ def _python_type_to_polars(python_type) -> type:
     return pl.String
 
 
-def empty_linked_trips() -> pl.DataFrame:
+def empty_linked_trips(usability_flag_col: str = "usable") -> pl.DataFrame:
     """Create empty linked_trips DataFrame with complete schema.
 
     Returns properly typed empty DataFrame that passes @step validation checks
@@ -113,7 +113,9 @@ def empty_linked_trips() -> pl.DataFrame:
     Returns:
         Empty DataFrame with LinkedTripModel schema
     """
-    return pl.DataFrame(schema=model_to_polars_schema(LinkedTripModel))
+    schema = model_to_polars_schema(LinkedTripModel)
+    schema[usability_flag_col] = pl.Boolean
+    return pl.DataFrame(schema=schema)
 
 
 def empty_tours(usability_flag_col: str = "usable") -> pl.DataFrame:
@@ -139,34 +141,42 @@ def empty_tours(usability_flag_col: str = "usable") -> pl.DataFrame:
     return pl.DataFrame(schema=schema)
 
 
-def empty_unlinked_trips() -> pl.DataFrame:
+def empty_unlinked_trips(usability_flag_col: str = "usable") -> pl.DataFrame:
     """Create empty unlinked_trips DataFrame with complete schema.
 
     Returns:
         Empty DataFrame with UnlinkedTripModel schema
     """
-    return pl.DataFrame(schema=model_to_polars_schema(UnlinkedTripModel))
+    schema = model_to_polars_schema(UnlinkedTripModel)
+    schema[usability_flag_col] = pl.Boolean
+    return pl.DataFrame(schema=schema)
 
 
-def empty_joint_tours() -> pl.DataFrame:
+def empty_joint_tours(usability_flag_col: str = "usable") -> pl.DataFrame:
     """Create empty joint_tours DataFrame with complete schema.
 
     Returns:
         Empty DataFrame with JointTourModel schema
     """
-    return pl.DataFrame(schema=model_to_polars_schema(JointTourModel))
+    schema = model_to_polars_schema(JointTourModel)
+    schema[usability_flag_col] = pl.Boolean
+    return pl.DataFrame(schema=schema)
 
 
-def empty_days() -> pl.DataFrame:
+def empty_days(usability_flag_col: str = "usable") -> pl.DataFrame:
     """Create empty person-days DataFrame with complete schema.
 
     Returns:
         Empty DataFrame with PersonDayModel schema
     """
-    return pl.DataFrame(schema=model_to_polars_schema(PersonDayModel))
+    schema = model_to_polars_schema(PersonDayModel)
+    schema[usability_flag_col] = pl.Boolean
+    return pl.DataFrame(schema=schema)
 
 
-def days_for_persons(persons: pl.DataFrame, day_num: int = 1) -> pl.DataFrame:
+def days_for_persons(
+    persons: pl.DataFrame, day_num: int = 1, usability_flag_col: str = "usable"
+) -> pl.DataFrame:
     """Build a single-day person-day table covering every person given.
 
     ``format_ctramp`` expands households and persons to person-day rows with an
@@ -182,23 +192,32 @@ def days_for_persons(persons: pl.DataFrame, day_num: int = 1) -> pl.DataFrame:
     Args:
         persons: Canonical persons DataFrame with person_id and hh_id
         day_num: Day number within the survey period
+        usability_flag_col: Name of the usability column to stamp. Every day
+            reaching a formatter has been through cascade_completeness, so the
+            fixtures carry the verdict the formatters read.
 
     Returns:
         One row per person, or an empty day frame if there are no persons
     """
     if persons.is_empty():
         return empty_days()
-    return persons.select(
-        (pl.col("person_id") * 100 + day_num).cast(pl.Int64).alias("day_id"),
-        pl.col("person_id"),
-        pl.col("hh_id"),
-    ).unique()
+    return (
+        persons.select(
+            (pl.col("person_id") * 100 + day_num).cast(pl.Int64).alias("day_id"),
+            pl.col("person_id"),
+            pl.col("hh_id"),
+        )
+        .unique()
+        .with_columns(pl.lit(value=True).alias(usability_flag_col))
+    )
 
 
-def empty_joint_trips() -> pl.DataFrame:
+def empty_joint_trips(usability_flag_col: str = "usable") -> pl.DataFrame:
     """Create empty joint_trips DataFrame with complete schema.
 
     Returns:
         Empty DataFrame with JointTripModel schema
     """
-    return pl.DataFrame(schema=model_to_polars_schema(JointTripModel))
+    schema = model_to_polars_schema(JointTripModel)
+    schema[usability_flag_col] = pl.Boolean
+    return pl.DataFrame(schema=schema)

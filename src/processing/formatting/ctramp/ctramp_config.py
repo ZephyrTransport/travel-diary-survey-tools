@@ -10,8 +10,6 @@ class CTRAMPConfig(BaseModel):
         income_low_threshold: Income threshold for low income bracket
         income_med_threshold: Income threshold for medium income bracket
         income_high_threshold: Income threshold for high income bracket
-        drop_missing_taz: If True, remove households without valid TAZ IDs
-        drop_invalid_tours: If True, remove tours flagged as invalid
         age_adult: Age threshold for adult vs child in joint tour composition
         income_survey_year_to_ctramp_year: Factor converting survey-year dollars
             to CT-RAMP-year dollars
@@ -52,36 +50,12 @@ class CTRAMPConfig(BaseModel):
         description="The field name in the household data that contains the TAZ ID for CTRAMP formatting.",  # noqa: E501
     )
 
-    drop_missing_taz: bool = Field(
-        default=True,
-        description="If True, remove households without valid TAZ IDs",
-    )
-
-    filter_zero_weight: bool = Field(
-        default=True,
-        description=(
-            "If True, remove households with null or zero hh_weight before "
-            "formatting, cascading to persons, tours, and trips."
-        ),
-    )
-
     usability_flag_col: str = Field(
         description=(
             "Which usability profile stamped by cascade_completeness decides the "
-            "tour universe. Required, and must name a profile that run stamped: "
+            "record universe. Required, and must name a profile that run stamped: "
             "a looser profile admits more, at the cost of no longer matching "
             "whichever profile the weighting and the other formatters were given."
-        ),
-    )
-
-    drop_invalid_tours: bool = Field(
-        default=True,
-        description=(
-            "If True, remove tours that are not VALID (single-trip, loop, "
-            "partial, change-mode, spatially gapped) or not COMPLETE (do not "
-            "start and end at home). Mirrors the DaySim formatter, which drops "
-            "both, so both outputs keep the same tours. Cascades to linked and "
-            "joint trips."
         ),
     )
 

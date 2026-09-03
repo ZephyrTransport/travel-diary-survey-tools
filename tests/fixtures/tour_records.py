@@ -93,6 +93,8 @@ def create_tour(
         joint_tour_id: Joint tour ID (None for individual tours)
         parent_tour_id: Parent tour (None for primary tours)
         subtour_num: Subtour number (0 for primary tours)
+        usable: The usability verdict cascade_completeness stamps. Formatters
+            read it rather than deriving a criterion of their own.
         **overrides: Override any default values
 
         usable: Value for the usability gate the formatters read.
@@ -169,6 +171,8 @@ def create_tour(
 
     # Add optional MAZ fields
     add_optional_fields_batch(record, o_maz=o_maz, d_maz=d_maz)
+
+    record["usable"] = usable
 
     return {**record, **overrides}
 
