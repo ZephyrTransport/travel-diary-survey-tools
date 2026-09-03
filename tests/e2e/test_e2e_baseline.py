@@ -14,6 +14,9 @@ See [`baseline`][tests.e2e.baseline] for what is stored: hashes and aggregates,
 never record-level values.
 """
 
+from pathlib import Path
+
+import polars as pl
 import pytest
 
 from . import baseline
@@ -22,14 +25,31 @@ PROFILE = "full"
 
 
 @pytest.fixture(scope="module")
-def current(full_result) -> dict:
-    """Fingerprint of this run's canonical tables."""
+def current(full_result, full_output_dir) -> dict:
+    """Fingerprint of this run's canonical tables and its formatted output.
+
+    The formatted tables are read back from disk rather than taken from the
+    pipeline result, which carries only canonical tables. They are the deliverable
+    -- what a model actually consumes -- and they were the one thing this baseline
+    never looked at, so a formatter could change every number it writes without
+    failing anything here.
+    """
     tables = (
         full_result.as_dict_non_null()
         if hasattr(full_result, "as_dict_non_null")
         else dict(full_result)
     )
+    tables.update(_written_formatter_tables(full_output_dir))
     return baseline.fingerprint(tables)
+
+
+def _written_formatter_tables(output_dir) -> dict[str, pl.DataFrame]:
+    """Read the CT-RAMP and DaySim csvs the run wrote, keyed by table name."""
+    written = {}
+    for subdir in ("ctramp", "daysim"):
+        for path in sorted(Path(output_dir).glob(f"{subdir}/*.csv")):
+            written[path.stem] = pl.read_csv(path)
+    return written
 
 
 class TestOutputIsUnchanged:

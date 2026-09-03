@@ -33,8 +33,13 @@ fail if a scenario is removed and a bucket disappears.
 
 ## Bit-exact output baseline
 
-`test_e2e_baseline.py` fingerprints every canonical table on the `full` profile and
-compares it to `baselines/full.json`. **Any** change in any column fails, including a
+`test_e2e_baseline.py` fingerprints every canonical table **and every formatted CT-RAMP
+and DaySim table** on the `full` profile, comparing them to `baselines/full.json`. The
+formatted tables are read back from disk, because they are the deliverable and were the
+one thing this baseline never looked at: a formatter could change every number it wrote
+without failing anything here. They are also validated against their models now, since
+`write_data` only checks what it is asked to write and the e2e was not asking for them --
+three regressions reached production through that gap. **Any** change in any column fails, including a
 correct one — that is the point. The suite otherwise answers "does it run" and "does
 behaviour X hold", neither of which notices that a number moved; a batch of PRs altered
 production output while the suite stayed green, and only a hand-run against real data
@@ -119,6 +124,11 @@ Feature-specific behaviours (imputation stash, edge-case coverage below) are ass
 | 23 | 3-person joint with a child | 3-person clique, composition ADULTS_AND_CHILDREN |
 | 24 | Two children to school together | composition CHILDREN_ONLY |
 | 25 | Same trip 6h apart | joint negative control (temporal non-overlap → NOT joint) |
+| 26 | Two members, both dates, one open tour | persons→days weight split with a day gated out |
+| 27 | Lives outside the zone file | `zone_coverage` gates the household and all its travel |
+| 28 | Commutes out of region on one date | `zone_coverage` gates a day without losing the person |
+| 29 | Members usable on **different** dates | household unusable while both persons pass — the level disagreement `all_members` makes possible |
+| 30 | Travel out together, one never returns | joint trip group down to one usable member |
 
 ## Classification buckets covered (verified in outputs)
 
@@ -129,6 +139,20 @@ Feature-specific behaviours (imputation stash, edge-case coverage below) are ass
 - **tour_category**: COMPLETE, PARTIAL_END, PARTIAL_START, PARTIAL_BOTH (all 4).
 - **joint tour_composition**: ADULTS_ONLY, CHILDREN_ONLY, ADULTS_AND_CHILDREN (all 3).
 - **modes**: walk, bike, bikeshare, taxi, TNC, car, school-bus, transit.
+
+## Known gaps in the reconciliation cases
+
+Two of the four states that broke production are still unreachable from the fixture:
+
+* **A joint tour demoted below quorum.** Needs two members whose tours the clique
+  detection groups yet whose verdicts differ. Detection matches on shape, so tours alike
+  enough to be grouped are alike enough to share a verdict, and `all_members` takes both
+  members out on any completeness difference. Household 30 gets the trip-level version;
+  the tour-level one resisted construction. Covered by unit tests in
+  `test_ctramp_joint_quorum.py` instead.
+* **A tour with addressable endpoints and an unaddressable middle leg.** Needs control
+  over which stop becomes the primary destination. Covered by
+  `test_zone_coverage_cascade.py`.
 
 ## Intentionally NOT covered (documented gaps)
 

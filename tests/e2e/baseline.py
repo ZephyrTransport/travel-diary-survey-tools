@@ -46,6 +46,21 @@ PRIMARY_KEYS = {
     "joint_tours": ("joint_tour_id",),
     "habitual_locations": ("habitual_location_id",),
     "habitual_location_days": ("habitual_location_id", "day_id"),
+    # Formatted output. These models declare no unique field, so the keys are the
+    # ones the formats themselves use to identify a record -- CT-RAMP scopes ids
+    # to the person-day, DaySim numbers everything from the household down.
+    "households_ctramp": ("hh_id",),
+    "persons_ctramp": ("hh_id", "person_id"),
+    "mandatory_locations_ctramp": ("HHID", "PersonID"),
+    "individual_tours_ctramp": ("hh_id", "person_id", "tour_id", "tour_purpose"),
+    "individual_trips_ctramp": ("hh_id", "person_id", "tour_id", "stop_id", "inbound"),
+    "joint_tours_ctramp": ("hh_id", "tour_id"),
+    "joint_trips_ctramp": ("hh_id", "tour_id", "stop_id", "inbound"),
+    "households_daysim": ("hhno",),
+    "persons_daysim": ("hhno", "pno"),
+    "days_daysim": ("hhno", "pno", "day"),
+    "linked_trips_daysim": ("hhno", "pno", "day", "tour", "half", "tseg"),
+    "tours_daysim": ("hhno", "pno", "day", "tour"),
 }
 
 # A histogram is only kept for columns that classify rather than identify, so a

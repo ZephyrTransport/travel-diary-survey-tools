@@ -80,6 +80,25 @@ _MANDATORY = {
     "add_zone_ids",
     "write_data",
 }
+# The formatted tables each formatter produces. Named once so the write paths,
+# the model registration and the baseline cannot drift apart.
+_CTRAMP_TABLES = (
+    "households_ctramp",
+    "persons_ctramp",
+    "mandatory_locations_ctramp",
+    "individual_tours_ctramp",
+    "individual_trips_ctramp",
+    "joint_tours_ctramp",
+    "joint_trips_ctramp",
+)
+_DAYSIM_TABLES = (
+    "households_daysim",
+    "persons_daysim",
+    "days_daysim",
+    "linked_trips_daysim",
+    "tours_daysim",
+)
+
 _STEP_ORDER = (
     "load_data",
     "link_trips",
@@ -158,6 +177,18 @@ def _step_blocks(data_dir: Path, output_dir: Path, enabled: frozenset) -> dict:
     }
     if "detect_joint_trips" in enabled:
         output_paths["joint_trips"] = f"{out}/survey/joint_trips.csv"
+
+    # The formatter tables are written so that write_data validates them against
+    # their CT-RAMP and DaySim models. Registering the models is not enough --
+    # write_data only checks what it is asked to write, so leaving these out ran
+    # the formatters and discarded their output unexamined. Three regressions
+    # reached production that way, each a violation of one of these models.
+    if "format_ctramp" in enabled:
+        for table in _CTRAMP_TABLES:
+            output_paths[table] = f"{out}/ctramp/{table}.csv"
+    if "format_daysim" in enabled:
+        for table in _DAYSIM_TABLES:
+            output_paths[table] = f"{out}/daysim/{table}.csv"
 
     return {
         "load_data": {
