@@ -9,7 +9,7 @@ import polars as pl
 
 from data_canon.codebook.households import IncomeBroad
 from data_canon.codebook.persons import Employment, Ethnicity, Gender, Race, Student
-from data_canon.codebook.trips import ModeType, Purpose, PurposeCategory
+from data_canon.codebook.trips import ModeType, Purpose, PurposeCategory, TNCType
 from data_canon.models.survey import HouseholdModel, PersonDayModel, PersonModel, UnlinkedTripModel
 from pipeline.decoration import step
 from pipeline.step_registry import get_all_required_fields
@@ -660,6 +660,20 @@ def clean_trips(unlinked_trips: pl.DataFrame) -> pl.DataFrame:
         mode_type=pl.col("mode_type_imputed").replace_strict(
             mode_type_map, default=pl.col("mode_type_imputed")
         ),
+    )
+
+    # 2019 records that a trip was a TNC but never asked which service, so the
+    # column 2023 carries has no counterpart here. Stating that as UNKNOWN on the
+    # TNC trips -- rather than leaving the column out, or nulling it everywhere --
+    # keeps null meaning what consumers already read it as: no TNC segment. A
+    # missing column instead fails validation, since the field is nullable but
+    # required to be present.
+    unlinked_trips = unlinked_trips.with_columns(
+        pl.when(pl.col("mode_type") == ModeType.TNC.value)
+        .then(pl.lit(TNCType.UNKNOWN.value))
+        .otherwise(None)
+        .cast(pl.Int64)
+        .alias("tnc_type")
     )
 
     # Num_travelers: replace <0 with None
