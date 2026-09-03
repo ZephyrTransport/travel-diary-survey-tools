@@ -169,7 +169,7 @@ Each tab shows the fields for one canonical table. Only steps that reference the
     | `tour_num` | int | ≥ 1 |  |  |  |  |
     | `subtour_num` | int | ≥ 0 |  |  | ✓ |  |
     | `parent_tour_id` | int | ≥ 1, FK → `tours.tour_id` |  |  | ✓ |  |
-    | `joint_tour_id` | int or None | ≥ 1 |  |  | ✓ |  |
+    | `joint_tour_id` | int or None | ≥ 1, FK → `joint_tours.joint_tour_id` |  |  | ✓ |  |
     | `tour_purpose` | PurposeCategory or None |  |  |  | ✓ |  |
     | `tour_type` | TourType |  |  |  |  |  |
     | `tour_category` | TourCategory |  |  |  | ✓ |  |

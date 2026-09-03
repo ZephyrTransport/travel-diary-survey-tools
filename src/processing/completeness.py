@@ -504,14 +504,55 @@ def _home_zone_ok(
     )
 
 
+def _trips_addressable_per_tour(
+    tables: dict[str, pl.DataFrame | None],
+    cols: UsabilityProfile,
+) -> pl.DataFrame | None:
+    """Per tour, whether every one of its trips can be addressed, or None.
+
+    A tour's own ``o``/``d`` are its anchor and its primary destination, so they
+    say nothing about the legs between: a tour can start and end in the model
+    area while one intermediate stop falls outside it. CT-RAMP needs a zone for
+    every trip it writes, so one unaddressable leg makes the whole tour
+    unusable -- the same shape as ``complete``, which is an ALL over the tour's
+    trips rather than a property of its endpoints.
+
+    Returns None when the profile asks nothing of geography, or when the trips
+    are absent or carry no zone columns. That last case is a judgement this
+    cannot make rather than one it should guess: a caller supplying tours without
+    their trips is not asserting that every leg is addressable.
+    """
+    if not cols.requires_zones:
+        return None
+
+    trips = tables.get("linked_trips")
+    if trips is None or "tour_id" not in trips.columns:
+        return None
+
+    wanted = [f"{prefix}_{cols.zone_coverage}" for prefix in _ZONE_PREFIXES["linked_trips"]]
+    if any(column not in trips.columns for column in wanted):
+        return None
+
+    addressable = pl.lit(value=True)
+    for column in wanted:
+        addressable = addressable & _zone_valid(column)
+
+    return (
+        trips.select("tour_id", addressable.alias("_trip_addressable"))
+        .group_by("tour_id")
+        .agg(pl.all("_trip_addressable"))
+    )
+
+
 def _flag_tours(
     tables: dict[str, pl.DataFrame | None],
     cols: UsabilityProfile,
 ) -> None:
     """Stamp the usable flag on tours, in place.
 
-    A tour is usable when its structure is admissible *and* it sits on a coherent
-    household-date, so it agrees with its own day. Without the coherence term
+    A tour is usable when its structure is admissible, it sits on a coherent
+    household-date, and -- where the profile names a geography -- every one of its
+    trips can be addressed in it, not merely its own endpoints. Without the coherence term
     CT-RAMP (which reads the tour's flag) would keep a tour the weighting has
     zeroed. ``hh_day_complete`` is available because the reverse cascade runs
     before this.
@@ -530,6 +571,16 @@ def _flag_tours(
         has_category="tour_category" in tours.columns,
         closes_at=cols.tour_closes_at,
     ) & _zone_expr(tours, "tours", cols)
+
+    # ...and every leg of it, not only its anchor and primary destination. See
+    # _trips_addressable_per_tour for why the endpoints are not enough.
+    per_tour = _trips_addressable_per_tour(tables, cols)
+    if per_tour is not None and "tour_id" in tours.columns:
+        tours = tours.join(per_tour, on="tour_id", how="left")
+        # A tour with no trips has nothing unaddressable on it.
+        usable = usable & pl.col("_trip_addressable").fill_null(value=True)
+    else:
+        per_tour = None
 
     # The household's own home has to be addressable too, or the tour belongs to
     # a household the consumer cannot write. See _home_zone_ok on why this is
@@ -564,6 +615,8 @@ def _flag_tours(
 
     if home is not None:
         flagged = flagged.drop("_home_zone_ok")
+    if per_tour is not None:
+        flagged = flagged.drop("_trip_addressable")
     tables["tours"] = _flag_subtours_from_parent(flagged, cols)
 
 

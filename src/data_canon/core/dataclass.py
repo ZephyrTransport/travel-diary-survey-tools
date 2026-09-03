@@ -29,6 +29,21 @@ from .exceptions import DataValidationError
 logger = logging.getLogger(__name__)
 
 
+CANONICAL_MODELS: dict[str, type[BaseModel]] = {
+    "households": survey_models.HouseholdModel,
+    "persons": survey_models.PersonModel,
+    "days": survey_models.PersonDayModel,
+    "unlinked_trips": survey_models.UnlinkedTripModel,
+    "linked_trips": survey_models.LinkedTripModel,
+    "tours": survey_models.TourModel,
+    "joint_trips": survey_models.JointTripModel,
+    "joint_tours": survey_models.JointTourModel,
+    "habitual_locations": survey_models.HabitualLocationModel,
+    "habitual_location_days": survey_models.HabitualLocationDayModel,
+    "household_weights": weighting_models.HouseholdWeightingModel,
+}
+
+
 @dataclass
 class CanonicalData:
     """Canonical data structure for travel survey data with validation.
@@ -48,22 +63,10 @@ class CanonicalData:
     habitual_location_days: pl.DataFrame | None = None
     household_weights: pl.DataFrame | None = None
 
-    # Model mapping for validation
-    models: dict[str, type[BaseModel]] = field(
-        default_factory=lambda: {
-            "households": survey_models.HouseholdModel,
-            "persons": survey_models.PersonModel,
-            "days": survey_models.PersonDayModel,
-            "unlinked_trips": survey_models.UnlinkedTripModel,
-            "linked_trips": survey_models.LinkedTripModel,
-            "tours": survey_models.TourModel,
-            "joint_trips": survey_models.JointTripModel,
-            "joint_tours": survey_models.JointTourModel,
-            "habitual_locations": survey_models.HabitualLocationModel,
-            "habitual_location_days": survey_models.HabitualLocationDayModel,
-            "household_weights": weighting_models.HouseholdWeightingModel,
-        }
-    )
+    # Model mapping for validation. Named at module scope as well, because the
+    # declared relationships between these models are read outside validation --
+    # a consumer removing records has to respect the same foreign keys.
+    models: dict[str, type[BaseModel]] = field(default_factory=lambda: dict(CANONICAL_MODELS))
 
     # Columns a step generated whose names come from configuration rather than
     # a model field: zone ids, pre-imputation stashes, usability profiles.

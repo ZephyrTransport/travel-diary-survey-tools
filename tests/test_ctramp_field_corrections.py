@@ -28,6 +28,7 @@ from data_canon.codebook.persons import (
 )
 from data_canon.codebook.tours import TourDirection
 from data_canon.codebook.trips import PurposeCategory
+from data_canon.models.survey import JointTourModel
 from processing.formatting.ctramp.ctramp_config import CTRAMPConfig
 from processing.formatting.ctramp.format_ctramp import format_ctramp
 from processing.formatting.ctramp.format_households import format_households
@@ -51,6 +52,7 @@ from tests.fixtures import (
     empty_unlinked_trips,
     get_tour_schema,
 )
+from tests.fixtures.schema_utils import model_to_polars_schema
 
 
 def get_required_non_null_fields(model):
@@ -84,6 +86,30 @@ def standard_config():
         income_high_threshold=100000,  # $100k ($2000, MTC)
         income_survey_year_to_ctramp_year=0.5319148936,
         age_adult=4,  # AGE_18_TO_24 = category 4 (18+ are adults)
+    )
+
+
+def joint_tours_for(tours: pl.DataFrame) -> pl.DataFrame:
+    """A joint_tours row per joint_tour_id the given tours name.
+
+    hh_id and day_id come from the member tours rather than being invented, since
+    joint_tours carries required references to households and days -- inventing
+    them makes the joint tour itself dangle and get dropped.
+    """
+    schema = model_to_polars_schema(JointTourModel)
+    schema["usable"] = pl.Boolean
+    members = tours.filter(pl.col("joint_tour_id").is_not_null())
+    if members.is_empty():
+        return pl.DataFrame(schema=schema)
+    return (
+        members.group_by("joint_tour_id")
+        .agg(
+            pl.col("hh_id").first(),
+            pl.col("day_id").first(),
+            pl.len().cast(pl.Int64).alias("num_participants"),
+        )
+        .with_columns(pl.lit(value=True).alias("usable"))
+        .sort("joint_tour_id")
     )
 
 
@@ -246,7 +272,7 @@ class TestHouseholdFieldCorrections:
             tours=tours,
             joint_trips=empty_joint_trips(),
             unlinked_trips=empty_unlinked_trips(),
-            joint_tours=empty_joint_tours(),
+            joint_tours=joint_tours_for(tours),
             days=days_for_persons(persons),
             income_low_threshold=standard_config.income_low_threshold,
             income_med_threshold=standard_config.income_med_threshold,

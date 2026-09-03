@@ -6,6 +6,8 @@ bidirectional relationships (required children).
 
 import logging
 from collections.abc import Callable
+from types import NoneType
+from typing import get_args
 
 import polars as pl
 from pydantic import BaseModel
@@ -96,6 +98,41 @@ def get_required_children_fields(
             required_children[field_name] = (parent_table, parent_column, when_col)
 
     return required_children
+
+
+def foreign_key_edges(
+    models: dict[str, type[BaseModel]],
+) -> tuple[tuple[str, str, str, str, bool], ...]:
+    """Every declared reference, with whether losing its target is survivable.
+
+    Returns ``(child_table, child_column, parent_table, parent_column, optional)``
+    per declared foreign key. ``optional`` comes from the field's own
+    nullability, which already carries the distinction a cascade needs: a
+    required reference means the child cannot exist without its parent, while an
+    optional one means the child stands on its own and the reference is merely
+    void.
+
+    So ``persons.hh_id`` is required -- a person with no household is not a
+    record anyone can use -- while ``linked_trips.joint_trip_id`` is optional,
+    because a trip that stops being joint is still a trip.
+
+    Deriving the list rather than writing it down is the point. There are more
+    than twenty of these, they are denormalised across the trip tables, and any
+    hand-maintained subset silently omits the one that matters next.
+
+    Args:
+        models: Table name to model, as ``CanonicalData.models`` holds them.
+
+    Returns:
+        One tuple per declared foreign key, in table then field order.
+    """
+    edges = []
+    for table, model in models.items():
+        for column, (parent_table, parent_column) in get_foreign_key_fields(model).items():
+            field_info = model.model_fields[column]
+            optional = NoneType in get_args(field_info.annotation)
+            edges.append((table, column, parent_table, parent_column, optional))
+    return tuple(edges)
 
 
 def validate_fk_references(

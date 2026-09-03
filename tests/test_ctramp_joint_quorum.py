@@ -61,10 +61,17 @@ class TestAJointTripIsItsOwnGrouping:
     """The case a rule keyed on the tour structurally cannot see."""
 
     def test_a_survivor_of_a_rejected_trip_group_is_demoted(self):
-        """Its joint_tour_id is null, so only a trip-level rule reaches it."""
+        """Its joint_tour_id is null, so only a trip-level rule reaches it.
+
+        The second member leaves because its *tour* is unusable, which is the
+        only way a member can depart. A tour's ``complete`` is the ALL over its
+        member trips, so an incomplete trip makes its own tour incomplete and
+        therefore unusable -- a usable tour never holds an unusable trip. On
+        BATS 2023 that holds for all 324,965 linked trips, zero exceptions.
+        """
         kept = keep_usable(
             {
-                "tours": _tours([(1, None, True), (2, None, True)]),
+                "tours": _tours([(1, None, True), (2, None, False)]),
                 "linked_trips": _linked_trips([(1, 1, 900, True), (2, 2, 900, False)]),
                 "joint_trips": _groups("joint_trip_id", [(900, False)]),
             },
@@ -80,7 +87,7 @@ class TestAJointTripIsItsOwnGrouping:
         """Demotion, not deletion: the trip happened, it was just not joint."""
         kept = keep_usable(
             {
-                "tours": _tours([(1, None, True), (2, None, True)]),
+                "tours": _tours([(1, None, True), (2, None, False)]),
                 "linked_trips": _linked_trips([(1, 1, 900, True), (2, 2, 900, False)]),
                 "joint_trips": _groups("joint_trip_id", [(900, False)]),
             },
@@ -105,6 +112,118 @@ class TestTheTourGroupingIsSeparate:
 
         assert kept["joint_tours"].height == 0
         assert kept["tours"]["joint_tour_id"].to_list() == [None]
+
+
+class TestNoRecordOutlivesItsParent:
+    """The cascade's verdicts do not imply one another downward.
+
+    A household is usable only on a date where *every* member was; a person needs
+    just one usable day of their own. So a person can pass while their household
+    does not. Keeping that person hands CT-RAMP a record with no household to
+    read a home zone from, which arrives as a null HomeTAZ -- 1,512 rows of it on
+    BATS 2023.
+    """
+
+    def test_a_person_does_not_outlive_their_household(self):
+        """The shape that reached CT-RAMP as a null HomeTAZ."""
+        kept = keep_usable(
+            {
+                "households": pl.DataFrame({"hh_id": [1, 2], FLAG: [True, False]}),
+                "persons": pl.DataFrame(
+                    {"person_id": [10, 20], "hh_id": [1, 2], FLAG: [True, True]}
+                ),
+            },
+            FLAG,
+        )
+
+        assert kept["persons"]["person_id"].to_list() == [10], (
+            "a usable person in an unusable household has no home to report"
+        )
+
+    def test_removal_propagates_down_the_hierarchy(self):
+        """Dropping a household drops its persons, and their days with them."""
+        kept = keep_usable(
+            {
+                "households": pl.DataFrame({"hh_id": [1, 2], FLAG: [True, False]}),
+                "persons": pl.DataFrame(
+                    {"person_id": [10, 20], "hh_id": [1, 2], FLAG: [True, True]}
+                ),
+                "days": pl.DataFrame(
+                    {
+                        "day_id": [100, 200],
+                        "person_id": [10, 20],
+                        "hh_id": [1, 2],
+                        FLAG: [True, True],
+                    }
+                ),
+            },
+            FLAG,
+        )
+
+        assert kept["days"]["day_id"].to_list() == [100]
+
+
+class TestTheIdIsClearedEverywhereItIsCarried:
+    """The ids are denormalised, and clearing only some of them is worse than none.
+
+    ``joint_tour_id`` sits on tours, linked_trips and unlinked_trips. Clear it on
+    tours alone and a trip is left claiming a joint tour while carrying no joint
+    trip -- exactly what ``_validate_joint_tours_are_wholly_joint`` refuses,
+    because such a leg reaches neither output file: the individual trip file
+    excludes joint tours, and the joint trip file needs a ``joint_trip_id``.
+
+    On BATS 2023 that omission stranded 64 trips across 24 joint tours.
+    """
+
+    def test_a_demoted_tour_clears_the_id_on_its_trips_too(self):
+        """The exact shape that failed on real data."""
+        kept = keep_usable(
+            {
+                "tours": _tours([(1, 500, True), (2, 500, False)]),
+                "linked_trips": pl.DataFrame(
+                    {
+                        "linked_trip_id": [10, 20],
+                        "tour_id": [1, 2],
+                        "joint_tour_id": [500, 500],
+                        "joint_trip_id": [900, 900],
+                        FLAG: [True, False],
+                    },
+                    schema_overrides={"joint_tour_id": pl.Int64, "joint_trip_id": pl.Int64},
+                ),
+                "joint_tours": _groups("joint_tour_id", [(500, False)]),
+                "joint_trips": _groups("joint_trip_id", [(900, False)]),
+            },
+            FLAG,
+        )
+
+        trips = kept["linked_trips"]
+        assert trips["joint_tour_id"].to_list() == [None], (
+            "a trip still naming a demoted joint tour reaches neither output file"
+        )
+        assert trips["joint_trip_id"].to_list() == [None], (
+            "a tour that is no longer joint cannot keep joint trips on it"
+        )
+
+    def test_a_demoted_tour_clears_the_id_on_unlinked_trips(self):
+        """Unlinked trips carry the tour id as well, and are written out too."""
+        kept = keep_usable(
+            {
+                "tours": _tours([(1, 500, True), (2, 500, False)]),
+                "unlinked_trips": pl.DataFrame(
+                    {
+                        "unlinked_trip_id": [100, 200],
+                        "tour_id": [1, 2],
+                        "joint_tour_id": [500, 500],
+                        FLAG: [True, False],
+                    },
+                    schema_overrides={"joint_tour_id": pl.Int64},
+                ),
+                "joint_tours": _groups("joint_tour_id", [(500, False)]),
+            },
+            FLAG,
+        )
+
+        assert kept["unlinked_trips"]["joint_tour_id"].to_list() == [None]
 
 
 class TestAnAdmittedGroupIsLeftAlone:

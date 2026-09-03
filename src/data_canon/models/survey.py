@@ -380,7 +380,11 @@ class TourModel(BaseModel):
     tour_num: int = schema_field(ge=1)
     subtour_num: int = schema_field(ge=0)
     parent_tour_id: int = schema_field(ge=1, fk_to="tours.tour_id")
-    joint_tour_id: int | None = schema_field(ge=1, default=None)
+    joint_tour_id: int | None = schema_field(
+        ge=1,
+        default=None,
+        fk_to="joint_tours.joint_tour_id",
+    )
 
     tour_purpose: PurposeCategory | None = schema_field(
         default=None,
