@@ -27,6 +27,15 @@ ask for. ``cascade_completeness`` registers whichever it stamps as generated
 columns, each described by what it admits, which says more than a fixed field
 could: the description names the actual rules that profile relaxed.
 
+The **weight** columns are absent for the same reason. A weighting run fits each
+profile it is given and suffixes that profile's name onto every weight it writes
+(``hh_weight_ctramp_usable``), and the un-suffixed spelling is just a single
+profile's weights with the label left off -- there is no unprofiled weight to
+declare. The weighting registers what it wrote, carrying both what the number
+counts and that it cannot be negative, so these columns are still described and
+still checked. See [`processing.weighting.core.hierarchy`]
+[processing.weighting.core.hierarchy].
+
 See [`processing.completeness`][processing.completeness] for the per-level rules
 and the admission vocabulary.
 """
@@ -81,7 +90,6 @@ class HouseholdModel(BaseModel):
     residence_type: ResidenceType = schema_field()
     income: int | None = schema_field(ge=0, default=None)
     income_bin: IncomeBroad = schema_field()
-    hh_weight: float | None = schema_field(ge=0)
     num_vehicles: int = schema_field(ge=0)
     complete: bool = schema_field()
 
@@ -150,7 +158,6 @@ class PersonModel(BaseModel):
     )
     num_days_complete: int = schema_field(ge=0, default=0)
     complete: bool | None = schema_field(default=None)
-    person_weight: float | None = schema_field(default=None, ge=0)
 
 
 class PersonDayModel(BaseModel):
@@ -184,7 +191,6 @@ class PersonDayModel(BaseModel):
     # usability profile, as hh_day_{profile}. Those names come from config, so
     # they cannot be model fields; cascade_completeness registers them as
     # generated columns with a description of what each one gated.
-    day_weight: float | None = schema_field(default=None, ge=0)
 
 
 class UnlinkedTripModel(BaseModel):
@@ -229,7 +235,6 @@ class UnlinkedTripModel(BaseModel):
     arrive_time: datetime | None = schema_field()
     num_travelers: int = schema_field(ge=1)
     complete: bool | None = schema_field(default=None)
-    unlinked_trip_weight: float | None = schema_field(default=None, ge=0)
 
     # You can add custom row-level validators here
     # Don't confuse with the constom DataFrame-level validators elsewhere
@@ -367,7 +372,6 @@ class LinkedTripModel(BaseModel):
         description="Classified location type of the trip destination (Home/Work/School/Other).",
     )
     complete: bool | None = schema_field(default=None)
-    linked_trip_weight: float | None = schema_field(default=None, ge=0)
 
 
 class TourModel(BaseModel):
@@ -455,7 +459,6 @@ class TourModel(BaseModel):
     inbound_mode: ModeType | None = schema_field()
     num_travelers: int = schema_field(ge=1, default=1)
     complete: bool | None = schema_field(default=None)
-    tour_weight: float | None = schema_field(default=None, ge=0)
 
     @model_validator(mode="after")
     def validate_complete_tours(self) -> "TourModel":
@@ -524,16 +527,6 @@ class JointTripModel(BaseModel):
         ),
     )
     complete: bool | None = schema_field(default=None)
-    joint_trip_weight: float | None = schema_field(
-        default=None,
-        ge=0,
-        description=(
-            "Person-trips represented: the SUM of the member `linked_trip_weight`, "
-            "so the record stands for its whole party. Same unit as `linked_trips`, "
-            "which this table OVERLAYS rather than partitions, so "
-            "`sum(linked) + sum(joint)` double counts."
-        ),
-    )
 
 
 class JointTourModel(BaseModel):
@@ -561,15 +554,6 @@ class JointTourModel(BaseModel):
         ),
     )
     complete: bool | None = schema_field(default=None)
-    joint_tour_weight: float | None = schema_field(
-        default=None,
-        ge=0,
-        description=(
-            "Person-tours represented: the SUM of the member `tour_weight`. Same "
-            "unit as `tours`, which this table OVERLAYS rather than partitions, "
-            "so `sum(tours) + sum(joint_tours)` double counts."
-        ),
-    )
 
 
 class HabitualLocationModel(BaseModel):

@@ -15,6 +15,8 @@ from processing.weighting.core.hierarchy import (
     Agg,
     Flow,
     levels_with_flow,
+    seed_col_for,
+    weight_col_for,
 )
 from processing.weighting.core.specs import ControlSpec, ControlTotals
 
@@ -33,6 +35,7 @@ def weight_sanity_checks(
     usability_flag_col: str,
     *,
     geo_col: str = "ctrl_geoid",
+    profile: str | None = None,
 ) -> None:
     """Run weight sanity checks and log a summary report.
 
@@ -46,6 +49,9 @@ def weight_sanity_checks(
             checks have to read the same column the propagation did -- checking
             a different universe than was weighted would fail on correct output.
         geo_col: Geography column the control totals are keyed on.
+        profile: Usability profile whose columns to check, or None for the
+            un-suffixed set. Names the columns only; *usability_flag_col* is
+            still what decides the universe.
     """
     hh = tables.get("households")
     per = tables.get("persons")
@@ -57,35 +63,39 @@ def weight_sanity_checks(
     per_ctrl = _first_control_at_level(specs, ControlLevel.PERSON)
     totals_df = control_totals.totals
 
-    logger.info("── Weight sanity checks ──")
+    hh_weight_col = weight_col_for("hh_weight", profile)
+    person_weight_col = weight_col_for("person_weight", profile)
+    base_weight_col = seed_col_for("base_weight", profile)
 
-    if hh_ctrl and "hh_weight" in hh.columns:
+    logger.info("── Weight sanity checks ──%s", f" ({profile})" if profile else "")
+
+    if hh_ctrl and hh_weight_col in hh.columns:
         _compare_and_log(
-            hh.filter(pl.col("hh_weight").is_not_null()),
+            hh.filter(pl.col(hh_weight_col).is_not_null()),
             totals_df.filter(pl.col("control_name") == hh_ctrl),
-            weight_col="hh_weight",
-            base_weight_col="base_weight",
+            weight_col=hh_weight_col,
+            base_weight_col=base_weight_col,
             geo_col=geo_col,
             label="Household",
         )
 
-    if per_ctrl and "person_weight" in per.columns and geo_col in hh.columns:
+    if per_ctrl and person_weight_col in per.columns and geo_col in hh.columns:
         per_with_zone = per.join(
-            hh.select("hh_id", geo_col, "base_weight"),
+            hh.select("hh_id", geo_col, base_weight_col),
             on="hh_id",
             how="left",
         )
         _compare_and_log(
-            per_with_zone.filter(pl.col("person_weight").is_not_null()),
+            per_with_zone.filter(pl.col(person_weight_col).is_not_null()),
             totals_df.filter(pl.col("control_name") == per_ctrl),
-            weight_col="person_weight",
-            base_weight_col="base_weight",
+            weight_col=person_weight_col,
+            base_weight_col=base_weight_col,
             geo_col=geo_col,
             label="Person",
         )
 
-    _check_hierarchy(tables, usability_flag_col)
-    _check_joint_sums(tables, usability_flag_col)
+    _check_hierarchy(tables, usability_flag_col, profile)
+    _check_joint_sums(tables, usability_flag_col, profile)
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +199,9 @@ def _compare_and_log(
 _MAX_REPORTED = 5
 
 
-def _check_joint_sums(tables: dict[str, pl.DataFrame], usability_flag_col: str) -> None:
+def _check_joint_sums(
+    tables: dict[str, pl.DataFrame], usability_flag_col: str, profile: str | None = None
+) -> None:
     """Verify each SUM grouping equals its members' combined weight, or raise.
 
     The joint levels carry person-trips rather than events (see [`Agg.SUM`]
@@ -205,6 +217,8 @@ def _check_joint_sums(tables: dict[str, pl.DataFrame], usability_flag_col: str) 
     Args:
         tables: Weighted canonical tables.
         usability_flag_col: Flag marking which records may carry weight.
+        profile: Usability profile whose weight columns to read, or None for the
+            un-suffixed set.
 
     Raises:
         ValueError: If any grouping's weight is not its members' total.
@@ -215,8 +229,9 @@ def _check_joint_sums(tables: dict[str, pl.DataFrame], usability_flag_col: str) 
         target, source = tables.get(level.table), tables.get(level.parent)  # type: ignore[arg-type]
         if target is None or source is None:
             continue
-        src_weight = LEVELS[level.parent].weight_col  # type: ignore[index]
-        if level.weight_col not in target.columns or src_weight not in source.columns:
+        src_weight = LEVELS[level.parent].weight_col_for(profile)  # type: ignore[index]
+        target_wt = level.weight_col_for(profile)
+        if target_wt not in target.columns or src_weight not in source.columns:
             continue
         if level.key not in source.columns:
             continue
@@ -226,19 +241,17 @@ def _check_joint_sums(tables: dict[str, pl.DataFrame], usability_flag_col: str) 
             .group_by(level.key)
             .agg(pl.col(src_weight).sum().alias("member_sum"))
         )
-        checked = target.filter(pl.col(level.weight_col).is_not_null())
+        checked = target.filter(pl.col(target_wt).is_not_null())
         if usability_flag_col in checked.columns:
             checked = checked.filter(pl.col(usability_flag_col).fill_null(value=False))
 
-        merged = checked.select(level.key, level.weight_col).join(
-            members, on=level.key, how="inner"
-        )
+        merged = checked.select(level.key, target_wt).join(members, on=level.key, how="inner")
         if merged.is_empty():
             logger.info("  Joint sum %s → %s: OK (nothing to check)", level.parent, level.table)
             continue
 
         failures = merged.filter(
-            (pl.col(level.weight_col) - pl.col("member_sum")).abs() > _HIERARCHY_ABS_TOL
+            (pl.col(target_wt) - pl.col("member_sum")).abs() > _HIERARCHY_ABS_TOL
         )
         if failures.is_empty():
             logger.info(
@@ -247,7 +260,7 @@ def _check_joint_sums(tables: dict[str, pl.DataFrame], usability_flag_col: str) 
             continue
 
         rows = "\n".join(
-            f"  {row[level.key]:<16} {row[level.weight_col]:>14.4f} {row['member_sum']:>14.4f}"
+            f"  {row[level.key]:<16} {row[target_wt]:>14.4f} {row['member_sum']:>14.4f}"
             for row in failures.head(_MAX_REPORTED).iter_rows(named=True)
         )
         more = (
@@ -257,16 +270,18 @@ def _check_joint_sums(tables: dict[str, pl.DataFrame], usability_flag_col: str) 
         )
         msg = (
             f"Joint weight is not its members' total: {failures.height} "
-            f"{level.table} record(s) whose {level.weight_col} does not equal "
+            f"{level.table} record(s) whose {target_wt} does not equal "
             f"sum({src_weight}) over their member {level.parent}.\n"
-            f"  {level.key:<16} {level.weight_col:>14} {'member_sum':>14}\n"
+            f"  {level.key:<16} {target_wt:>14} {'member_sum':>14}\n"
             f"{rows}{more}"
         )
         logger.error(msg)
         raise ValueError(msg)
 
 
-def _check_hierarchy(tables: dict[str, pl.DataFrame], usability_flag_col: str) -> None:
+def _check_hierarchy(
+    tables: dict[str, pl.DataFrame], usability_flag_col: str, profile: str | None = None
+) -> None:
     """Verify that children sum to what their parents represent, or raise.
 
     Each DOWN edge is checked against the identity its rule actually maintains,
@@ -289,6 +304,8 @@ def _check_hierarchy(tables: dict[str, pl.DataFrame], usability_flag_col: str) -
     Args:
         tables: Weighted canonical tables.
         usability_flag_col: Flag marking which records may carry weight.
+        profile: Usability profile whose weight columns to read, or None for the
+            un-suffixed set.
 
     Raises:
         ValueError: If any scope's children do not sum to what its parents
@@ -296,12 +313,12 @@ def _check_hierarchy(tables: dict[str, pl.DataFrame], usability_flag_col: str) -
     """
     for level in levels_with_flow(Flow.DOWN):
         parent_name, child_name = level.parent, level.table
-        join_key, child_wt = level.key, level.weight_col
+        join_key, child_wt = level.key, level.weight_col_for(profile)
         parent = tables.get(parent_name)  # type: ignore[arg-type]
         child = tables.get(child_name)
         if parent is None or child is None:
             continue
-        parent_wt = LEVELS[parent_name].weight_col  # type: ignore[index]
+        parent_wt = LEVELS[parent_name].weight_col_for(profile)  # type: ignore[index]
         if parent_wt not in parent.columns or child_wt not in child.columns:
             continue
 

@@ -119,6 +119,41 @@ class TestAddExistingWeights:
         assert "wt" in result["unlinked_trips"].columns
         assert result["unlinked_trips"]["wt"].to_list() == [2.0, 1.5, 1.8]
 
+    def test_custom_weight_column_name_is_redistributed(self, tmp_path):
+        """A kept vendor column is the one usability redistributes.
+
+        Under ``keep_name`` the vendor's column is the only record of where the
+        weight landed, so reaching for the canonical name instead reads a column
+        that was never created. Needs the usability column present, since that
+        is what makes the redistribution run at all.
+        """
+        trips = pl.DataFrame(
+            {
+                "unlinked_trip_id": [1, 2, 3],
+                "day_id": [1, 1, 1],
+                "usable": [True, True, False],
+            }
+        )
+
+        weight_file = tmp_path / "trip_weights.csv"
+        pl.DataFrame({"unlinked_trip_id": [1, 2, 3], "wt": [2.0, 1.5, 1.8]}).write_csv(weight_file)
+
+        result = add_existing_weights(
+            weights={
+                "unlinked_trip_weight": {
+                    "weight_path": str(weight_file),
+                    "weight_col": "wt",
+                    "keep_name": True,
+                }
+            },
+            unlinked_trips=trips,
+            usability_flag_col="usable",
+        )
+
+        wt = result["unlinked_trips"]["wt"]
+        assert wt[2] == 0.0
+        assert wt.sum() == pytest.approx(5.3)
+
     def test_derive_person_weights_from_household(self, tmp_path):
         """Test deriving person weights from household weights."""
         households = pl.DataFrame(

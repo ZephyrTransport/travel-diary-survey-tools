@@ -19,6 +19,19 @@ from data_canon.models.survey import (
     TourModel,
     UnlinkedTripModel,
 )
+from processing.weighting.core.hierarchy import WEIGHT_COLUMNS
+
+# Which canonical table each model describes, for looking up its weight column.
+_TABLE_OF_MODEL = {
+    "HouseholdModel": "households",
+    "PersonModel": "persons",
+    "PersonDayModel": "days",
+    "UnlinkedTripModel": "unlinked_trips",
+    "LinkedTripModel": "linked_trips",
+    "JointTripModel": "joint_trips",
+    "TourModel": "tours",
+    "JointTourModel": "joint_tours",
+}
 
 
 def model_to_polars_schema(model: type[BaseModel]) -> dict[str, type]:
@@ -104,6 +117,27 @@ def _python_type_to_polars(python_type) -> type:
     return pl.String
 
 
+def _with_generated(
+    schema: dict,
+    model,
+    usability_flag_col: str,
+) -> pl.DataFrame:
+    """An empty frame from *model*, plus the columns config names rather than the schema.
+
+    The usability flag and the weight are both stamped under names a project
+    chooses, so neither is a model field. Every frame reaching a formatter has
+    been through the steps that write them, so a fixture standing in for one
+    carries them too. Weights take their base name here: that is what a consumer
+    reads once it has resolved its own profile.
+    """
+    schema = dict(schema)
+    schema[usability_flag_col] = pl.Boolean
+    table = _TABLE_OF_MODEL.get(model.__name__)
+    if table is not None and table in WEIGHT_COLUMNS:
+        schema[WEIGHT_COLUMNS[table]] = pl.Float64
+    return pl.DataFrame(schema=schema)
+
+
 def empty_linked_trips(usability_flag_col: str = "usable") -> pl.DataFrame:
     """Create empty linked_trips DataFrame with complete schema.
 
@@ -114,8 +148,7 @@ def empty_linked_trips(usability_flag_col: str = "usable") -> pl.DataFrame:
         Empty DataFrame with LinkedTripModel schema
     """
     schema = model_to_polars_schema(LinkedTripModel)
-    schema[usability_flag_col] = pl.Boolean
-    return pl.DataFrame(schema=schema)
+    return _with_generated(schema, LinkedTripModel, usability_flag_col)
 
 
 def empty_tours(usability_flag_col: str = "usable") -> pl.DataFrame:
@@ -137,8 +170,7 @@ def empty_tours(usability_flag_col: str = "usable") -> pl.DataFrame:
         Empty DataFrame with TourModel schema plus the usability flag
     """
     schema = model_to_polars_schema(TourModel)
-    schema[usability_flag_col] = pl.Boolean
-    return pl.DataFrame(schema=schema)
+    return _with_generated(schema, TourModel, usability_flag_col)
 
 
 def empty_unlinked_trips(usability_flag_col: str = "usable") -> pl.DataFrame:
@@ -148,8 +180,7 @@ def empty_unlinked_trips(usability_flag_col: str = "usable") -> pl.DataFrame:
         Empty DataFrame with UnlinkedTripModel schema
     """
     schema = model_to_polars_schema(UnlinkedTripModel)
-    schema[usability_flag_col] = pl.Boolean
-    return pl.DataFrame(schema=schema)
+    return _with_generated(schema, UnlinkedTripModel, usability_flag_col)
 
 
 def empty_joint_tours(usability_flag_col: str = "usable") -> pl.DataFrame:
@@ -159,8 +190,7 @@ def empty_joint_tours(usability_flag_col: str = "usable") -> pl.DataFrame:
         Empty DataFrame with JointTourModel schema
     """
     schema = model_to_polars_schema(JointTourModel)
-    schema[usability_flag_col] = pl.Boolean
-    return pl.DataFrame(schema=schema)
+    return _with_generated(schema, JointTourModel, usability_flag_col)
 
 
 def empty_days(usability_flag_col: str = "usable") -> pl.DataFrame:
@@ -170,8 +200,7 @@ def empty_days(usability_flag_col: str = "usable") -> pl.DataFrame:
         Empty DataFrame with PersonDayModel schema
     """
     schema = model_to_polars_schema(PersonDayModel)
-    schema[usability_flag_col] = pl.Boolean
-    return pl.DataFrame(schema=schema)
+    return _with_generated(schema, PersonDayModel, usability_flag_col)
 
 
 def days_for_persons(
@@ -219,5 +248,4 @@ def empty_joint_trips(usability_flag_col: str = "usable") -> pl.DataFrame:
         Empty DataFrame with JointTripModel schema
     """
     schema = model_to_polars_schema(JointTripModel)
-    schema[usability_flag_col] = pl.Boolean
-    return pl.DataFrame(schema=schema)
+    return _with_generated(schema, JointTripModel, usability_flag_col)

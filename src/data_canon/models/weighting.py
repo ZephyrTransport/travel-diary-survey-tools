@@ -7,9 +7,14 @@ record: a delivery is not obliged to explain the estimator that produced its
 weights, and a run with no weighting step should not owe columns it never
 computed.
 
-``households.hh_weight`` remains the deliverable. This table is the audit trail
-behind it -- it is populated only when the weighting runs, and only written
-when a config names it, so it costs nothing otherwise.
+The household weight remains the deliverable, on ``households``. This table is
+the audit trail behind it -- populated only when the weighting runs, and only
+written when a config names it, so it costs nothing otherwise.
+
+Its weight columns are not declared below: they are named per fitted profile, so
+the weighting registers them alongside the ones it writes to ``households``. Only
+the geography is fixed, because where a household is does not depend on which
+universe was weighted.
 """
 
 from pydantic import BaseModel
@@ -37,20 +42,4 @@ class HouseholdWeightingModel(BaseModel):
     bg_geo_id: str | None = schema_field(
         default=None,
         description="Census block group GEOID containing the home location.",
-    )
-    base_weight: float | None = schema_field(
-        ge=0,
-        default=None,
-        description=(
-            "Pre-balancing seed weight, before the balancer fits it to the "
-            "controls. Null for households the weighting could not seed."
-        ),
-    )
-    hh_weight: float | None = schema_field(
-        ge=0,
-        default=None,
-        description=(
-            "Final balanced weight, repeated from `households` so the expansion "
-            "factor `hh_weight / base_weight` can be read off this table alone."
-        ),
     )

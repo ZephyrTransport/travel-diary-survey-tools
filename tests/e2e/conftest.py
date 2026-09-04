@@ -290,9 +290,14 @@ def _step_blocks(data_dir: Path, output_dir: Path, enabled: frozenset) -> dict:
             # strict profile, so a dropped day changes the split's divisor --
             # which is where "nothing lost" is a real question rather than a
             # tautology.
+            #
+            # Every profile a consumer names is weighted, so each formatter finds
+            # its own columns; analysis_usable is weighted too, and it is the one
+            # that differs -- ctramp_usable and daysim_usable are declared
+            # identically above, so agreeing between those two proves nothing.
             "params": {
                 "derive_missing_weights": True,
-                "usability_flag_col": "ctramp_usable",
+                "weight_profiles": ["ctramp_usable", "daysim_usable", "analysis_usable"],
                 "weights": {
                     "hh_weight": {"weight_path": _p(data_dir / "weights" / "hh_weights.csv")},
                 },

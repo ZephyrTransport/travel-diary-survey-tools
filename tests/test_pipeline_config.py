@@ -99,6 +99,73 @@ def test_config_step_names_are_unique(project_dir: Path):
     )
 
 
+def _step_params(config_path: Path, step_name: str) -> dict:
+    """Params of the named step, or an empty dict if the config omits it."""
+    with config_path.open() as f:
+        config = yaml.safe_load(f)
+    for step in (config or {}).get("steps", []):
+        if step.get("name") == step_name:
+            return step.get("params") or {}
+    return {}
+
+
+# Every consumer of a usability profile, and the key it names one under.
+_PROFILE_CONSUMERS = (
+    ("compute_weights", "usability_flag_col"),
+    ("add_existing_weights", "usability_flag_col"),
+    ("format_ctramp", "usability_flag_col"),
+    ("format_daysim", "usability_flag_col"),
+)
+
+# Always available: the cascade stamps it on every run, whatever profiles a
+# project declares.
+_ALWAYS_STAMPED = frozenset({"complete"})
+
+
+@pytest.mark.parametrize("project_dir", _project_dirs(), ids=lambda p: p.name)
+def test_named_profiles_are_stamped_by_the_cascade(project_dir: Path):
+    """Every profile a step names must be one ``cascade_completeness`` declares.
+
+    The weight columns are suffixed with the profile name verbatim, so a typo
+    here does not fail: it writes a column set no consumer can name, gated on a
+    verdict no step stamps. Cheaper to catch statically than after a balancing
+    run per profile.
+    """
+    config_path = project_dir / "config.yaml"
+    declared = set(
+        _step_params(config_path, "cascade_completeness").get("usability_profiles") or {}
+    )
+    if not declared:
+        pytest.skip("project declares no usability profiles")
+    legal = declared | _ALWAYS_STAMPED
+
+    for step_name, key in _PROFILE_CONSUMERS:
+        params = _step_params(config_path, step_name)
+        named = [
+            *([params[key]] if params.get(key) else []),
+            *(params.get("weight_profiles") or []),
+        ]
+        for profile in named:
+            assert profile in legal, (
+                f"{project_dir.name}: step {step_name!r} names profile {profile!r}, which "
+                f"cascade_completeness does not stamp. Declared: {sorted(legal)}"
+            )
+
+
+@pytest.mark.parametrize("project_dir", _project_dirs(), ids=lambda p: p.name)
+def test_weighting_names_one_universe(project_dir: Path):
+    """A weighting step names a single profile or a profile list, never both."""
+    config_path = project_dir / "config.yaml"
+    for step_name in ("compute_weights", "add_existing_weights"):
+        params = _step_params(config_path, step_name)
+        if not params:
+            continue
+        assert not (params.get("usability_flag_col") and params.get("weight_profiles")), (
+            f"{project_dir.name}: step {step_name!r} names both usability_flag_col and "
+            "weight_profiles; they mean different things about what gets fitted."
+        )
+
+
 def test_projects_are_discovered():
     """Guard the discovery itself.
 

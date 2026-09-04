@@ -9,7 +9,7 @@ weights_dir: "X:/survey_repos/ProjRoot_Mon-Thu20251201/WgtRoot_Mon-Thu20251201_n
 pums_dir: "M:/Data/Census/PUMS/2023_1yr"
 output_dir: "E:/Box/Modeling and Surveys/Surveys/Travel Diary Survey/BATS_across_years/20260327"
 TM1_shapefile_dir: "E:/GitHub/travel-model-one/utilities/geographies"
-TM2_shapefile_dir: "E:/GitHub/TM2/tm2py-utils/tm2py_utils/inputs/maz_taz/shapefiles"
+TM2_shapefile_dir: "E:/GitHub/tm2py-utils/tm2py_utils/inputs/maz_taz/shapefiles"
 log_file: "{{ output_dir }}/pipeline_2023.log" # If not set, logs just to console, if not absolute saves to .cache directory
 
 # Pipeline configuration
@@ -271,13 +271,27 @@ steps:
       # keep incomplete households in the seed and give them computed weights.
       exclude_incompletes: true
 
-      # Which flag decides who carries weight. Name one of the profiles
-      # cascade_completeness stamps above, so the weighted tour universe matches
-      # what that consumer keeps -- or `complete` to weight the whole valid
-      # survey, including partial/overnight tours (survey-analysis weights).
-      # Each parent's weight is spread across its usable children, so dropping a
-      # record does not shrink the expansion.
-      usability_flag_col: ctramp_usable
+      # -- One balancing run per profile -------------------------------
+      # Each profile named here is fitted separately, and its own flag is the
+      # seed filter -- so every fit expands its own universe onto the controls
+      # and nothing is derived or rescaled from another fit. Columns carry the
+      # profile name verbatim: hh_weight_ctramp_usable, person_weight_..., down
+      # the hierarchy, plus base_weight_<profile> on household_weights.
+      #
+      # Each parent's weight is spread across its usable children, so excluding a
+      # record does not shrink the expansion. Name `complete` here to weight the
+      # whole valid survey, partial and overnight tours included.
+      #
+      # Mutually exclusive with usability_flag_col, which weights one profile and
+      # writes the un-suffixed columns.
+      weight_profiles: [ctramp_usable, daysim_usable, analysis_usable]
+
+      # Homes outside the control geography (region_county.shp, strict
+      # point-in-polygon -- no snap tolerance, unlike add_zone_ids) belong to no
+      # balancing zone and can carry no fitted weight. Error above this share
+      # rather than returning nulls quietly. Measured 0.00% on 2019 and 2023, so
+      # this is a tripwire for a misconfigured geography, not a routine dial.
+      max_unplaceable_share: 0.01
 
       # -- EF grid search (optional) -----------------------------------
       # Re-run balancing across a grid of max_expansion_factor values and
@@ -398,7 +412,9 @@ steps:
   #   cache: false
   #   params:
   #     derive_missing_weights: true
-  #     usability_flag_col: ctramp_usable  # supplied weights are redistributed onto usable records, preserving each supplied total
+  #     # Supplied weights are redistributed onto each profile's usable records,
+  #     # preserving each supplied total -- a vendor's anchor cannot be re-balanced.
+  #     weight_profiles: [ctramp_usable, daysim_usable, analysis_usable]
   #     weights:
   #       hh_weight:
   #         weight_path: "{{ weights_dir }}/hh_weights.csv"

@@ -205,6 +205,9 @@ def get_tour_schema() -> dict[str, type]:
             # The usability gate. Named by a project's profile, so not a model
             # field, but present on every tours frame a formatter sees.
             "usable": pl.Boolean,
+            # Likewise the weight: named per fitted profile, and resolved to this
+            # base name by the gate before a formatter reads it.
+            "tour_weight": pl.Float64,
         }
     )
 

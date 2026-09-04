@@ -17,11 +17,11 @@ consistent: member trips inherit their tour's verdict, the upward reductions are
 `_flag_joint_groupings` guarantees a surviving joint group still has two usable
 members. Nothing can be orphaned by removing what the flag rejects.
 
-Zero-weight records are *not* removed. A record can be usable to this consumer
-and still carry no weight, because the weighting names one profile and the
-formatters may name others -- until weights are computed per profile, dropping
-those would be one consumer silently deleting another's data. They are reported
-instead, and the count is the measure of that mismatch.
+Weights are read for the profile this consumer names, so its universe and its
+weights are the same universe. Where a record still carries no weight it is
+reported, not removed: a zero means its scope kept no usable record to share the
+parent's claim among, a null means no weight was ever estimated for it, and both
+are recoverable in a way that deleting the record is not.
 """
 
 import logging
@@ -144,6 +144,82 @@ def _log_ledger(
     logger.info("\n".join(lines))
 
 
+def select_profile_weights(
+    tables: dict[str, pl.DataFrame],
+    usability_flag_col: str,
+) -> dict[str, pl.DataFrame]:
+    """Resolve this consumer's weight columns to their base names.
+
+    When the weighting fits several profiles it writes one column set per
+    profile, suffixed with the profile's name. A consumer already names the
+    profile it reads, and the suffix *is* that name, so one setting answers both
+    questions and there is no second one to disagree with it.
+
+    Renaming here rather than at each use is what keeps every downstream read --
+    ``sampleRate``, ``hhexpfac``, ``pdexpfac`` and the rest -- correct without
+    knowing profiles exist at all.
+
+    Args:
+        tables: Canonical tables, keyed by name.
+        usability_flag_col: The profile this consumer reads.
+
+    Returns:
+        The same mapping with this profile's weights under the base names. A
+        table with no suffixed column at all is returned untouched, which is the
+        single-weight-set case.
+
+    Raises:
+        ValueError: If the weighting wrote suffixed columns but none for this
+            profile. The bare column would then be read instead -- whatever it
+            happens to hold -- and a formatter would publish expansion factors
+            for a universe it is not describing.
+    """
+    resolved: dict[str, pl.DataFrame] = dict(tables)
+    read_from: dict[str, str] = {}
+
+    for name, df in tables.items():
+        base = _WEIGHT_COLUMNS.get(name)
+        if base is None:
+            continue
+        mine = f"{base}_{usability_flag_col}"
+
+        # Another profile's copy is not ours to deliver, and leaving it beside
+        # the base name invites reading the wrong one.
+        others = [col for col in df.columns if col.startswith(f"{base}_") and col != mine]
+
+        if mine not in df.columns:
+            if others:
+                weighted = sorted(col.removeprefix(f"{base}_") for col in others)
+                msg = (
+                    f"{name} carries weights for {weighted} but not for "
+                    f"{usability_flag_col!r}, the profile this consumer reads. Add it to "
+                    f"the weighting step's weight_profiles; falling back to {base!r} would "
+                    f"publish another universe's expansion factors, or none."
+                )
+                raise ValueError(msg)
+            continue
+
+        if base in df.columns:
+            logger.warning(
+                "%s carries both %s and %s; reading %s, since that is the profile "
+                "this consumer gates on.",
+                name,
+                base,
+                mine,
+                mine,
+            )
+        resolved[name] = df.drop(base, *others, strict=False).rename({mine: base})
+        read_from[name] = mine
+
+    if read_from:
+        logger.info(
+            "Weights read for %s: %s",
+            usability_flag_col,
+            ", ".join(f"{name} <- {col}" for name, col in sorted(read_from.items())),
+        )
+    return resolved
+
+
 def keep_usable(
     tables: dict[str, pl.DataFrame],
     usability_flag_col: str,
@@ -152,17 +228,20 @@ def keep_usable(
 
     Args:
         tables: Canonical tables, keyed by name.
-        usability_flag_col: The usability profile this consumer reads. Naming a
-            different profile from the one the weighting used is legitimate, and
-            reported by the zero-weight check below.
+        usability_flag_col: The usability profile this consumer reads. It names
+            both the verdict to gate on and the weight columns to read, since a
+            profile's weight columns carry its name.
 
     Returns:
-        The same mapping, filtered. Tables absent from the input stay absent.
+        The same mapping, filtered, with this profile's weights under the base
+        column names. Tables absent from the input stay absent.
 
     Raises:
         ValueError: If a gated table carries no verdict, which means
             `cascade_completeness` did not run or stamped a different profile.
     """
+    tables = select_profile_weights(tables, usability_flag_col)
+
     missing = [
         name
         for name in _GATED_TABLES
@@ -377,32 +456,49 @@ def _unjoint_tours_with_individual_trips(tables: dict[str, pl.DataFrame], ledger
 def _warn_zero_weight(tables: dict[str, pl.DataFrame], usability_flag_col: str) -> None:
     """Report records this consumer can use that carry no weight.
 
-    Zero weight means the balancer left the record out of its seed, since
-    `min_weight` puts a floor of 1 under anything it weighted. So a usable record
-    with no weight is one the *weighting's* profile excluded and this consumer's
-    profile admits -- the one-size-fits-none case, and the reason per-profile
-    weighting exists as an open question.
+    Zero and null are different findings and have different fixes, so they are
+    reported apart:
 
-    Not an error, and not a drop. The formatter has no way to know which profile
-    the weighting used, so it can report that the two disagree but not what about.
+    * **zero** -- a *stranded scope*. `min_weight` puts a floor of 1 under
+      anything the balancer weighted, so a fitted record cannot be zero. It means
+      the parent's claim had no usable child to share it among, and the weighting
+      deliberately left that claim unrepresented rather than pool it across other
+      parents. `_check_hierarchy` logs the matching shortfall.
+    * **null** -- no weight was ever estimated. Either the control geography could
+      not place the household, so it belonged to no balancing zone, or no
+      weighting step ran at all.
+
+    Neither is an error and neither is a drop: expanding to nothing is recoverable,
+    deleting the record is not.
     """
     for name, weight_col in _WEIGHT_COLUMNS.items():
         df = tables.get(name)
         if df is None or weight_col not in df.columns:
             continue
-        zero = df.filter(pl.col(weight_col).fill_null(0) <= 0)
-        if zero.is_empty():
-            continue
-        logger.warning(
-            "%d %s admitted by %s carry no %s. The weighting named a different "
-            "profile, so it excluded records this consumer keeps; they expand to "
-            "nothing rather than being dropped, which would delete another "
-            "consumer's data.",
-            zero.height,
-            name,
-            usability_flag_col,
-            weight_col,
-        )
+
+        n_null = df.filter(pl.col(weight_col).is_null()).height
+        n_zero = df.filter(pl.col(weight_col) <= 0).height
+
+        if n_zero:
+            logger.warning(
+                "%d %s admitted by %s carry a zero %s: their scope kept no usable "
+                "record to share the parent's weight among, so it stays unrepresented "
+                "rather than being pooled onto another parent's children.",
+                n_zero,
+                name,
+                usability_flag_col,
+                weight_col,
+            )
+        if n_null:
+            logger.warning(
+                "%d %s admitted by %s have no %s at all: either the control geography "
+                "could not place the household, so it was in no balancing zone, or no "
+                "weighting step ran.",
+                n_null,
+                name,
+                usability_flag_col,
+                weight_col,
+            )
 
 
 def _completeness_split(df: pl.DataFrame) -> tuple[int, int]:

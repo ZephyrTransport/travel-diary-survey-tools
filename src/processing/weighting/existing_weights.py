@@ -35,18 +35,23 @@ from pathlib import Path
 import polars as pl
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from data_canon.core.dataclass import CanonicalData
 from pipeline.decoration import step
 from processing.weighting.core.hierarchy import (
     LEVELS,
-    WEIGHT_COLUMNS,
     WEIGHT_CONFIG_MAPPING,
+    describe_weight_columns,
+    weight_col_for,
+    weight_columns_for,
 )
 from processing.weighting.core.propagation import (
     collect_tables,
     distribute_within_scope,
+    drop_unsuffixed_weights,
     is_usable,
     propagate_weights,
 )
+from processing.weighting.core.specs import resolve_fitted_profiles
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +154,18 @@ class ExistingWeightConfig(BaseModel):
         """Get the canonical weight column name for this table."""
         return WEIGHT_CONFIG_MAPPING[self.config_key][2]
 
+    def joined_weight_col(self, profile: str | None = None) -> str:
+        """The column the supplied weight actually lands in under *profile*.
+
+        ``keep_name`` suppresses the rename to the canonical name, so under it
+        the vendor's own column is the only record of where the weight went --
+        which is why it cannot be combined with profiles, there being one column
+        and several universes to put in it.
+        """
+        if self.keep_name and self.weight_col:
+            return self.weight_col
+        return weight_col_for(self.canonical_weight_col, profile)
+
     def validate_columns(self, weight_df: pl.DataFrame, table_df: pl.DataFrame) -> None:
         """Validate that required columns exist in weight file and table.
 
@@ -250,11 +267,65 @@ def _apply_usability(
         tables[table_name] = df
 
 
+def _attach_supplied(
+    tables: dict[str, pl.DataFrame | None],
+    supplied: dict[str, pl.DataFrame],
+    configs: dict[str, ExistingWeightConfig],
+    profile: str | None,
+) -> dict[str, str]:
+    """Join each supplied weight under its column for *profile*, in place.
+
+    Returns:
+        table -> the weight column that is actually there, which is what every
+        later step reads the weight by.
+    """
+    by_table = {cfg.table_name: cfg for cfg in configs.values()}
+    has_weight: dict[str, str] = {}
+
+    for table_name, weight_df in supplied.items():
+        df = tables.get(table_name)
+        if df is None:
+            continue
+        cfg = by_table[table_name]
+        joined_col = cfg.joined_weight_col(profile)
+
+        # Drop the target column if it is already there, so a re-run replaces
+        # rather than duplicates it.
+        if joined_col in df.columns:
+            df = df.drop(joined_col)
+
+        renamed = weight_df.rename({cfg.canonical_weight_col: joined_col})
+        tables[table_name] = df.join(renamed, on=cfg.table_id_col, how="left")
+        has_weight[table_name] = joined_col
+        logger.info("Joined %s to %s on %s", joined_col, table_name, cfg.table_id_col)
+
+    return has_weight
+
+
+def _warn_null_weights(tables: dict[str, pl.DataFrame | None], profile: str | None) -> None:
+    """Report weights that came out null -- a record no supplied total covered."""
+    for table, weight in weight_columns_for(profile).items():
+        df = tables.get(table)
+        if df is None or weight not in df.columns:
+            continue
+        null_count = df.select(pl.col(weight).is_null().sum()).item()
+        if null_count:
+            logger.warning(
+                "Table %s has %d / %d NULL values in weight column %s",
+                table,
+                null_count,
+                len(df),
+                weight,
+            )
+
+
 @step()
-def add_existing_weights(  # noqa: C901, PLR0912, PLR0915
+def add_existing_weights(  # noqa: C901, PLR0912, PLR0913, PLR0915
     weights: dict[str, ExistingWeightConfig | dict],
-    usability_flag_col: str,
+    usability_flag_col: str | None = None,
+    weight_profiles: list[str] | None = None,
     derive_missing_weights: bool = False,
+    canonical_data: CanonicalData | None = None,
     households: pl.DataFrame | None = None,
     persons: pl.DataFrame | None = None,
     days: pl.DataFrame | None = None,
@@ -340,7 +411,15 @@ def add_existing_weights(  # noqa: C901, PLR0912, PLR0915
             including partial and overnight tours. Supplied weights are
             redistributed onto the usable records rather than simply zeroed, so
             each table's supplied total is preserved — the vendor's anchor
-            cannot be re-balanced from here.
+            cannot be re-balanced from here. Mutually exclusive with
+            *weight_profiles*.
+        weight_profiles: Profiles to weight, each writing its own column set
+            suffixed with the profile name. The supplied files are read once and
+            redistributed onto each profile's usable records, so every set
+            preserves the same supplied totals over a different universe.
+        canonical_data: Canonical data container. When present, the suffixed
+            weight columns are registered on it, since names that come from
+            config cannot be model fields.
         households: Households DataFrame.
         persons: Persons DataFrame.
         days: Days DataFrame.
@@ -383,9 +462,12 @@ def add_existing_weights(  # noqa: C901, PLR0912, PLR0915
         tours=tours,
     )
 
-    # Track which weights are provided and which tables have weights
+    profiles = resolve_fitted_profiles(usability_flag_col, weight_profiles)
+
+    # Track which weights are provided, and the supplied numbers themselves --
+    # read once, then redistributed per profile.
     provided_weights = set()
-    has_weight = {}
+    supplied: dict[str, pl.DataFrame] = {}
 
     # Validate and convert weight configs to WeightConfig objects
     validated_weights: dict[str, ExistingWeightConfig] = {}
@@ -432,8 +514,19 @@ def add_existing_weights(  # noqa: C901, PLR0912, PLR0915
                 raise ValueError(msg)
             rename_map[cfg.weight_id_col] = cfg.table_id_col
 
-        # Rename weight column to canonical name if needed
-        if not cfg.keep_name and cfg.weight_col != cfg.canonical_weight_col:
+        if cfg.keep_name and profiles != (None,):
+            msg = (
+                f"{cfg.config_key}: keep_name cannot be combined with weight_profiles. "
+                f"The vendor's column {cfg.weight_col!r} is one name, and there are "
+                f"{len(profiles)} universes to write; suffixing it would defeat the only "
+                "reason to keep it. Drop keep_name, or weight a single profile."
+            )
+            raise ValueError(msg)
+
+        # Land on the canonical name here so what was read is uniform whatever the
+        # vendor called it; `_attach_supplied` renames to the column each pass
+        # writes, which under keep_name is the vendor's name again.
+        if cfg.weight_col != cfg.canonical_weight_col:
             if cfg.weight_col is None:
                 msg = f"weight_col should never be None due to model_validator for {table_name}"
                 raise ValueError(msg)
@@ -442,47 +535,48 @@ def add_existing_weights(  # noqa: C901, PLR0912, PLR0915
         if rename_map:
             weight_df = weight_df.rename(rename_map)
 
-        # Drop existing weight column if already present to avoid duplication
-        if cfg.canonical_weight_col in df.columns:
-            df = df.drop(cfg.canonical_weight_col)
+        logger.info("Loaded %d %s weights from %s", weight_df.height, table_name, cfg.weight_path)
 
-        logger.info("Joined %s to %s on %s", cfg.canonical_weight_col, table_name, cfg.table_id_col)
-        tables[table_name] = df.join(weight_df, on=cfg.table_id_col, how="left")
-        has_weight[table_name] = cfg.canonical_weight_col
+        supplied[table_name] = weight_df
 
-    # Redistribute each supplied weight onto the usable records, preserving the
-    # supplied total. Usability is stamped upstream by ``cascade_completeness``.
-    _apply_usability(tables, has_weight, usability_flag_col=usability_flag_col)
+    # One column set per profile, all from the same supplied numbers: the files
+    # are read once above, and each pass starts from those values rather than
+    # from the previous profile's redistributed ones.
+    for profile in profiles:
+        flag = profile if profile is not None else usability_flag_col
+        if flag is None:  # pragma: no cover - resolve_fitted_profiles forbids it
+            msg = "No usability flag to weight against"
+            raise ValueError(msg)
 
-    # Derive missing weights if requested
-    if derive_missing_weights:
-        propagate_weights(
-            tables, has_weight, skip=provided_weights, usability_flag_col=usability_flag_col
-        )
+        has_weight = _attach_supplied(tables, supplied, validated_weights, profile)
 
-    # Build results dict, excluding None values and internal tables
-    # Do a quick check for any NULL weight values in any of the tables
-    results = {}
-    for table, weight in WEIGHT_COLUMNS.items():
-        df = tables.get(table)
-        # If empty, skip
-        if df is None:
-            continue
+        # Redistribute each supplied weight onto the usable records, preserving
+        # the supplied total. Usability is stamped upstream by
+        # ``cascade_completeness``.
+        _apply_usability(tables, has_weight, usability_flag_col=flag)
 
-        if weight in df.columns:
-            null_count = df.select(pl.col(weight).is_null().sum()).item()
-            if null_count > 0:
-                logger.warning(
-                    "Table %s has %d / %d NULL values in weight column %s",
-                    table,
-                    null_count,
-                    len(df),
-                    weight,
-                )
+        # Derive missing weights if requested
+        if derive_missing_weights:
+            propagate_weights(
+                tables,
+                has_weight,
+                skip=provided_weights,
+                usability_flag_col=flag,
+                profile=profile,
+            )
 
-        # Add to results with canonical weight column name
-        results[table] = df
+        _warn_null_weights(tables, profile)
 
-    logger.info("Weight attachment complete. Tables with weights: %s", list(has_weight.keys()))
+    drop_unsuffixed_weights(tables, profiles)
 
-    return results
+    if canonical_data is not None:
+        for table, described in describe_weight_columns(profiles).items():
+            canonical_data.register_generated_columns(table, described)
+
+    logger.info(
+        "Weight attachment complete for %s. Tables with weights: %s",
+        ", ".join(p or "the whole survey" for p in profiles),
+        sorted(supplied),
+    )
+
+    return {name: df for name, df in tables.items() if df is not None}

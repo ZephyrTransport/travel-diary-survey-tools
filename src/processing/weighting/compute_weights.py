@@ -54,7 +54,13 @@ import polars as pl
 from data_canon.core.dataclass import CanonicalData
 from pipeline.cache import PipelineCache
 from pipeline.decoration import step
+from processing.weighting.core.hierarchy import (
+    describe_weight_columns,
+    seed_col_for,
+    weight_col_for,
+)
 from processing.weighting.core.pipeline import WeightingPipeline
+from processing.weighting.core.propagation import drop_unsuffixed_weights
 from processing.weighting.core.specs import (
     BalancingConfig,
     ControlRegistryConfig,
@@ -65,30 +71,37 @@ from processing.weighting.validation.weight_checks import weight_sanity_checks
 
 logger = logging.getLogger(__name__)
 
-# Geography and seed weight the balancer works from. They ride on ``households``
-# through the run because zone assignment, balancing and diagnostics all read
-# them, then move to their own table before the tables are handed back.
-_WEIGHTING_COLUMNS = ("study_geoid", "ctrl_geoid", "bg_geo_id", "base_weight")
+# Geography the balancer works from. It rides on ``households`` through the run
+# because zone assignment, balancing and diagnostics all read it, then moves to
+# its own table before the tables are handed back. Profile-independent: where a
+# household is does not depend on which universe was fitted.
+_GEOGRAPHY_COLUMNS = ("study_geoid", "ctrl_geoid", "bg_geo_id")
 
 
-def _split_weighting_columns(tables: dict[str, pl.DataFrame]) -> None:
+def _split_weighting_columns(
+    tables: dict[str, pl.DataFrame],
+    profiles: tuple[str | None, ...],
+) -> None:
     """Move the weighting's working columns off ``households`` in place.
 
-    ``hh_weight`` is copied rather than moved: it is the deliverable and stays
-    on ``households``, but repeating it here lets the expansion factor be read
-    off one table.
+    Each fit's ``base_weight`` moves and its ``hh_weight`` is copied: the weight
+    is the deliverable and stays on ``households``, but repeating it beside the
+    seed weight lets an expansion factor be read off one table. The table stays
+    one row per household, so several profiles widen it rather than lengthen it.
     """
     hh = tables.get("households")
     if hh is None:
         return
 
-    present = [c for c in _WEIGHTING_COLUMNS if c in hh.columns]
-    if not present:
+    geography = [c for c in _GEOGRAPHY_COLUMNS if c in hh.columns]
+    seed_weights = [col for p in profiles if (col := seed_col_for("base_weight", p)) in hh.columns]
+    if not geography and not seed_weights:
         return
 
-    carried = ["hh_weight"] if "hh_weight" in hh.columns else []
-    tables["household_weights"] = hh.select("hh_id", *present, *carried)
-    tables["households"] = hh.drop(present)
+    carried = [col for p in profiles if (col := weight_col_for("hh_weight", p)) in hh.columns]
+    moved = geography + seed_weights
+    tables["household_weights"] = hh.select("hh_id", *moved, *carried)
+    tables["households"] = hh.drop(moved)
 
 
 # ===========================================================================
@@ -128,8 +141,11 @@ def compute_weights(  # noqa: PLR0913
     strict_survey_nulls: bool = False,
     # -- Completeness handling ------------------------------------------
     exclude_incompletes: bool = True,
-    usability_flag_col: str,
+    usability_flag_col: str | None = None,
+    weight_profiles: list[str] | None = None,
+    max_unplaceable_share: float = 0.01,
     # -- Canonical tables (auto-injected by pipeline) -------------------
+    canonical_data: CanonicalData | None = None,
     households: pl.DataFrame | None = None,
     persons: pl.DataFrame | None = None,
     days: pl.DataFrame | None = None,
@@ -176,6 +192,8 @@ def compute_weights(  # noqa: PLR0913
         strict_survey_nulls=strict_survey_nulls,
         exclude_incompletes=exclude_incompletes,
         usability_flag_col=usability_flag_col,
+        weight_profiles=tuple(weight_profiles or ()),
+        max_unplaceable_share=max_unplaceable_share,
     )
     # Prepare the balancing configs (max expansion factor, weight bounds, max iterations, etc.)
     balance_cfg = BalancingConfig(
@@ -217,25 +235,37 @@ def compute_weights(  # noqa: PLR0913
     wt_pipeline.aggregate_totals()
     wt_pipeline.resolve_importance()
 
-    # 6. Balance + propagate weights
-    wt_pipeline.balance()
-    wt_pipeline.propagate()
-
-    # 7. Diagnostics
-    wt_pipeline.generate_diagnostics(
-        output_path=diagnostics.get("output_path") if diagnostics else None
+    # 6. One fit per profile: balance, propagate, and report each in turn
+    profiles = wt_config.fitted_profiles
+    logger.info(
+        "Weighting: %d balancing run(s), one per profile (%s). Each is fitted to the "
+        "controls over its own universe and writes its own columns; nothing is derived "
+        "from another fit.",
+        len(profiles),
+        ", ".join(p or "the whole survey" for p in profiles),
     )
+    fits = wt_pipeline.fit_all(output_path=diagnostics.get("output_path") if diagnostics else None)
 
     # Basic sanity check to ensure weights were propagated to all tables before returning
     result_tables = wt_pipeline.data.as_dict_non_null()
-    weight_sanity_checks(
-        result_tables,
-        wt_pipeline.control_totals,
-        wt_pipeline.controls.specs,
-        usability_flag_col,
-    )
+    for fit in fits.values():
+        weight_sanity_checks(
+            result_tables,
+            wt_pipeline.control_totals,
+            wt_pipeline.controls.specs,
+            fit.usability_flag_col,
+            profile=fit.profile,
+        )
+
+    drop_unsuffixed_weights(result_tables, profiles)
+
+    # The suffixed names come from config, so they cannot be model fields; without
+    # registering them the delivered output would drop them.
+    if canonical_data is not None:
+        for table, described in describe_weight_columns(profiles).items():
+            canonical_data.register_generated_columns(table, described)
 
     # After the checks, which still read the seed off households.
-    _split_weighting_columns(result_tables)
+    _split_weighting_columns(result_tables, profiles)
 
     return result_tables

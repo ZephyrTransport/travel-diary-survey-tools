@@ -43,6 +43,14 @@ Downstream consumers name the profile they honour via `usability_flag_col` —
 the weighting, the CT-RAMP formatter and the DaySim formatter each take it, and
 none re-derive the verdict: the column is read, and its absence raises.
 
+The name is also the address of that profile's *weights*. A weighting run given
+`weight_profiles` fits each profile separately and suffixes its columns with the
+profile's name (`hh_weight_ctramp_usable`), so `usability_flag_col` settles both
+which records a consumer keeps and which weights it reads — there is no second
+setting that could disagree with the first. A consumer naming a profile the
+weighting was not asked to fit raises rather than falling back to an unsuffixed
+column, since that column describes some other universe, or none.
+
 ::: processing.completeness
     options:
       show_root_heading: true

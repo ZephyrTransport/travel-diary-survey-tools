@@ -98,13 +98,29 @@ The important split is not that PUMS and survey run as fully parallel pipelines.
 
 ## WeightingPipeline
 
-`WeightingPipeline` is the orchestration class that `compute_weights` constructs and drives. It holds all intermediate state (crosswalk, incidence, control totals, weights, diagnostics) and exposes each stage as an explicit method.
+`WeightingPipeline` is the orchestration class that `compute_weights` constructs and drives. It holds the state every fit shares (crosswalk, incidence, control totals) and exposes each stage as an explicit method.
 
 ::: processing.weighting.core.pipeline
     options:
       show_root_heading: true
       members:
         - WeightingPipeline
+
+## One fit per profile
+
+A run weights each profile named in `weight_profiles` separately, gating its seed
+on that profile's own flag, and writes one column set per fit suffixed with the
+profile's name. Each fit's products are held on its own `ProfileFit` rather than
+on the pipeline, so several fits over one survey cannot overwrite each other's
+seed, weights or diagnostics.
+
+::: processing.weighting.core.specs
+    options:
+      show_root_heading: true
+      members:
+        - ProfileFit
+        - GeographyCoverage
+        - resolve_fitted_profiles
 
 ## Related Topics
 

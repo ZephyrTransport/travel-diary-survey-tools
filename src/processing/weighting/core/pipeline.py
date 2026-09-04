@@ -54,6 +54,7 @@ from pathlib import Path
 import polars as pl
 
 from data_canon.core.dataclass import CanonicalData
+from processing.completeness import suggest_usability_columns
 from processing.weighting.balancing.balancer import (
     balance_weights,
     grid_search_expansion_factor,
@@ -61,19 +62,19 @@ from processing.weighting.balancing.balancer import (
 from processing.weighting.balancing.base_weights import compute_base_weights
 from processing.weighting.balancing.importance import compute_control_moe, compute_moe_importance
 from processing.weighting.controls.registry import register_crosstabs_from_config, resolve_targets
+from processing.weighting.core.hierarchy import seed_col_for, weight_col_for
 from processing.weighting.core.propagation import (
     propagate_weights,
     safe_join_weight,
+    seed_admits,
 )
 from processing.weighting.core.specs import (
     BalancingConfig,
     ControlRegistryConfig,
     ControlTotals,
-    GridPoint,
     ImportanceConfig,
-    ImputationSummary,
+    ProfileFit,
     WeightingConfig,
-    ZoneStatus,
 )
 from processing.weighting.data_prep.control_data import (
     recode_pums_households,
@@ -105,6 +106,7 @@ from processing.weighting.validation.control_validation import (
     validate_total_control_categories,
     warn_crosstab_sparsity,
 )
+from processing.weighting.validation.coverage import check_control_geography_coverage
 
 logger = logging.getLogger(__name__)
 
@@ -138,28 +140,42 @@ class WeightingPipeline:
     pipeline.aggregate_totals()
     pipeline.resolve_importance()
 
-    pipeline.balance()
-    pipeline.propagate()
-
-    pipeline.generate_diagnostics()
+    pipeline.fit_all()          # one fit per configured profile
     ```
+
+    # One fit per profile
+
+    Everything above ``fit_all`` describes the survey and the controls, so it is
+    shared. Everything from the seed onward belongs to a *profile*: which
+    households are admitted, what they were balanced to, and the weight columns
+    written. Each fit's products live on its own
+    [`ProfileFit`][processing.weighting.core.specs.ProfileFit], and its columns
+    carry the profile name as a suffix.
+
+    A profile is fitted, never derived from another profile's fit. Reusing one
+    profile's household weights for a different universe produces numbers
+    indistinguishable from balanced ones that match no control total; the honest
+    way to impose weights from outside is
+    [`add_existing_weights`][processing.weighting.existing_weights.add_existing_weights],
+    which says so in its name.
     """
 
-    # -- Intermediate state (populated by phase methods) ----------------
+    # -- Shared state (populated by the phases every fit reads) ---------
     crosswalk: PumaCrosswalk
     pums_hh: pl.DataFrame
     pums_per: pl.DataFrame
     survey_bundle: IncidenceBundle
     pums_bundle: IncidenceBundle
-    seed_incidence: pl.DataFrame
     pums_incidence: pl.DataFrame
     control_totals: ControlTotals
     resolved_importance: dict[str, float]
     control_moe: pl.DataFrame | None
-    weights: pl.DataFrame
-    statuses: list[ZoneStatus]
-    grid_results: list[GridPoint] | None
-    imputation_summary: list[ImputationSummary]
+
+    # -- Per-profile state ----------------------------------------------
+    # Each fit keeps its own seed, weights and statuses. Sharing instance
+    # attributes for those would leave the last profile's numbers standing as
+    # the ones the diagnostics and the checks describe.
+    fits: dict[str | None, ProfileFit]
 
     def __init__(
         self,
@@ -181,9 +197,9 @@ class WeightingPipeline:
         self.balancing = balancing or BalancingConfig()
         self.importance_cfg = importance or ImportanceConfig()
 
-        # Mutable state initialised to None; populated by phases
+        # Mutable state initialised empty; populated by phases
         self.control_moe = None
-        self.grid_results = None
+        self.fits = {}
 
     @property
     def cache_dir(self) -> Path | None:
@@ -267,8 +283,11 @@ class WeightingPipeline:
                                                        ▼  (training data)
             Survey HH/PER ─► recode ─► pivot ─► IncidenceBundle (survey)
                                                        │
-                                                       ▼  (fill nulls)
-                                              seed_incidence (final)
+                                                       ▼  (per profile)
+                                                  `build_seed`
+
+        The survey bundle is left unfiltered and un-imputed: both depend on which
+        profile's universe is being fitted, and one run may fit several.
         """
         names = self.controls.target_names
 
@@ -304,62 +323,24 @@ class WeightingPipeline:
         )
         per_recoded = recode_survey_persons(self.data.persons, names, strict_nulls=strict_nulls)  # pyright: ignore[reportArgumentType]
 
-        # Pivot into incidence bundle (one row per hh_id)
+        # Pivot into incidence bundle (one row per hh_id). Unfiltered: which
+        # households enter a seed is a profile's question, answered per fit in
+        # `build_seed`, and one run may build several seeds from this bundle.
         self.survey_bundle = build_incidence_table(hh_recoded, per_recoded, names)
 
-        # Drop incomplete households from the weighting seed (filter all bundle
-        # tables). When excluded, they are re-added with zero weight during
-        # propagate(); the balancer distributes each zone's population across the
-        # surviving complete respondents, so the weighted totals still sum to the
-        # control totals. When exclude_incompletes is False they stay in the seed
-        # and receive computed weights.
-        n_incompletes = 0
-        if self.config.exclude_incompletes:
-            complete_hh_ids = (
-                self.data.households.filter(pl.col("complete"))  # pyright: ignore[reportOptionalMemberAccess]
-                .select("hh_id")
-                .to_series()
-            )
-            n_incompletes = self.data.households.height - complete_hh_ids.len()  # pyright: ignore[reportOptionalMemberAccess]
-            self.survey_bundle = self.survey_bundle.filter_households(complete_hh_ids)
-
-        # Report survey content after recoding and filtering (before imputation)
-        n_survey_hh = self.survey_bundle.household_pivot["h_total"].sum()
-        n_survey_per = self.survey_bundle.person_pivot["p_total"].sum()
-
         logger.info(
-            "Survey after recoding (exclude_incompletes=%s): "
-            "%d HHs, %d persons, %d incomplete HHs dropped from the seed",
-            self.config.exclude_incompletes,
-            n_survey_hh,
-            n_survey_per,
-            n_incompletes,
+            "Survey after recoding: %d HHs, %d persons (before any profile gate)",
+            self.survey_bundle.household_pivot["h_total"].sum(),
+            self.survey_bundle.person_pivot["p_total"].sum(),
         )
-
-        # ==============================================================
-        # Null imputation — RF-predicted fractional probabilities
-        # ==============================================================
-        # Survey respondents with null demographics get zero incidence
-        # from the pivot.  Use the complete PUMS bundle as training data
-        # to predict class-membership probabilities and fill those zeros
-        # with fractional values (predict_proba).
-        self.pre_imputation_incidence = self.survey_bundle.incidence
-        self.seed_incidence, self.imputation_summary = fill_null_incidence(
-            self.survey_bundle,
-            self.pums_bundle,
-            names,
-            cache_dir=self.cache_dir,
-        )
-        # After imputation, every control must sum correctly (with tolerance
-        # for floating-point fractions introduced by the RF predictions).
-        check_incidence_sums(self.seed_incidence, names, source_label="survey", tolerance=0.01)
 
     def assign_zones(self) -> None:
         """Point-in-polygon zone assignment + optional block-group assignment.
 
         Mutates ``self.data.households`` in place (adds geo columns) and
-        updates ``self.seed_incidence`` and ``self.pums_incidence`` with
-        zone info.
+        allocates ``self.pums_incidence`` across zones. Each seed takes its geo
+        columns off ``self.data.households`` in `build_seed`, since a seed only
+        exists once a profile has been named.
         """
         hh = self.crosswalk.assign_households(self.data.households)  # pyright: ignore[reportArgumentType]
         n_assigned = hh.filter(pl.col("study_geoid").is_not_null()).height
@@ -371,44 +352,27 @@ class WeightingPipeline:
             logger.info("Assigned %d / %d HHs to block groups", n_bg, len(hh))
 
         self.data.households = hh
-
-        hh_join_cols = ["hh_id", "study_geoid", "ctrl_geoid"]
-        if "bg_geo_id" in hh.columns:
-            hh_join_cols.append("bg_geo_id")
-
-        self.seed_incidence = self.seed_incidence.join(
-            hh.select(hh_join_cols),
-            on="hh_id",
-            how="left",
-        )
         self.pums_incidence = self.crosswalk.allocate_pums_incidence(
             self.pums_incidence,
         )
 
     def apply_merges(self) -> None:
-        """Apply 1-D merges symmetrically to both incidence tables.
+        """Apply 1-D merges to the PUMS incidence table.
 
         Cross-tab merges are applied at registration time (pre-merge into
-        the enum), so only 1-D merges need post-pivot application here.
+        the enum), so only 1-D merges need post-pivot application here. The seed
+        side is merged in `build_seed`, symmetrically and once per profile.
         """
         if self.controls.merges_1d:
-            self.seed_incidence = apply_1d_merges(
-                self.seed_incidence,
-                self.controls.merges_1d,
-            )
             self.pums_incidence = apply_1d_merges(
                 self.pums_incidence,
                 self.controls.merges_1d,
             )
             logger.info(
-                "Applied %d 1-D merge specs; incidence now %d columns",
+                "Applied %d 1-D merge specs to PUMS; incidence now %d columns",
                 len(self.controls.merges_1d),
-                len(self.seed_incidence.columns),
+                len(self.pums_incidence.columns),
             )
-
-        # Check for sparse cross-tab cells that may cause balancing issues
-        ctrl_instances = resolve_targets(self.controls.target_names)
-        warn_crosstab_sparsity(self.seed_incidence, ctrl_instances)
 
     def aggregate_totals(self) -> None:
         """Aggregate PUMS incidence into per-zone control totals."""
@@ -462,11 +426,106 @@ class WeightingPipeline:
         logger.info("Importance weights:\n%s", imp_lines)
         self.resolved_importance = overrides
 
-    def balance(self) -> None:
-        """Compute base weights, run max-entropy balancing, optional grid search."""
+    def build_seed(self, profile: str | None) -> ProfileFit:
+        """Gate, impute, place and merge one profile's seed.
+
+        The profile's own flag decides who enters the seed, so the balancer
+        spreads each zone's population over exactly the households that will keep
+        a weight. Gating afterwards instead deletes fitted mass that nothing
+        re-spreads, households being the hierarchy anchor, and the survey then
+        expands to less than the population it was fitted to.
+
+        Args:
+            profile: Usability profile to fit, or None for a single un-suffixed
+                weight set gated on ``config.usability_flag_col``.
+
+        Returns:
+            The seed and its metadata, ready to balance.
+
+        Raises:
+            ValueError: If the gating column is absent from households.
+        """
+        flag = self.config.flag_for(profile)
         names = self.controls.target_names
-        self.seed_incidence = compute_base_weights(
-            self.seed_incidence,
+        households = self.data.households
+        if households is None:  # pragma: no cover - guarded in __init__
+            msg = "build_seed requires a households table"
+            raise ValueError(msg)
+
+        bundle = self.survey_bundle
+        n_gated = 0
+        if self.config.exclude_incompletes:
+            if flag not in households.columns:
+                msg = (
+                    f"The weighting is gated on {flag!r}, which households does not carry. "
+                    f"{suggest_usability_columns(households)}"
+                )
+                raise ValueError(msg)
+            admitted = households.filter(seed_admits(flag)).select("hh_id").to_series()
+            n_gated = households.height - admitted.len()
+            bundle = bundle.filter_households(admitted)
+
+        logger.info(
+            "Seed for %s: %d HHs, %d persons, %d HHs gated out",
+            profile or "the survey",
+            bundle.household_pivot["h_total"].sum(),
+            bundle.person_pivot["p_total"].sum(),
+            n_gated,
+        )
+
+        # Null imputation -- RF-predicted fractional probabilities. Survey
+        # respondents with null demographics get zero incidence from the pivot;
+        # the complete PUMS bundle trains the fill.
+        pre_imputation = bundle.incidence
+        seed, imputation_summary = fill_null_incidence(
+            bundle,
+            self.pums_bundle,
+            names,
+            cache_dir=self.cache_dir,
+        )
+        # After imputation, every control must sum correctly (with tolerance
+        # for floating-point fractions introduced by the RF predictions).
+        check_incidence_sums(seed, names, source_label="survey", tolerance=0.01)
+
+        # Geography is a property of the household, but how much of a universe it
+        # covers is a property of this seed, so it is counted per profile.
+        geo_names = ("study_geoid", "ctrl_geoid", "bg_geo_id")
+        geo_cols = [c for c in geo_names if c in households.columns]
+        seed = seed.join(households.select("hh_id", *geo_cols), on="hh_id", how="left")
+        coverage = check_control_geography_coverage(
+            seed,
+            profile=profile,
+            max_unplaceable_share=self.config.max_unplaceable_share,
+        )
+        if coverage.n_unplaceable:
+            # A household in no zone reaches no ZoneInput, so keeping it cannot
+            # weight it -- it only inflates the response count its sample segment
+            # divides by.
+            seed = seed.filter(pl.col("ctrl_geoid").is_not_null())
+
+        if self.controls.merges_1d:
+            seed = apply_1d_merges(seed, self.controls.merges_1d)
+        warn_crosstab_sparsity(seed, resolve_targets(names))
+
+        return ProfileFit(
+            profile=profile,
+            usability_flag_col=flag,
+            seed_incidence=seed,
+            pre_imputation_incidence=pre_imputation,
+            imputation_summary=imputation_summary,
+            coverage=coverage,
+        )
+
+    def balance_fit(self, fit: ProfileFit) -> None:
+        """Compute base weights and balance one seed, in place on *fit*.
+
+        A non-converged zone is recorded rather than raised on, so every profile
+        still produces a diagnostics report to debug from. ``fit_all`` raises once
+        at the end, naming each profile that failed.
+        """
+        names = self.controls.target_names
+        fit.seed_incidence = compute_base_weights(
+            fit.seed_incidence,
             self.control_totals,
             names,
             geo_col="ctrl_geoid",
@@ -481,22 +540,24 @@ class WeightingPipeline:
             moe_based=False,  # already resolved
             default=self.importance_cfg.default,
         )
-        self.weights, self.statuses = balance_weights(
-            self.seed_incidence,
+        fit.weights, fit.statuses = balance_weights(
+            fit.seed_incidence,
             self.control_totals,
             names,
             balancing=self.balancing,
             importance=imp_cfg,
         )
 
-        n_failed = sum(not s.converged for s in self.statuses)
-        if n_failed:
-            msg = f"Balancing failed to converge for {n_failed} zones.  See logs for details."
-            raise RuntimeError(msg)
+        if fit.unconverged_zones:
+            logger.error(
+                "Balancing failed to converge for %d zones under %s. See logs for details.",
+                fit.unconverged_zones,
+                fit.profile or "the survey",
+            )
 
         if self.config.expansion_factor_grid:
-            self.grid_results = grid_search_expansion_factor(
-                self.seed_incidence,
+            fit.grid_results = grid_search_expansion_factor(
+                fit.seed_incidence,
                 self.control_totals,
                 names,
                 ef_grid=self.config.expansion_factor_grid,
@@ -505,7 +566,7 @@ class WeightingPipeline:
                 importance=imp_cfg,
             )
 
-    def generate_diagnostics(self, output_path: Path | str | None = None) -> None:
+    def generate_diagnostics(self, fit: ProfileFit, output_path: Path | str | None = None) -> None:
         """Write a self-contained interactive HTML diagnostics report for the weighting run.
 
         The report covers the full weighting pipeline from geographic crosswalk
@@ -539,77 +600,131 @@ class WeightingPipeline:
 
         Parameters
         ----------
+        fit:
+            The completed fit to describe.  Each profile gets its own report.
         output_path:
             Destination for the HTML file.  Accepts a ``Path``, a string
             (including Jinja-rendered template paths from the YAML config), or
             ``None``.  When ``None`` the file is written to
             ``<cache_dir>/diagnostics.html`` (or ``./weighting/diagnostics.html``
-            if no cache directory is configured).
+            if no cache directory is configured).  With several profiles fitted
+            the profile name is inserted into the stem, so one run's reports do
+            not overwrite each other.
         """
         if output_path is not None:
             resolved_path = Path(output_path)
         else:
             report_dir = self.cache_dir or Path.cwd() / "weighting"
             resolved_path = report_dir / "diagnostics.html"
+        if fit.profile is not None:
+            resolved_path = resolved_path.with_name(
+                f"{resolved_path.stem}_{fit.profile}{resolved_path.suffix}"
+            )
         zone_groups: dict[str, list[str]] | None = self.config.geography.get("zone_groups")
         generate_report(
-            seed=self.seed_incidence,
-            weights=self.weights,
+            seed=fit.seed_incidence,
+            weights=fit.weights,
             control_totals=self.control_totals,
             target_names=self.controls.target_names,
-            statuses=self.statuses,
+            statuses=fit.statuses,
             output_path=resolved_path,
             puma_gdf=self.crosswalk.puma_gdf,
             target_gdf=self.crosswalk.target_gdf,
             crosswalk_df=self.crosswalk.crosswalk_df,
             zone_groups=zone_groups,
             merge_specs=self.controls.all_merges,
-            grid_results=self.grid_results,
-            selected_ef=(self.balancing.max_expansion_factor if self.grid_results else None),
+            grid_results=fit.grid_results,
+            selected_ef=(self.balancing.max_expansion_factor if fit.grid_results else None),
             control_moe=self.control_moe,
-            imputation_summary=self.imputation_summary,
+            imputation_summary=fit.imputation_summary,
             pums_incidence=self.pums_incidence,
-            pre_imputation_incidence=self.pre_imputation_incidence,
+            pre_imputation_incidence=fit.pre_imputation_incidence,
         )
 
-    def propagate(self) -> None:
-        """Attach weights to households and propagate to all tables on ``self.data``."""
+    def propagate_fit(self, fit: ProfileFit) -> None:
+        """Attach one fit's weights to households and propagate them down.
+
+        The only place a profile suffix is applied to canonical data: the
+        balancer emits the base column name, knowing nothing about profiles, and
+        the rename happens here as it is joined on.
+        """
+        if fit.weights is None:  # pragma: no cover - balance_fit always sets it
+            msg = f"Cannot propagate {fit.profile}: it has not been balanced"
+            raise ValueError(msg)
+
+        hh_weight_col = weight_col_for("hh_weight", fit.profile)
+        base_weight_col = seed_col_for("base_weight", fit.profile)
+
         self.data.households = safe_join_weight(
             self.data.households,  # pyright: ignore[reportArgumentType]
-            self.weights.select("hh_id", "hh_weight"),
+            fit.weights.select("hh_id", "hh_weight").rename({"hh_weight": hh_weight_col}),
             "hh_id",
         )
-        self.data.households = self.data.households.join(
-            self.seed_incidence.select("hh_id", "base_weight"),
-            on="hh_id",
-            how="left",
+        self.data.households = safe_join_weight(
+            self.data.households,
+            fit.seed_incidence.select("hh_id", "base_weight").rename(
+                {"base_weight": base_weight_col}
+            ),
+            "hh_id",
         )
         tables = self.data.as_dict()
-        has_weight: dict[str, str] = {"households": "hh_weight"}
+        has_weight: dict[str, str] = {"households": hh_weight_col}
 
-        # Usability is a flag stamped upstream by the ``cascade_completeness``
-        # step -- the profile this project named. Nothing is re-derived here.
-        usability_flag_col = self.config.usability_flag_col
-
-        # Unusable households were held out of the seed, so they never received a
-        # balanced weight; zero them so the join leaves nothing behind.
+        # Households the seed rejected never received a balanced weight. Zeroing
+        # them on the same expression the seed used is what makes a null mean
+        # "no estimate exists" rather than "excluded".
         hh = tables["households"]
-        if self.config.exclude_incompletes and hh is not None and usability_flag_col in hh.columns:
+        flag = fit.usability_flag_col
+        if self.config.exclude_incompletes and hh is not None and flag in hh.columns:
             tables["households"] = hh.with_columns(
-                pl.when(pl.col(usability_flag_col).fill_null(value=False))
-                .then(pl.col("hh_weight"))
+                pl.when(seed_admits(flag))
+                .then(pl.col(hh_weight_col))
                 .otherwise(0.0)
-                .alias("hh_weight")
+                .alias(hh_weight_col)
             )
 
         # Propagate the weights through the survey relational structure (HH → PER → DAY → TRIP/TOUR)
         propagate_weights(
             tables,
             has_weight,
-            usability_flag_col=usability_flag_col if self.config.exclude_incompletes else None,
+            usability_flag_col=flag if self.config.exclude_incompletes else None,
+            profile=fit.profile,
         )
 
         # Write propagated tables back to self.data
         for name, df in tables.items():
             if df is not None:
                 setattr(self.data, name, df)
+
+    def fit(self, profile: str | None, *, output_path: str | None = None) -> ProfileFit:
+        """Build, balance, propagate and report one profile's weights."""
+        fit = self.build_seed(profile)
+        self.balance_fit(fit)
+        self.propagate_fit(fit)
+        self.generate_diagnostics(fit, output_path=output_path)
+        self.fits[fit.profile] = fit
+        return fit
+
+    def fit_all(self, *, output_path: str | None = None) -> dict[str | None, ProfileFit]:
+        """Run one fit per configured profile, then raise if any failed to converge.
+
+        Every profile is attempted and every report written before raising, so a
+        convergence failure in one costs a diagnosis of the others rather than
+        hiding it.
+
+        Raises:
+            RuntimeError: If any profile left zones unconverged.
+        """
+        for profile in self.config.fitted_profiles:
+            self.fit(profile, output_path=output_path)
+
+        failed = {
+            fit.profile or "the survey": fit.unconverged_zones
+            for fit in self.fits.values()
+            if fit.unconverged_zones
+        }
+        if failed:
+            detail = ", ".join(f"{name}: {n} zones" for name, n in failed.items())
+            msg = f"Balancing failed to converge ({detail}). See logs and the reports written."
+            raise RuntimeError(msg)
+        return self.fits

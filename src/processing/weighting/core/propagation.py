@@ -66,6 +66,36 @@ from processing.weighting.core.hierarchy import (
 logger = logging.getLogger(__name__)
 
 
+def drop_unsuffixed_weights(
+    tables: dict[str, pl.DataFrame | None],
+    profiles: tuple[str | None, ...],
+) -> None:
+    """Remove each level's bare weight column, in place, when profiles were used.
+
+    A table must not offer both ``hh_weight`` and ``hh_weight_<profile>``: a
+    reader has no way to tell which is authoritative, and the bare one is stale
+    by construction -- either a placeholder from the loader or a previous run's
+    output that this run did not rewrite. Whoever wants an un-suffixed set weights
+    a single profile, which is what leaves these columns in place.
+
+    Does nothing when no profile was named, since then the bare columns *are* the
+    output.
+    """
+    if profiles == (None,):
+        return
+
+    for level in HIERARCHY:
+        df = tables.get(level.table)
+        if df is None or level.weight_col not in df.columns:
+            continue
+        tables[level.table] = df.drop(level.weight_col)
+        logger.info(
+            "Dropped the un-suffixed %s from %s: this run writes one column per profile",
+            level.weight_col,
+            level.table,
+        )
+
+
 def collect_tables(**tables: pl.DataFrame | None) -> dict[str, pl.DataFrame | None]:
     """Bundle canonical tables into a dict keyed by table name.
 
@@ -100,6 +130,24 @@ def safe_join_weight(df: pl.DataFrame, weight_df: pl.DataFrame, on: str) -> pl.D
 def is_usable(usability_flag_col: str) -> pl.Expr:
     """True when a record may carry weight; a null flag counts as unusable."""
     return pl.col(usability_flag_col).fill_null(value=False)
+
+
+def seed_admits(usability_flag_col: str) -> pl.Expr:
+    """True when a household belongs in the balancer's seed for this profile.
+
+    The profile's own flag, floored by ``complete``. Every profile is a subset of
+    ``complete`` by construction, so the floor changes no number -- it states the
+    invariant where the seed is chosen, and covers a hand-written flag that is
+    not.
+
+    The same expression decides the seed and the post-balancing zeroing. Were the
+    two to differ, a household the seed rejected could keep a null where the
+    output promises a zero.
+    """
+    admits = pl.col(usability_flag_col).fill_null(value=False)
+    if usability_flag_col == "complete":
+        return admits
+    return admits & pl.col("complete").fill_null(value=False)
 
 
 def distribute_within_scope(
@@ -250,8 +298,10 @@ def _carry_down(
     has_weight: dict[str, str],
     level: Level,
     usability_flag_col: str | None,
+    profile: str | None = None,
 ) -> None:
     """Derive *level*'s weight from its parent and distribute it, in place."""
+    weight_col = level.weight_col_for(profile)
     child_df = tables[level.table]
     parent_df = tables.get(level.parent)  # type: ignore[arg-type]
     if child_df is None:
@@ -259,32 +309,29 @@ def _carry_down(
 
     if level.parent not in has_weight:
         msg = (
-            f"Cannot derive {level.weight_col} for {level.table}: "
+            f"Cannot derive {weight_col} for {level.table}: "
             f"parent table {level.parent} has no weight column"
         )
         raise ValueError(msg)
     if parent_df is None:
-        msg = (
-            f"Cannot derive {level.weight_col} for {level.table}: "
-            f"parent table {level.parent} is None"
-        )
+        msg = f"Cannot derive {weight_col} for {level.table}: parent table {level.parent} is None"
         raise ValueError(msg)
     if level.key not in child_df.columns:
         msg = f"Cannot derive weight: {level.table} missing join key {level.key}"
         raise ValueError(msg)
 
     parent_weight = has_weight[level.parent]  # type: ignore[index]
-    logger.info("Deriving %s from %s via %s", level.weight_col, parent_weight, level.key)
+    logger.info("Deriving %s from %s via %s", weight_col, parent_weight, level.key)
 
     # Every child starts holding its parent's weight -- its claim.
-    claims = parent_df.select(level.key, parent_weight).rename({parent_weight: level.weight_col})
+    claims = parent_df.select(level.key, parent_weight).rename({parent_weight: weight_col})
     child_df = safe_join_weight(child_df, claims, level.key)  # type: ignore[arg-type]
 
     if level.split:
         # Average-day convention: children jointly represent the parent once.
         child_df = split_among_usable(
             child_df,
-            weight_col=level.weight_col,
+            weight_col=weight_col,
             key=level.key,  # type: ignore[arg-type]
             usability_flag_col=usability_flag_col,
             table=level.table,
@@ -292,14 +339,14 @@ def _carry_down(
     elif usability_flag_col:
         child_df = distribute_within_scope(
             child_df,
-            weight_col=level.weight_col,
+            weight_col=weight_col,
             scope=level.scope,  # type: ignore[arg-type]
             usability_flag_col=usability_flag_col,
             table=level.table,
         )
 
     tables[level.table] = child_df
-    has_weight[level.table] = level.weight_col
+    has_weight[level.table] = weight_col
 
 
 def _aggregate_up(
@@ -307,31 +354,30 @@ def _aggregate_up(
     has_weight: dict[str, str],
     level: Level,
     usability_flag_col: str | None,
+    profile: str | None = None,
 ) -> None:
     """Combine *level*'s usable members into its weight, in place."""
+    weight_col = level.weight_col_for(profile)
     target_df = tables[level.table]
     source_df = tables.get(level.parent)  # type: ignore[arg-type]
     if target_df is None:
         return
 
     if source_df is None:
-        msg = (
-            f"Cannot derive {level.weight_col} for {level.table}: "
-            f"source table {level.parent} is None"
-        )
+        msg = f"Cannot derive {weight_col} for {level.table}: source table {level.parent} is None"
         raise ValueError(msg)
     if level.parent not in has_weight:
         msg = (
-            f"Cannot derive {level.weight_col} for {level.table}: "
+            f"Cannot derive {weight_col} for {level.table}: "
             f"source table {level.parent} has no weight column"
         )
         raise ValueError(msg)
     if level.key not in source_df.columns:
-        msg = f"Cannot derive {level.weight_col}: source {level.parent} missing {level.key}"
+        msg = f"Cannot derive {weight_col}: source {level.parent} missing {level.key}"
         raise ValueError(msg)
 
     src_weight = has_weight[level.parent]  # type: ignore[index]
-    logger.info("Deriving %s from %s of %s", level.weight_col, level.agg.name.lower(), src_weight)
+    logger.info("Deriving %s from %s of %s", weight_col, level.agg.name.lower(), src_weight)
 
     # Members that carried weight in. A zero-weight member was already re-homed
     # onto its own scope's usable records, so it is neither averaged nor counted.
@@ -340,7 +386,7 @@ def _aggregate_up(
     )
     combine = carried.sum() if level.agg is Agg.SUM else carried.mean()
 
-    agg = source_df.group_by(level.key).agg(combine.fill_null(0).alias(level.weight_col))
+    agg = source_df.group_by(level.key).agg(combine.fill_null(0).alias(weight_col))
     target_df = safe_join_weight(target_df, agg, level.key)  # type: ignore[arg-type]
 
     # A grouping is never more usable than its members: an unusable record
@@ -348,13 +394,13 @@ def _aggregate_up(
     if usability_flag_col and usability_flag_col in target_df.columns:
         target_df = target_df.with_columns(
             pl.when(is_usable(usability_flag_col))
-            .then(pl.col(level.weight_col))
+            .then(pl.col(weight_col))
             .otherwise(0.0)
-            .alias(level.weight_col)
+            .alias(weight_col)
         )
 
     tables[level.table] = target_df
-    has_weight[level.table] = level.weight_col
+    has_weight[level.table] = weight_col
 
 
 def propagate_weights(
@@ -363,6 +409,7 @@ def propagate_weights(
     *,
     skip: set[str] | None = None,
     usability_flag_col: str | None,
+    profile: str | None = None,
 ) -> None:
     """Walk the hierarchy, deriving every weight that is not already supplied.
 
@@ -379,6 +426,10 @@ def propagate_weights(
             weight the whole valid survey including partial/overnight tours, or
             None to give every record its claim regardless of usability (split
             levels still divide the parent weight equally, over *all* children).
+        profile: Usability profile these weights belong to, which suffixes every
+            column written. None writes the un-suffixed set. A parent's column is
+            read from *has_weight*, never re-derived, so two profiles may be
+            propagated over the same tables without reading each other's numbers.
     """
     skip = skip or set()
 
@@ -386,9 +437,9 @@ def propagate_weights(
         if level.flow is None or level.table in skip or tables.get(level.table) is None:
             continue
         if level.flow is Flow.DOWN:
-            _carry_down(tables, has_weight, level, usability_flag_col)
+            _carry_down(tables, has_weight, level, usability_flag_col, profile)
         else:
-            _aggregate_up(tables, has_weight, level, usability_flag_col)
+            _aggregate_up(tables, has_weight, level, usability_flag_col, profile)
 
 
 def non_null_tables(tables: dict[str, pl.DataFrame | None]) -> dict[str, pl.DataFrame]:

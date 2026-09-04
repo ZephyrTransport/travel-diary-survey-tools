@@ -12,6 +12,8 @@ from pydantic import BaseModel
 from data_canon.models import survey as survey_models
 from data_canon.models import weighting as weighting_models
 from data_canon.validation.column import (
+    GeneratedColumn,
+    check_generated_constraints,
     check_unique_constraints,
     get_unique_fields,
 )
@@ -69,12 +71,14 @@ class CanonicalData:
     models: dict[str, type[BaseModel]] = field(default_factory=lambda: dict(CANONICAL_MODELS))
 
     # Columns a step generated whose names come from configuration rather than
-    # a model field: zone ids, pre-imputation stashes, usability profiles.
-    # Populated at runtime by the steps that create them; read when deciding
-    # what to deliver. Maps table -> column -> description, so a column named by
-    # a project can still explain itself in the delivered output. The
-    # description is "" where the generating step offered none.
-    generated_columns: dict[str, dict[str, str]] = field(default_factory=dict, repr=False)
+    # a model field: zone ids, pre-imputation stashes, usability profiles,
+    # per-profile weights. Populated at runtime by the steps that create them;
+    # read when deciding what to deliver, and when checking what was promised.
+    # Maps table -> column -> what the step promised of it, so a column a project
+    # named can still explain itself and still be constrained.
+    generated_columns: dict[str, dict[str, GeneratedColumn]] = field(
+        default_factory=dict, repr=False
+    )
 
     # Custom validators: table_name -> list of validator functions
     # Populated from custom_validation.CUSTOM_VALIDATORS
@@ -109,7 +113,7 @@ class CanonicalData:
     def register_generated_columns(
         self,
         table: str,
-        columns: Iterable[str] | Mapping[str, str],
+        columns: Iterable[str] | Mapping[str, "str | GeneratedColumn"],
     ) -> None:
         """Record columns a step generated whose names come from configuration.
 
@@ -125,16 +129,23 @@ class CanonicalData:
         what it means, so a column whose name a project chose can still explain
         itself. Passing a bare iterable records the names with no description.
 
+        A mapping may give a [`GeneratedColumn`]
+        [data_canon.validation.column.GeneratedColumn] instead of a string, to
+        declare the constraints a model field would have carried. Without that a
+        generated column is delivered unchecked.
+
         Args:
             table: Canonical table the columns were added to.
-            columns: Column names, or column name -> description.
+            columns: Column names, or column name -> description or
+                ``GeneratedColumn``.
         """
-        described = dict(columns) if isinstance(columns, Mapping) else dict.fromkeys(columns, "")
+        given = dict(columns) if isinstance(columns, Mapping) else dict.fromkeys(columns, "")
         registry = self.generated_columns.setdefault(table, {})
-        for column, description in described.items():
-            # Never let a later bare registration blank an existing description.
-            if description or column not in registry:
-                registry[column] = description
+        for column, promise in given.items():
+            spec = promise if isinstance(promise, GeneratedColumn) else GeneratedColumn(promise)
+            # Never let a later bare registration blank what is already promised.
+            if spec != GeneratedColumn() or column not in registry:
+                registry[column] = spec
 
     def public_columns(self, table: str) -> set[str]:
         """Columns of *table* the pipeline stands behind: declared or generated."""
@@ -144,7 +155,10 @@ class CanonicalData:
 
     def describe_generated(self, table: str) -> dict[str, str]:
         """Descriptions for *table*'s generated columns, empty string where none."""
-        return dict(self.generated_columns.get(table, {}))
+        return {
+            column: spec.description
+            for column, spec in self.generated_columns.get(table, {}).items()
+        }
 
     def as_dict(self) -> dict[str, pl.DataFrame | None]:
         """Return all canonical tables as a dict (including None entries)."""
@@ -204,7 +218,7 @@ class CanonicalData:
             f"{len(df):,}",
         )
 
-        # 1. Column constraints (uniqueness)
+        # 1. Column constraints (uniqueness, then what generated columns promised)
         # Extract unique fields from model metadata
         unique_fields = get_unique_fields(self.models[table_name])
         if unique_fields:
@@ -213,6 +227,7 @@ class CanonicalData:
                 df,
                 unique_fields,
             )
+        check_generated_constraints(table_name, df, self.generated_columns.get(table_name, {}))
 
         # 2. Foreign key constraints
         # Extract FK fields from model metadata
