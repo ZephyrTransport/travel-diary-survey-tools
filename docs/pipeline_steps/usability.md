@@ -8,11 +8,11 @@ reads the result.
 
 Two kinds of flag, computed side by side:
 
-- `complete` — survey reporting completeness (vendor-provided at the day level,
+- `survey_complete` — survey reporting completeness (vendor-provided at the day level,
   possibly adjusted by the project cleaner), cascaded through
   household ↔ person ↔ day ↔ trip/tour so it is internally consistent. One
   answer per run, never configurable.
-- **one column per usability profile** — the subset of `complete` that profile
+- **one column per usability profile** — the subset of `survey_complete` that profile
   admits. A project names its profiles in config, so several standards can
   coexist in one run and a column's meaning reads off the config.
 
@@ -31,25 +31,45 @@ those are not open ends, and no tolerance makes a missing leg present.
 
 ```yaml
 usability_profiles:
-  ctramp_usable:
+  ctramp:
     tour_closes_at: primary_home
     household_day_needs: all_members
-  analysis_usable:
+  analysis:
     tour_closes_at: anywhere
     household_day_needs: nothing
 ```
 
-Downstream consumers name the profile they honour via `usability_flag_col` —
-the weighting, the CT-RAMP formatter and the DaySim formatter each take it, and
-none re-derive the verdict: the column is read, and its absence raises.
+## One profile, several column families
 
-The name is also the address of that profile's *weights*. A weighting run given
-`weight_profiles` fits each profile separately and suffixes its columns with the
-profile's name (`hh_weight_ctramp_usable`), so `usability_flag_col` settles both
-which records a consumer keeps and which weights it reads — there is no second
-setting that could disagree with the first. A consumer naming a profile the
-weighting was not asked to fit raises rather than falling back to an unsuffixed
-column, since that column describes some other universe, or none.
+A profile is a name. Every column belonging to it is that name suffixed onto a
+family, so the family says what kind of thing a column is and the suffix says
+whose:
+
+| family | column | written by |
+|---|---|---|
+| `usable_` | `usable_ctramp` | the per-record verdict, from this step |
+| `hh_day_` | `hh_day_ctramp` | whether every surveyable member's day passed, that date |
+| `hh_weight_`, `day_weight_`, … | `hh_weight_ctramp` | the weight fitted over that profile's universe |
+| `base_weight_` | `base_weight_ctramp` | the seed weight its fit started from |
+
+Two profiles can therefore never write the same column, whatever they are
+called: the families have disjoint prefixes, and a name is unique within one.
+
+`survey reporting completeness` sits outside all of it. `survey_complete` and
+`hh_day_survey_complete` record what the survey collected rather than what a model will
+take, so they carry no family prefix and are reserved — a profile may not take
+either name.
+
+Downstream consumers name the profile they honour via `usability_profile` — the
+weighting, the CT-RAMP formatter and the DaySim formatter each take it, and none
+re-derive the verdict: the column is read, and its absence raises.
+
+That one name is the whole address. It resolves to `usable_<profile>` for the
+records a consumer keeps and to `hh_weight_<profile>` for the weights it reads,
+so there is no second setting that could disagree with the first. A consumer
+naming a profile the weighting was not asked to fit raises rather than falling
+back to an unsuffixed column, since that column describes some other universe, or
+none.
 
 ::: processing.completeness
     options:

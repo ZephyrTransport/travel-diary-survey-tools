@@ -65,12 +65,12 @@ def _one_household(quality: TourDataQuality, category: TourCategory) -> dict:
     shape exercises both axes from a single fixture.
     """
     return {
-        "households": pl.DataFrame({"hh_id": [1], "complete": [True]}),
+        "households": pl.DataFrame({"hh_id": [1], "survey_complete": [True]}),
         "persons": pl.DataFrame(
             {
                 "person_id": [1, 2],
                 "hh_id": [1, 1],
-                "complete": [True, True],
+                "survey_complete": [True, True],
                 "surveyable": [True, True],
             }
         ),
@@ -80,7 +80,7 @@ def _one_household(quality: TourDataQuality, category: TourCategory) -> dict:
                 "person_id": [1, 2],
                 "hh_id": [1, 1],
                 "travel_date": [datetime(2023, 5, 1)] * 2,
-                "complete": [True, True],
+                "survey_complete": [True, True],
             }
         ),
         "tours": pl.DataFrame(
@@ -88,7 +88,7 @@ def _one_household(quality: TourDataQuality, category: TourCategory) -> dict:
                 "tour_id": [10, 20],
                 "day_id": [1, 2],
                 "person_id": [1, 2],
-                "complete": [True, True],
+                "survey_complete": [True, True],
                 "parent_tour_id": [10, 20],
                 "tour_data_quality": [TourDataQuality.VALID.value, quality.value],
                 "tour_category": [TourCategory.COMPLETE.value, category.value],
@@ -135,7 +135,7 @@ class TestEveryProfileAnswersEveryAxis:
         with pytest.raises(ValueError, match="empty"):
             parse_usability_profiles({})
 
-    @pytest.mark.parametrize("reserved", ["complete", "hh_day_complete"])
+    @pytest.mark.parametrize("reserved", ["survey_complete", "hh_day_survey_complete"])
     def test_a_profile_cannot_take_a_reporting_column_name(self, reserved):
         """Reporting flags are survey facts; a profile must not overwrite one."""
         with pytest.raises(ValueError, match="collides"):

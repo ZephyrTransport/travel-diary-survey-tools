@@ -141,7 +141,7 @@ def compute_weights(  # noqa: PLR0913
     strict_survey_nulls: bool = False,
     # -- Completeness handling ------------------------------------------
     exclude_incompletes: bool = True,
-    usability_flag_col: str | None = None,
+    usability_profile: str | None = None,
     weight_profiles: list[str] | None = None,
     max_unplaceable_share: float = 0.01,
     # -- Canonical tables (auto-injected by pipeline) -------------------
@@ -191,7 +191,7 @@ def compute_weights(  # noqa: PLR0913
         expansion_factor_grid=expansion_factor_grid,
         strict_survey_nulls=strict_survey_nulls,
         exclude_incompletes=exclude_incompletes,
-        usability_flag_col=usability_flag_col,
+        usability_profile=usability_profile,
         weight_profiles=tuple(weight_profiles or ()),
         max_unplaceable_share=max_unplaceable_share,
     )

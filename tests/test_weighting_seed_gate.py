@@ -1,4 +1,4 @@
-"""Who the balancer fits: the profile's flag, floored by ``complete``.
+"""Who the balancer fits: the profile's flag, floored by ``survey_complete``.
 
 This is the expression the whole per-profile change turns on. Filtering the seed
 by the profile is what makes each fit spread its zone's population over the
@@ -7,7 +7,7 @@ that nothing re-spreads, because households are the hierarchy anchor.
 
 It is unit-tested here because the only callers are inside ``compute_weights``,
 which fetches PUMS and so cannot run in the e2e. A mutation replacing this with
-``complete`` alone survived the entire suite until these existed.
+``survey_complete`` alone survived the entire suite until these existed.
 """
 
 import polars as pl
@@ -20,7 +20,7 @@ FRAME = pl.DataFrame(
     {
         "case": ["both", "flag only", "complete only", "neither", "null flag", "null complete"],
         "profile": [True, True, False, False, None, True],
-        "complete": [True, False, True, False, True, None],
+        "survey_complete": [True, False, True, False, True, None],
     }
 )
 
@@ -40,7 +40,7 @@ class TestTheGate:
     def test_the_profile_alone_is_not_enough(self):
         """The floor holds even where the cascade would never break it.
 
-        A profile is a subset of ``complete`` by construction, so this case cannot
+        A profile is a subset of ``survey_complete`` by construction, so this case cannot
         come from the cascade -- but a hand-written flag is not bound by that.
         """
         assert "flag only" not in _admitted()
@@ -64,16 +64,16 @@ class TestTheGate:
 
 
 class TestGatingOnCompletenessItself:
-    """``complete`` is a legitimate thing to weight, and is not floored by itself."""
+    """``survey_complete`` is a legitimate thing to weight, and is not floored by itself."""
 
     def test_every_complete_household_is_seeded(self):
         """Including ones no profile admits -- that is what asking for it means."""
-        assert _admitted("complete") == ["both", "complete only", "null flag"]
+        assert _admitted("survey_complete") == ["both", "complete only", "null flag"]
 
     def test_it_does_not_require_a_profile_column(self):
         """A survey-analysis run may have no profile columns at all."""
-        frame = pl.DataFrame({"complete": [True, False]})
-        assert frame.filter(seed_admits("complete")).height == 1
+        frame = pl.DataFrame({"survey_complete": [True, False]})
+        assert frame.filter(seed_admits("survey_complete")).height == 1
 
 
 class TestAgainstTheZeroingPredicate:

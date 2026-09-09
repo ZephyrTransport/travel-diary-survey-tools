@@ -1,36 +1,6 @@
 {
  "days": {
   "columns": {
-   "analysis_usable": {
-    "counts": {
-     "False": 4,
-     "True": 47
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "79c3590bd7d46c04",
-    "nulls": 0
-   },
-   "complete": {
-    "counts": {
-     "False": 1,
-     "True": 50
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "734e370d18fb90e3",
-    "nulls": 0
-   },
-   "ctramp_usable": {
-    "counts": {
-     "False": 13,
-     "True": 38
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "043b902a95fe7bfc",
-    "nulls": 0
-   },
    "day_id": {
     "distinct": 51,
     "dtype": "Int64",
@@ -53,7 +23,7 @@
     "nulls": 0,
     "sum": 57.0
    },
-   "day_weight_analysis_usable": {
+   "day_weight_analysis": {
     "distinct": 29,
     "dtype": "Float64",
     "hash": "5aea7d4ffd71c1dd",
@@ -62,7 +32,7 @@
     "nulls": 0,
     "sum": 10010.006237
    },
-   "day_weight_ctramp_usable": {
+   "day_weight_ctramp": {
     "distinct": 22,
     "dtype": "Float64",
     "hash": "9a1d696ec81c43f9",
@@ -71,7 +41,7 @@
     "nulls": 0,
     "sum": 10767.769634
    },
-   "day_weight_daysim_usable": {
+   "day_weight_daysim": {
     "distinct": 22,
     "dtype": "Float64",
     "hash": "9a1d696ec81c43f9",
@@ -80,17 +50,7 @@
     "nulls": 0,
     "sum": 10767.769634
    },
-   "daysim_usable": {
-    "counts": {
-     "False": 13,
-     "True": 38
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "043b902a95fe7bfc",
-    "nulls": 0
-   },
-   "hh_day_analysis_usable": {
+   "hh_day_analysis": {
     "counts": {
      "False": 5,
      "True": 46
@@ -100,7 +60,27 @@
     "hash": "7192204503db5e15",
     "nulls": 0
    },
-   "hh_day_complete": {
+   "hh_day_ctramp": {
+    "counts": {
+     "False": 17,
+     "True": 34
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "a8664e2284099ffa",
+    "nulls": 0
+   },
+   "hh_day_daysim": {
+    "counts": {
+     "False": 17,
+     "True": 34
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "a8664e2284099ffa",
+    "nulls": 0
+   },
+   "hh_day_survey_complete": {
     "counts": {
      "False": 1,
      "True": 50
@@ -108,26 +88,6 @@
     "distinct": 2,
     "dtype": "Boolean",
     "hash": "734e370d18fb90e3",
-    "nulls": 0
-   },
-   "hh_day_ctramp_usable": {
-    "counts": {
-     "False": 17,
-     "True": 34
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "a8664e2284099ffa",
-    "nulls": 0
-   },
-   "hh_day_daysim_usable": {
-    "counts": {
-     "False": 17,
-     "True": 34
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "a8664e2284099ffa",
     "nulls": 0
    },
    "hh_id": {
@@ -163,6 +123,16 @@
     "nulls": 0,
     "sum": 72.0
    },
+   "survey_complete": {
+    "counts": {
+     "False": 1,
+     "True": 50
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "734e370d18fb90e3",
+    "nulls": 0
+   },
    "travel_date": {
     "distinct": 3,
     "dtype": "Datetime(time_unit='us', time_zone=None)",
@@ -182,6 +152,36 @@
     "min": 1.0,
     "nulls": 0,
     "sum": 82.0
+   },
+   "usable_analysis": {
+    "counts": {
+     "False": 4,
+     "True": 47
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "79c3590bd7d46c04",
+    "nulls": 0
+   },
+   "usable_ctramp": {
+    "counts": {
+     "False": 13,
+     "True": 38
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "043b902a95fe7bfc",
+    "nulls": 0
+   },
+   "usable_daysim": {
+    "counts": {
+     "False": 13,
+     "True": 38
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "043b902a95fe7bfc",
+    "nulls": 0
    }
   },
   "rows": 51,
@@ -729,46 +729,6 @@
  },
  "households": {
   "columns": {
-   "analysis_usable": {
-    "counts": {
-     "False": 3,
-     "True": 27
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "477068a9c218e874",
-    "nulls": 0
-   },
-   "complete": {
-    "counts": {
-     "False": 1,
-     "True": 29
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "5aa4ca597b595d5b",
-    "nulls": 0
-   },
-   "ctramp_usable": {
-    "counts": {
-     "False": 10,
-     "True": 20
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "3f6a33e74e805a29",
-    "nulls": 0
-   },
-   "daysim_usable": {
-    "counts": {
-     "False": 10,
-     "True": 20
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "3f6a33e74e805a29",
-    "nulls": 0
-   },
    "hh_id": {
     "distinct": 30,
     "dtype": "Int64",
@@ -778,7 +738,7 @@
     "nulls": 0,
     "sum": 465.0
    },
-   "hh_weight_analysis_usable": {
+   "hh_weight_analysis": {
     "distinct": 28,
     "dtype": "Float64",
     "hash": "1feae3f4fc217a09",
@@ -787,7 +747,7 @@
     "nulls": 0,
     "sum": 6255.0
    },
-   "hh_weight_ctramp_usable": {
+   "hh_weight_ctramp": {
     "distinct": 21,
     "dtype": "Float64",
     "hash": "5f6af5abaa9683df",
@@ -796,7 +756,7 @@
     "nulls": 0,
     "sum": 6255.0
    },
-   "hh_weight_daysim_usable": {
+   "hh_weight_daysim": {
     "distinct": 21,
     "dtype": "Float64",
     "hash": "5f6af5abaa9683df",
@@ -974,6 +934,46 @@
     "min": 1.0,
     "nulls": 0,
     "sum": 1069.0
+   },
+   "survey_complete": {
+    "counts": {
+     "False": 1,
+     "True": 29
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "5aa4ca597b595d5b",
+    "nulls": 0
+   },
+   "usable_analysis": {
+    "counts": {
+     "False": 3,
+     "True": 27
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "477068a9c218e874",
+    "nulls": 0
+   },
+   "usable_ctramp": {
+    "counts": {
+     "False": 10,
+     "True": 20
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "3f6a33e74e805a29",
+    "nulls": 0
+   },
+   "usable_daysim": {
+    "counts": {
+     "False": 10,
+     "True": 20
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "3f6a33e74e805a29",
+    "nulls": 0
    }
   },
   "rows": 30,
@@ -1831,33 +1831,6 @@
  },
  "joint_tours": {
   "columns": {
-   "analysis_usable": {
-    "counts": {
-     "True": 6
-    },
-    "distinct": 1,
-    "dtype": "Boolean",
-    "hash": "6dbbb186940093d9",
-    "nulls": 0
-   },
-   "complete": {
-    "counts": {
-     "True": 6
-    },
-    "distinct": 1,
-    "dtype": "Boolean",
-    "hash": "6dbbb186940093d9",
-    "nulls": 0
-   },
-   "ctramp_usable": {
-    "counts": {
-     "True": 6
-    },
-    "distinct": 1,
-    "dtype": "Boolean",
-    "hash": "6dbbb186940093d9",
-    "nulls": 0
-   },
    "day_id": {
     "distinct": 5,
     "dtype": "Int64",
@@ -1866,15 +1839,6 @@
     "min": 30101.0,
     "nulls": 0,
     "sum": 1080606.0
-   },
-   "daysim_usable": {
-    "counts": {
-     "True": 6
-    },
-    "distinct": 1,
-    "dtype": "Boolean",
-    "hash": "6dbbb186940093d9",
-    "nulls": 0
    },
    "hh_id": {
     "distinct": 5,
@@ -1894,7 +1858,7 @@
     "nulls": 0,
     "sum": 10807.0
    },
-   "joint_tour_weight_analysis_usable": {
+   "joint_tour_weight_analysis": {
     "distinct": 5,
     "dtype": "Float64",
     "hash": "633347a6a3f9d057",
@@ -1903,7 +1867,7 @@
     "nulls": 0,
     "sum": 2999.32377
    },
-   "joint_tour_weight_ctramp_usable": {
+   "joint_tour_weight_ctramp": {
     "distinct": 5,
     "dtype": "Float64",
     "hash": "e2bd32c1ea5fdd5b",
@@ -1912,7 +1876,7 @@
     "nulls": 0,
     "sum": 4637.21466
    },
-   "joint_tour_weight_daysim_usable": {
+   "joint_tour_weight_daysim": {
     "distinct": 5,
     "dtype": "Float64",
     "hash": "e2bd32c1ea5fdd5b",
@@ -1933,6 +1897,42 @@
     "min": 2.0,
     "nulls": 0,
     "sum": 13.0
+   },
+   "survey_complete": {
+    "counts": {
+     "True": 6
+    },
+    "distinct": 1,
+    "dtype": "Boolean",
+    "hash": "6dbbb186940093d9",
+    "nulls": 0
+   },
+   "usable_analysis": {
+    "counts": {
+     "True": 6
+    },
+    "distinct": 1,
+    "dtype": "Boolean",
+    "hash": "6dbbb186940093d9",
+    "nulls": 0
+   },
+   "usable_ctramp": {
+    "counts": {
+     "True": 6
+    },
+    "distinct": 1,
+    "dtype": "Boolean",
+    "hash": "6dbbb186940093d9",
+    "nulls": 0
+   },
+   "usable_daysim": {
+    "counts": {
+     "True": 6
+    },
+    "distinct": 1,
+    "dtype": "Boolean",
+    "hash": "6dbbb186940093d9",
+    "nulls": 0
    }
   },
   "rows": 6,
@@ -2111,34 +2111,6 @@
  },
  "joint_trips": {
   "columns": {
-   "analysis_usable": {
-    "counts": {
-     "True": 16
-    },
-    "distinct": 1,
-    "dtype": "Boolean",
-    "hash": "de2f2816534ba445",
-    "nulls": 0
-   },
-   "complete": {
-    "counts": {
-     "True": 16
-    },
-    "distinct": 1,
-    "dtype": "Boolean",
-    "hash": "de2f2816534ba445",
-    "nulls": 0
-   },
-   "ctramp_usable": {
-    "counts": {
-     "False": 2,
-     "True": 14
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "f3b31b31de4d3e7a",
-    "nulls": 0
-   },
    "day_id": {
     "distinct": 8,
     "dtype": "Int64",
@@ -2147,16 +2119,6 @@
     "min": 30101.0,
     "nulls": 0,
     "sum": 2851617.0
-   },
-   "daysim_usable": {
-    "counts": {
-     "False": 2,
-     "True": 14
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "f3b31b31de4d3e7a",
-    "nulls": 0
    },
    "hh_id": {
     "distinct": 7,
@@ -2176,7 +2138,7 @@
     "nulls": 0,
     "sum": 285030.0
    },
-   "joint_trip_weight_analysis_usable": {
+   "joint_trip_weight_analysis": {
     "distinct": 7,
     "dtype": "Float64",
     "hash": "dbafd832c05ac384",
@@ -2185,7 +2147,7 @@
     "nulls": 0,
     "sum": 7652.67819
    },
-   "joint_trip_weight_ctramp_usable": {
+   "joint_trip_weight_ctramp": {
     "distinct": 7,
     "dtype": "Float64",
     "hash": "f8c913045c5acd0c",
@@ -2194,7 +2156,7 @@
     "nulls": 0,
     "sum": 10227.41623
    },
-   "joint_trip_weight_daysim_usable": {
+   "joint_trip_weight_daysim": {
     "distinct": 7,
     "dtype": "Float64",
     "hash": "f8c913045c5acd0c",
@@ -2215,6 +2177,44 @@
     "min": 2.0,
     "nulls": 0,
     "sum": 34.0
+   },
+   "survey_complete": {
+    "counts": {
+     "True": 16
+    },
+    "distinct": 1,
+    "dtype": "Boolean",
+    "hash": "de2f2816534ba445",
+    "nulls": 0
+   },
+   "usable_analysis": {
+    "counts": {
+     "True": 16
+    },
+    "distinct": 1,
+    "dtype": "Boolean",
+    "hash": "de2f2816534ba445",
+    "nulls": 0
+   },
+   "usable_ctramp": {
+    "counts": {
+     "False": 2,
+     "True": 14
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "f3b31b31de4d3e7a",
+    "nulls": 0
+   },
+   "usable_daysim": {
+    "counts": {
+     "False": 2,
+     "True": 14
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "f3b31b31de4d3e7a",
+    "nulls": 0
    }
   },
   "rows": 16,
@@ -2423,40 +2423,10 @@
     "nulls": 106,
     "sum": 2.0
    },
-   "analysis_usable": {
-    "counts": {
-     "False": 6,
-     "True": 102
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "95d728e13f33805c",
-    "nulls": 0
-   },
    "arrive_time": {
     "distinct": 60,
     "dtype": "Datetime(time_unit='us', time_zone=None)",
     "hash": "9977bffa5a34108e",
-    "nulls": 0
-   },
-   "complete": {
-    "counts": {
-     "False": 2,
-     "True": 106
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "be0dad96a22a70b1",
-    "nulls": 0
-   },
-   "ctramp_usable": {
-    "counts": {
-     "False": 20,
-     "True": 88
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "bf9776ef0044c55d",
     "nulls": 0
    },
    "d_activity_duration": {
@@ -2567,16 +2537,6 @@
     "min": 10101.0,
     "nulls": 0,
     "sum": 17675018.0
-   },
-   "daysim_usable": {
-    "counts": {
-     "False": 20,
-     "True": 88
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "bf9776ef0044c55d",
-    "nulls": 0
    },
    "depart_time": {
     "distinct": 34,
@@ -2703,7 +2663,7 @@
     "nulls": 0,
     "sum": 205.0
    },
-   "linked_trip_weight_analysis_usable": {
+   "linked_trip_weight_analysis": {
     "distinct": 29,
     "dtype": "Float64",
     "hash": "567b5325df353097",
@@ -2712,7 +2672,7 @@
     "nulls": 0,
     "sum": 21635.590253
    },
-   "linked_trip_weight_ctramp_usable": {
+   "linked_trip_weight_ctramp": {
     "distinct": 22,
     "dtype": "Float64",
     "hash": "22572fd3a16eea20",
@@ -2721,7 +2681,7 @@
     "nulls": 0,
     "sum": 25139.532723
    },
-   "linked_trip_weight_daysim_usable": {
+   "linked_trip_weight_daysim": {
     "distinct": 22,
     "dtype": "Float64",
     "hash": "22572fd3a16eea20",
@@ -2897,6 +2857,16 @@
     "nulls": 0,
     "sum": 2.0
    },
+   "survey_complete": {
+    "counts": {
+     "False": 2,
+     "True": 106
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "be0dad96a22a70b1",
+    "nulls": 0
+   },
    "tour_direction": {
     "counts": {
      "1": 60,
@@ -2972,6 +2942,36 @@
     "min": 10.0,
     "nulls": 0,
     "sum": 2540.0
+   },
+   "usable_analysis": {
+    "counts": {
+     "False": 6,
+     "True": 102
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "95d728e13f33805c",
+    "nulls": 0
+   },
+   "usable_ctramp": {
+    "counts": {
+     "False": 20,
+     "True": 88
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "bf9776ef0044c55d",
+    "nulls": 0
+   },
+   "usable_daysim": {
+    "counts": {
+     "False": 20,
+     "True": 88
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "bf9776ef0044c55d",
+    "nulls": 0
    }
   },
   "rows": 108,
@@ -3533,16 +3533,6 @@
     "nulls": 0,
     "sum": 252.0
    },
-   "analysis_usable": {
-    "counts": {
-     "False": 3,
-     "True": 42
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "72aa20e092121b36",
-    "nulls": 0
-   },
    "commute_freq": {
     "counts": {
      "2": 18,
@@ -3604,36 +3594,6 @@
     "min": 0.0,
     "nulls": 0,
     "sum": 0.0
-   },
-   "complete": {
-    "counts": {
-     "False": 1,
-     "True": 44
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "cc896c84cc431900",
-    "nulls": 0
-   },
-   "ctramp_usable": {
-    "counts": {
-     "False": 9,
-     "True": 36
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "c75295d3551d8274",
-    "nulls": 0
-   },
-   "daysim_usable": {
-    "counts": {
-     "False": 9,
-     "True": 36
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "c75295d3551d8274",
-    "nulls": 0
    },
    "employment": {
     "counts": {
@@ -3750,7 +3710,7 @@
     "nulls": 0,
     "sum": 64.0
    },
-   "person_weight_analysis_usable": {
+   "person_weight_analysis": {
     "distinct": 28,
     "dtype": "Float64",
     "hash": "2d179fc4096cb022",
@@ -3759,7 +3719,7 @@
     "nulls": 0,
     "sum": 10010.006237
    },
-   "person_weight_ctramp_usable": {
+   "person_weight_ctramp": {
     "distinct": 21,
     "dtype": "Float64",
     "hash": "53ecfd48488da15f",
@@ -3768,7 +3728,7 @@
     "nulls": 0,
     "sum": 10767.769634
    },
-   "person_weight_daysim_usable": {
+   "person_weight_daysim": {
     "distinct": 21,
     "dtype": "Float64",
     "hash": "53ecfd48488da15f",
@@ -3867,6 +3827,16 @@
     "nulls": 0,
     "sum": 75.0
    },
+   "survey_complete": {
+    "counts": {
+     "False": 1,
+     "True": 44
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "cc896c84cc431900",
+    "nulls": 0
+   },
    "telework_freq": {
     "distinct": 1,
     "dtype": "Null",
@@ -3885,6 +3855,36 @@
     "min": 0.0,
     "nulls": 0,
     "sum": 2.0
+   },
+   "usable_analysis": {
+    "counts": {
+     "False": 3,
+     "True": 42
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "72aa20e092121b36",
+    "nulls": 0
+   },
+   "usable_ctramp": {
+    "counts": {
+     "False": 9,
+     "True": 36
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "c75295d3551d8274",
+    "nulls": 0
+   },
+   "usable_daysim": {
+    "counts": {
+     "False": 9,
+     "True": 36
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "c75295d3551d8274",
+    "nulls": 0
    },
    "work_lat": {
     "distinct": 5,
@@ -4446,36 +4446,6 @@
  },
  "tours": {
   "columns": {
-   "analysis_usable": {
-    "counts": {
-     "False": 4,
-     "True": 49
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "cce5218a05223c64",
-    "nulls": 0
-   },
-   "complete": {
-    "counts": {
-     "False": 1,
-     "True": 52
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "1f522cef7e557c16",
-    "nulls": 0
-   },
-   "ctramp_usable": {
-    "counts": {
-     "False": 13,
-     "True": 40
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "959617c25e488985",
-    "nulls": 0
-   },
    "d_lat": {
     "distinct": 16,
     "dtype": "Float64",
@@ -4543,16 +4513,6 @@
     "min": 10101.0,
     "nulls": 0,
     "sum": 9197459.0
-   },
-   "daysim_usable": {
-    "counts": {
-     "False": 13,
-     "True": 40
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "959617c25e488985",
-    "nulls": 0
    },
    "dest_arrive_time": {
     "distinct": 31,
@@ -4741,6 +4701,16 @@
     "nulls": 0,
     "sum": 1.0
    },
+   "survey_complete": {
+    "counts": {
+     "False": 1,
+     "True": 52
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "1f522cef7e557c16",
+    "nulls": 0
+   },
    "tour_category": {
     "counts": {
      "1": 45,
@@ -4843,7 +4813,7 @@
     "nulls": 0,
     "sum": 54.0
    },
-   "tour_weight_analysis_usable": {
+   "tour_weight_analysis": {
     "distinct": 29,
     "dtype": "Float64",
     "hash": "f5bba27a8b860507",
@@ -4852,7 +4822,7 @@
     "nulls": 0,
     "sum": 10529.39861
    },
-   "tour_weight_ctramp_usable": {
+   "tour_weight_ctramp": {
     "distinct": 22,
     "dtype": "Float64",
     "hash": "a0bd315332c96d8f",
@@ -4861,7 +4831,7 @@
     "nulls": 0,
     "sum": 11530.814136
    },
-   "tour_weight_daysim_usable": {
+   "tour_weight_daysim": {
     "distinct": 22,
     "dtype": "Float64",
     "hash": "a0bd315332c96d8f",
@@ -4885,6 +4855,36 @@
     "min": 1.0,
     "nulls": 0,
     "sum": 108.0
+   },
+   "usable_analysis": {
+    "counts": {
+     "False": 4,
+     "True": 49
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "cce5218a05223c64",
+    "nulls": 0
+   },
+   "usable_ctramp": {
+    "counts": {
+     "False": 13,
+     "True": 40
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "959617c25e488985",
+    "nulls": 0
+   },
+   "usable_daysim": {
+    "counts": {
+     "False": 13,
+     "True": 40
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "959617c25e488985",
+    "nulls": 0
    }
   },
   "rows": 53,
@@ -5288,40 +5288,10 @@
  },
  "unlinked_trips": {
   "columns": {
-   "analysis_usable": {
-    "counts": {
-     "False": 6,
-     "True": 104
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "ea81424e23327f72",
-    "nulls": 0
-   },
    "arrive_time": {
     "distinct": 60,
     "dtype": "Datetime(time_unit='us', time_zone=None)",
     "hash": "cc20bb93f4574a5a",
-    "nulls": 0
-   },
-   "complete": {
-    "counts": {
-     "False": 2,
-     "True": 108
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "be3e84b86e01cfbc",
-    "nulls": 0
-   },
-   "ctramp_usable": {
-    "counts": {
-     "False": 20,
-     "True": 90
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "05bf584e5c1a4886",
     "nulls": 0
    },
    "d_lat": {
@@ -5408,16 +5378,6 @@
     "min": 10101.0,
     "nulls": 0,
     "sum": 17715220.0
-   },
-   "daysim_usable": {
-    "counts": {
-     "False": 20,
-     "True": 90
-    },
-    "distinct": 2,
-    "dtype": "Boolean",
-    "hash": "05bf584e5c1a4886",
-    "nulls": 0
    },
    "depart_time": {
     "distinct": 34,
@@ -5655,6 +5615,16 @@
     "nulls": 0,
     "sum": 177151.0
    },
+   "survey_complete": {
+    "counts": {
+     "False": 2,
+     "True": 108
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "be3e84b86e01cfbc",
+    "nulls": 0
+   },
    "tour_id": {
     "distinct": 53,
     "dtype": "Int64",
@@ -5699,7 +5669,7 @@
     "nulls": 0,
     "sum": 6105.0
    },
-   "unlinked_trip_weight_analysis_usable": {
+   "unlinked_trip_weight_analysis": {
     "distinct": 29,
     "dtype": "Float64",
     "hash": "cf7c9edfe3f24dce",
@@ -5708,7 +5678,7 @@
     "nulls": 0,
     "sum": 21889.71356
    },
-   "unlinked_trip_weight_ctramp_usable": {
+   "unlinked_trip_weight_ctramp": {
     "distinct": 22,
     "dtype": "Float64",
     "hash": "a254a9cdcd48c422",
@@ -5717,7 +5687,7 @@
     "nulls": 0,
     "sum": 25512.867801
    },
-   "unlinked_trip_weight_daysim_usable": {
+   "unlinked_trip_weight_daysim": {
     "distinct": 22,
     "dtype": "Float64",
     "hash": "a254a9cdcd48c422",
@@ -5725,6 +5695,36 @@
     "min": 0.0,
     "nulls": 0,
     "sum": 25512.867801
+   },
+   "usable_analysis": {
+    "counts": {
+     "False": 6,
+     "True": 104
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "ea81424e23327f72",
+    "nulls": 0
+   },
+   "usable_ctramp": {
+    "counts": {
+     "False": 20,
+     "True": 90
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "05bf584e5c1a4886",
+    "nulls": 0
+   },
+   "usable_daysim": {
+    "counts": {
+     "False": 20,
+     "True": 90
+    },
+    "distinct": 2,
+    "dtype": "Boolean",
+    "hash": "05bf584e5c1a4886",
+    "nulls": 0
    }
   },
   "rows": 110,

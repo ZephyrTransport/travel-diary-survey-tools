@@ -25,7 +25,7 @@ HOUSEHOLD = {
     "residence_type": [1],
     "income_bin": [1],
     "num_vehicles": [1],
-    "complete": [True],
+    "survey_complete": [True],
 }
 
 
@@ -106,7 +106,7 @@ class TestThroughValidate:
 class TestWhatTheWeightingPromises:
     """The weight columns must arrive with the bound the deleted fields carried."""
 
-    @pytest.mark.parametrize("profile", [None, "ctramp_usable"])
+    @pytest.mark.parametrize("profile", [None, "ctramp"])
     def test_every_weight_column_is_bounded_at_zero(self, profile):
         """Including the un-suffixed spelling, which is a profile's weights too."""
         described = describe_weight_columns((profile,))
@@ -117,7 +117,7 @@ class TestWhatTheWeightingPromises:
 
     def test_every_weight_column_says_what_it_counts(self):
         """The text the declared fields used to carry to the codebook."""
-        for columns in describe_weight_columns(("ctramp_usable",)).values():
+        for columns in describe_weight_columns(("ctramp",)).values():
             for column, spec in columns.items():
                 assert spec.description, f"{column} has no description"
 
@@ -127,7 +127,7 @@ class TestWhatTheWeightingPromises:
         Summing a joint table and its member table double counts, because the
         joint levels are an overlay carrying person-trips, not a partition.
         """
-        described = describe_weight_columns(("ctramp_usable",))
-        joint = described["joint_trips"]["joint_trip_weight_ctramp_usable"].description
+        described = describe_weight_columns(("ctramp",))
+        joint = described["joint_trips"]["joint_trip_weight_ctramp"].description
         assert "OVERLAYS" in joint
         assert "double counts" in joint

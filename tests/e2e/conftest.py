@@ -262,17 +262,17 @@ def _step_blocks(data_dir: Path, output_dir: Path, enabled: frozenset) -> dict:
                     # relaxed one, so the e2e exercises the loop, per-consumer
                     # selection, and a relaxed column reaching the delivered
                     # output as a registered generated column.
-                    "ctramp_usable": {
+                    "ctramp": {
                         "tour_closes_at": "primary_home",
                         "household_day_needs": "all_members",
                         "zone_coverage": "taz",
                     },
-                    "daysim_usable": {
+                    "daysim": {
                         "tour_closes_at": "primary_home",
                         "household_day_needs": "all_members",
                         "zone_coverage": "taz",
                     },
-                    "analysis_usable": {
+                    "analysis": {
                         "tour_closes_at": "anywhere",
                         "household_day_needs": "nothing",
                         "zone_coverage": "none",
@@ -286,18 +286,18 @@ def _step_blocks(data_dir: Path, output_dir: Path, enabled: frozenset) -> dict:
             "cache": False,
             # Only household weights are supplied; everything below is derived,
             # so the run exercises the copy rule down to persons and the split
-            # rule from a person across their days. Gated on ctramp_usable, the
+            # rule from a person across their days. Gated on ctramp, the
             # strict profile, so a dropped day changes the split's divisor --
             # which is where "nothing lost" is a real question rather than a
             # tautology.
             #
             # Every profile a consumer names is weighted, so each formatter finds
-            # its own columns; analysis_usable is weighted too, and it is the one
-            # that differs -- ctramp_usable and daysim_usable are declared
+            # its own columns; analysis is weighted too, and it is the one
+            # that differs -- ctramp and daysim are declared
             # identically above, so agreeing between those two proves nothing.
             "params": {
                 "derive_missing_weights": True,
-                "weight_profiles": ["ctramp_usable", "daysim_usable", "analysis_usable"],
+                "weight_profiles": ["ctramp", "daysim", "analysis"],
                 "weights": {
                     "hh_weight": {"weight_path": _p(data_dir / "weights" / "hh_weights.csv")},
                 },
@@ -327,7 +327,7 @@ def _step_blocks(data_dir: Path, output_dir: Path, enabled: frozenset) -> dict:
             "validate_input": False,
             "cache": False,
             "params": {
-                "usability_flag_col": "ctramp_usable",
+                "usability_profile": "ctramp",
                 "income_low_threshold": 60000,
                 "income_med_threshold": 150000,
                 "income_high_threshold": 240000,
@@ -346,7 +346,7 @@ def _step_blocks(data_dir: Path, output_dir: Path, enabled: frozenset) -> dict:
             "validate_input": False,
             "validate_output": True,
             "cache": False,
-            "params": {"usability_flag_col": "daysim_usable"},
+            "params": {"usability_profile": "daysim"},
         },
         "write_data": {
             "name": "write_data",

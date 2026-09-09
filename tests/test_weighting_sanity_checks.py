@@ -28,7 +28,7 @@ from processing.weighting.validation.weight_checks import (
     weight_sanity_checks,
 )
 
-FLAG = "ctramp_usable"
+FLAG = "ctramp"
 
 
 def _empty_totals() -> ControlTotals:

@@ -93,7 +93,7 @@ def get_required_non_null_fields(model):
 def standard_config():
     """Standard test configuration with explicit parameters."""
     return CTRAMPConfig(
-        usability_flag_col="usable",
+        usability_profile="test",
         income_low_threshold=30000,  # $30k ($2000, MTC)
         income_med_threshold=60000,  # $60k ($2000, MTC)
         income_high_threshold=100000,  # $100k ($2000, MTC)
@@ -313,7 +313,7 @@ class TestEndToEndFormatting:
             income_med_threshold=standard_config.income_med_threshold,
             income_high_threshold=standard_config.income_high_threshold,
             income_survey_year_to_ctramp_year=standard_config.income_survey_year_to_ctramp_year,
-            usability_flag_col="usable",
+            usability_profile="test",
         )
 
         households_ctramp = result["households_ctramp"]
@@ -342,7 +342,7 @@ class TestEndToEndFormatting:
             income_med_threshold=standard_config.income_med_threshold,
             income_high_threshold=standard_config.income_high_threshold,
             income_survey_year_to_ctramp_year=standard_config.income_survey_year_to_ctramp_year,
-            usability_flag_col="usable",
+            usability_profile="test",
         )
 
         households_ctramp = result["households_ctramp"]
@@ -375,7 +375,7 @@ class TestEndToEndFormatting:
             income_med_threshold=standard_config.income_med_threshold,
             income_high_threshold=standard_config.income_high_threshold,
             income_survey_year_to_ctramp_year=standard_config.income_survey_year_to_ctramp_year,
-            usability_flag_col="usable",
+            usability_profile="test",
         )
 
         persons_ctramp = result["persons_ctramp"]
@@ -403,7 +403,7 @@ class TestEndToEndFormatting:
             income_med_threshold=standard_config.income_med_threshold,
             income_high_threshold=standard_config.income_high_threshold,
             income_survey_year_to_ctramp_year=standard_config.income_survey_year_to_ctramp_year,
-            usability_flag_col="usable",
+            usability_profile="test",
         )
 
         persons_ctramp = result["persons_ctramp"]

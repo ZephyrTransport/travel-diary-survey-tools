@@ -159,7 +159,7 @@ def _lunch_subtour_day() -> pl.DataFrame:
 def standard_config():
     """CT-RAMP config matching the other formatter tests."""
     return CTRAMPConfig(
-        usability_flag_col="usable",
+        usability_profile="test",
         income_low_threshold=60000,
         income_med_threshold=150000,
         income_high_threshold=240000,
@@ -268,13 +268,13 @@ def _gate(tours: pl.DataFrame) -> dict[int, bool]:
                 "person_id": [1],
                 "hh_id": [1],
                 "travel_date": [datetime(2024, 1, 17)],
-                "complete": [True],
+                "survey_complete": [True],
             }
         ),
-        "tours": tours.with_columns(pl.lit(value=True).alias("complete")),
+        "tours": tours.with_columns(pl.lit(value=True).alias("survey_complete")),
     }
-    compute_usability(tables, profile=UsabilityProfile("usable", PRIMARY_HOME, ALL_MEMBERS))
-    return dict(zip(*tables["tours"].select("tour_id", "usable"), strict=True))
+    compute_usability(tables, profile=UsabilityProfile("test", PRIMARY_HOME, ALL_MEMBERS))
+    return dict(zip(*tables["tours"].select("tour_id", "usable_test"), strict=True))
 
 
 class TestSubtourModelUsability:
@@ -319,13 +319,13 @@ class TestSubtourReachesCtramp:
         parent, subtour = subtour_and_parent
         usable = _gate(extracted[0]["tours"])
         tours = extracted[0]["tours"].with_columns(
-            pl.col("tour_id").replace_strict(usable).alias("usable")
+            pl.col("tour_id").replace_strict(usable).alias("usable_test")
         )
         linked_trips = extracted[0]["linked_trips"].with_columns(
-            pl.col("tour_id").replace_strict(usable).alias("usable")
+            pl.col("tour_id").replace_strict(usable).alias("usable_test")
         )
 
-        kept = keep_usable({"tours": tours, "linked_trips": linked_trips}, "usable")
+        kept = keep_usable({"tours": tours, "linked_trips": linked_trips}, "test")
 
         assert sorted(kept["tours"]["tour_id"].to_list()) == sorted(
             [parent["tour_id"], subtour["tour_id"]]

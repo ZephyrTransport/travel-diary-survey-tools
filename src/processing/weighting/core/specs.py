@@ -14,6 +14,8 @@ from typing import NamedTuple
 import numpy as np
 import polars as pl
 
+from processing.completeness import usable_col_for
+
 logger = logging.getLogger(__name__)
 
 # ==============================================================================
@@ -229,7 +231,7 @@ class ImportanceConfig:
 
 
 def resolve_fitted_profiles(
-    usability_flag_col: str | None,
+    usability_profile: str | None,
     weight_profiles: tuple[str, ...] | list[str] | None,
 ) -> tuple[str | None, ...]:
     """The profiles to weight: one entry per weight column set to be written.
@@ -238,7 +240,7 @@ def resolve_fitted_profiles(
     naming a flag, a profile list, or both is supposed to mean.
 
     Args:
-        usability_flag_col: A single profile to weight without suffixing its
+        usability_profile: A single profile to weight without suffixing its
             columns -- today's behaviour, and what a project keeps by changing
             nothing.
         weight_profiles: Profiles to weight, each writing its own suffixed
@@ -251,16 +253,16 @@ def resolve_fitted_profiles(
         ValueError: If both or neither is given, or a profile is named twice.
     """
     profiles = tuple(weight_profiles or ())
-    if usability_flag_col and profiles:
+    if usability_profile and profiles:
         msg = (
-            "Name either usability_flag_col (one un-suffixed weight set) or "
+            "Name either usability_profile (one un-suffixed weight set) or "
             "weight_profiles (one column set per profile), not both. Got "
-            f"usability_flag_col={usability_flag_col!r} and weight_profiles={list(profiles)}."
+            f"usability_profile={usability_profile!r} and weight_profiles={list(profiles)}."
         )
         raise ValueError(msg)
-    if not usability_flag_col and not profiles:
+    if not usability_profile and not profiles:
         msg = (
-            "The weighting needs a universe: name usability_flag_col, or "
+            "The weighting needs a universe: name usability_profile, or "
             "weight_profiles to write one weight set per profile."
         )
         raise ValueError(msg)
@@ -290,7 +292,7 @@ class WeightingConfig:
     # Which usability profile decides who carries weight. One of these two is
     # required: with several profiles stamped there is no defensible default, and
     # picking silently would weight a different universe than the formatters emit.
-    usability_flag_col: str | None = None
+    usability_profile: str | None = None
     weight_profiles: tuple[str, ...] = ()
     max_unplaceable_share: float = 0.01
     pums_households: str | None = None
@@ -305,7 +307,7 @@ class WeightingConfig:
     def __post_init__(self) -> None:
         """Reject a weighting universe that is unstated, stated twice, or ungated."""
         self._fitted_profiles = resolve_fitted_profiles(
-            self.usability_flag_col, self.weight_profiles
+            self.usability_profile, self.weight_profiles
         )
 
         if self.weight_profiles and not self.exclude_incompletes:
@@ -325,17 +327,17 @@ class WeightingConfig:
         return self._fitted_profiles
 
     def flag_for(self, profile: str | None) -> str:
-        """The usability column the fit for *profile* is gated on.
+        """The verdict column the fit for *profile* is gated on.
 
-        A profile names both its gate and its columns -- the suffix *is* the
-        profile name -- so there is no second setting to disagree with the first.
+        A profile names both its gate and its weights -- ``usable_<profile>`` and
+        ``hh_weight_<profile>`` -- so there is no second setting to disagree with
+        the first.
         """
-        if profile is not None:
-            return profile
-        if self.usability_flag_col is None:  # pragma: no cover - __post_init__ forbids it
-            msg = "No usability_flag_col configured"
+        named = profile if profile is not None else self.usability_profile
+        if named is None:  # pragma: no cover - __post_init__ forbids it
+            msg = "No usability_profile configured"
             raise ValueError(msg)
-        return self.usability_flag_col
+        return usable_col_for(named)
 
 
 @dataclass

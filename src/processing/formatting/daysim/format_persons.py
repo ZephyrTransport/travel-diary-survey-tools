@@ -49,8 +49,8 @@ def compute_day_completeness(days: pl.DataFrame) -> pl.DataFrame:
 
     # Pivot days by person and day of week
     pivoted = (
-        days.select(["person_id", "complete", "travel_dow"])
-        .pivot(index="person_id", on="travel_dow", values="complete")
+        days.select(["person_id", "survey_complete", "travel_dow"])
+        .pivot(index="person_id", on="travel_dow", values="survey_complete")
         .fill_null(0)
     )
 

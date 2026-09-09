@@ -187,7 +187,7 @@ def build_joint_tours_table(tours: pl.DataFrame) -> pl.DataFrame:
 
     Returns:
         One row per joint tour with ``hh_id``, ``day_id``, ``num_participants``
-        and, where the member tours carry it, ``complete``.
+        and, where the member tours carry it, ``survey_complete``.
     """
     schema = {
         "joint_tour_id": pl.Int64,
@@ -208,8 +208,8 @@ def build_joint_tours_table(tours: pl.DataFrame) -> pl.DataFrame:
         pl.col("person_id").n_unique().alias("num_participants"),
     ]
     # A joint tour is only as complete as its least complete member.
-    if "complete" in members.columns:
-        agg.append(pl.all("complete").alias("complete"))
+    if "survey_complete" in members.columns:
+        agg.append(pl.all("survey_complete").alias("survey_complete"))
 
     joint_tours = members.group_by("joint_tour_id").agg(agg).sort("joint_tour_id")
 

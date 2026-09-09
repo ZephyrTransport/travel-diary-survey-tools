@@ -50,7 +50,7 @@ class CTRAMPConfig(BaseModel):
         description="The field name in the household data that contains the TAZ ID for CTRAMP formatting.",  # noqa: E501
     )
 
-    usability_flag_col: str = Field(
+    usability_profile: str = Field(
         description=(
             "Which usability profile stamped by cascade_completeness decides the "
             "record universe. Required, and must name a profile that run stamped: "

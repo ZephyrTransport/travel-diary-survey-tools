@@ -57,7 +57,7 @@ reviewer can judge it.
 **No record-level values are stored.** Each column contributes a hash plus aggregates —
 null count, distinct count, numeric range and sum, and for low-cardinality
 non-identifier columns a value-count histogram. The hash detects the change; the
-aggregates make the failure readable (`tours.analysis_usable: counts {'True': 37} ->
+aggregates make the failure readable (`tours.analysis: counts {'True': 37} ->
 {'True': 33}`) without putting data in the repository. Identifier and coordinate columns
 never get a histogram. The fixture is synthetic, but the rule holds regardless so the
 harness stays safe to point at real output.

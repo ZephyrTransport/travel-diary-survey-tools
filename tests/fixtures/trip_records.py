@@ -190,7 +190,7 @@ def create_unlinked_trip(
         egress_mode=egress_mode.value if egress_mode else None,
     )
 
-    record["usable"] = usable
+    record["usable_test"] = usable
 
     return {**record, **overrides}
 
@@ -328,6 +328,6 @@ def create_linked_trip(
     # Add optional fields
     add_optional_fields_batch(record, day_id=day_id)
 
-    record["usable"] = usable
+    record["usable_test"] = usable
 
     return {**record, **overrides}

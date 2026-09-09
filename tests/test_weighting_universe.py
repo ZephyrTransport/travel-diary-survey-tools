@@ -21,7 +21,7 @@ class TestResolving:
 
     def test_a_single_flag_means_one_unsuffixed_set(self):
         """``(None,)`` is what makes every column keep its declared name."""
-        assert resolve_fitted_profiles("ctramp_usable", None) == (None,)
+        assert resolve_fitted_profiles("ctramp", None) == (None,)
 
     def test_profiles_are_returned_in_the_order_given(self):
         """Fits run in this order, and their reports are read in it."""
@@ -38,8 +38,8 @@ class TestRefusals:
 
     def test_naming_both_is_refused(self):
         """They say different things about what gets fitted and what gets written."""
-        with pytest.raises(ValueError, match="Name either usability_flag_col"):
-            resolve_fitted_profiles("ctramp_usable", ["ctramp_usable"])
+        with pytest.raises(ValueError, match="Name either usability_profile"):
+            resolve_fitted_profiles("ctramp", ["ctramp"])
 
     def test_naming_neither_is_refused(self):
         """With several profiles stamped there is no defensible default."""
@@ -64,16 +64,16 @@ class TestTheConfigUsesIt:
 
     def test_a_single_flag_config_exposes_one_unsuffixed_fit(self):
         """Today's config, whose columns keep their declared names."""
-        assert _config(usability_flag_col="ctramp_usable").fitted_profiles == (None,)
+        assert _config(usability_profile="ctramp").fitted_profiles == (None,)
 
     def test_a_profile_config_exposes_one_fit_each(self):
         """One balancing run per profile, in the order configured."""
         assert _config(weight_profiles=("a", "b")).fitted_profiles == ("a", "b")
 
-    def test_flag_for_answers_both_spellings(self):
-        """A profile gates on itself; the single-flag case gates on the flag."""
-        assert _config(weight_profiles=("a",)).flag_for("a") == "a"
-        assert _config(usability_flag_col="x").flag_for(None) == "x"
+    def test_flag_for_resolves_the_profile_to_its_column(self):
+        """A profile gates on its own verdict column, whichever way it was named."""
+        assert _config(weight_profiles=("a",)).flag_for("a") == "usable_a"
+        assert _config(usability_profile="x").flag_for(None) == "usable_x"
 
     def test_profiles_without_the_gate_are_refused(self):
         """Every fit would then see the same seed and differ in name only.
@@ -87,5 +87,5 @@ class TestTheConfigUsesIt:
     def test_a_single_flag_without_the_gate_is_still_allowed(self):
         """It weights every complete household, which is a coherent thing to ask."""
         assert _config(
-            usability_flag_col="complete", exclude_incompletes=False
+            usability_profile="survey_complete", exclude_incompletes=False
         ).fitted_profiles == (None,)

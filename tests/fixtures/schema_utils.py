@@ -138,7 +138,7 @@ def _with_generated(
     return pl.DataFrame(schema=schema)
 
 
-def empty_linked_trips(usability_flag_col: str = "usable") -> pl.DataFrame:
+def empty_linked_trips(usability_flag_col: str = "usable_test") -> pl.DataFrame:
     """Create empty linked_trips DataFrame with complete schema.
 
     Returns properly typed empty DataFrame that passes @step validation checks
@@ -151,7 +151,7 @@ def empty_linked_trips(usability_flag_col: str = "usable") -> pl.DataFrame:
     return _with_generated(schema, LinkedTripModel, usability_flag_col)
 
 
-def empty_tours(usability_flag_col: str = "usable") -> pl.DataFrame:
+def empty_tours(usability_flag_col: str = "usable_test") -> pl.DataFrame:
     """Create empty tours DataFrame with complete schema.
 
     Returns properly typed empty DataFrame that passes @step validation checks
@@ -173,7 +173,7 @@ def empty_tours(usability_flag_col: str = "usable") -> pl.DataFrame:
     return _with_generated(schema, TourModel, usability_flag_col)
 
 
-def empty_unlinked_trips(usability_flag_col: str = "usable") -> pl.DataFrame:
+def empty_unlinked_trips(usability_flag_col: str = "usable_test") -> pl.DataFrame:
     """Create empty unlinked_trips DataFrame with complete schema.
 
     Returns:
@@ -183,7 +183,7 @@ def empty_unlinked_trips(usability_flag_col: str = "usable") -> pl.DataFrame:
     return _with_generated(schema, UnlinkedTripModel, usability_flag_col)
 
 
-def empty_joint_tours(usability_flag_col: str = "usable") -> pl.DataFrame:
+def empty_joint_tours(usability_flag_col: str = "usable_test") -> pl.DataFrame:
     """Create empty joint_tours DataFrame with complete schema.
 
     Returns:
@@ -193,7 +193,7 @@ def empty_joint_tours(usability_flag_col: str = "usable") -> pl.DataFrame:
     return _with_generated(schema, JointTourModel, usability_flag_col)
 
 
-def empty_days(usability_flag_col: str = "usable") -> pl.DataFrame:
+def empty_days(usability_flag_col: str = "usable_test") -> pl.DataFrame:
     """Create empty person-days DataFrame with complete schema.
 
     Returns:
@@ -204,7 +204,7 @@ def empty_days(usability_flag_col: str = "usable") -> pl.DataFrame:
 
 
 def days_for_persons(
-    persons: pl.DataFrame, day_num: int = 1, usability_flag_col: str = "usable"
+    persons: pl.DataFrame, day_num: int = 1, usability_flag_col: str = "usable_test"
 ) -> pl.DataFrame:
     """Build a single-day person-day table covering every person given.
 
@@ -241,7 +241,7 @@ def days_for_persons(
     )
 
 
-def empty_joint_trips(usability_flag_col: str = "usable") -> pl.DataFrame:
+def empty_joint_trips(usability_flag_col: str = "usable_test") -> pl.DataFrame:
     """Create empty joint_trips DataFrame with complete schema.
 
     Returns:

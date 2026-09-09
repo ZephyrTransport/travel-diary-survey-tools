@@ -52,9 +52,9 @@ class TestCounting:
         """A report covering several fits has to say which one each row is."""
         assert (
             check_control_geography_coverage(
-                _seed(1, 0), profile="analysis_usable", max_unplaceable_share=0.01
+                _seed(1, 0), profile="analysis", max_unplaceable_share=0.01
             ).profile
-            == "analysis_usable"
+            == "analysis"
         )
 
     def test_an_empty_seed_has_no_share_rather_than_dividing_by_zero(self):

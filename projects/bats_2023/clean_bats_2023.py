@@ -329,12 +329,12 @@ def clean_2023_bats(
     #   trip.complete = trip_survey_complete            (the measured leaf)
     #   day.complete  = every trip surveyed, else a *declared* no-travel day
     #                   (a no-travel reason given, or a proxy filled the day in)
-    unlinked_trips = unlinked_trips.rename({"trip_survey_complete": "complete"}).with_columns(
-        pl.col("complete").cast(pl.Boolean)
-    )
+    unlinked_trips = unlinked_trips.rename(
+        {"trip_survey_complete": "survey_complete"}
+    ).with_columns(pl.col("survey_complete").cast(pl.Boolean))
 
     all_trips_surveyed = unlinked_trips.group_by("day_id").agg(
-        pl.col("complete").all().alias("_all_surveyed")
+        pl.col("survey_complete").all().alias("_all_surveyed")
     )
     days = (
         days.join(all_trips_surveyed, on="day_id", how="left")
@@ -343,16 +343,16 @@ def clean_2023_bats(
             .then(pl.col("_all_surveyed").fill_null(value=False))
             .otherwise((pl.col("num_reasons_no_travel") >= 1) | (pl.col("proxy_complete") == 1))
             .fill_null(value=False)
-            .alias("complete")
+            .alias("survey_complete")
         )
         .drop("_all_surveyed")
     )
 
-    households = households.rename({"is_complete": "complete"}).with_columns(
-        pl.col("complete").cast(pl.Boolean)
+    households = households.rename({"is_complete": "survey_complete"}).with_columns(
+        pl.col("survey_complete").cast(pl.Boolean)
     )
-    persons = persons.rename({"is_complete": "complete"}).with_columns(
-        pl.col("complete").cast(pl.Boolean)
+    persons = persons.rename({"is_complete": "survey_complete"}).with_columns(
+        pl.col("survey_complete").cast(pl.Boolean)
     )
 
     return {

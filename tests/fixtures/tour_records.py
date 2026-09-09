@@ -166,13 +166,13 @@ def create_tour(
         # formatters require it rather than re-deriving a criterion of their own.
         # Default True: these records exist to exercise formatting. A test about
         # gating passes usable=... explicitly.
-        "usable": usable,
+        "usable_test": usable,
     }
 
     # Add optional MAZ fields
     add_optional_fields_batch(record, o_maz=o_maz, d_maz=d_maz)
 
-    record["usable"] = usable
+    record["usable_test"] = usable
 
     return {**record, **overrides}
 
@@ -204,7 +204,7 @@ def get_tour_schema() -> dict[str, type]:
             "student_category": pl.String,
             # The usability gate. Named by a project's profile, so not a model
             # field, but present on every tours frame a formatter sees.
-            "usable": pl.Boolean,
+            "usable_test": pl.Boolean,
             # Likewise the weight: named per fitted profile, and resolved to this
             # base name by the gate before a formatter reads it.
             "tour_weight": pl.Float64,

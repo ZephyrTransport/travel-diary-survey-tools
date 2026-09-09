@@ -84,7 +84,7 @@ def get_required_non_null_fields(model):
 def standard_config():
     """Standard test configuration with explicit parameters."""
     return CTRAMPConfig(
-        usability_flag_col="usable",
+        usability_profile="test",
         income_low_threshold=30000,  # $30k ($2000, MTC)
         income_med_threshold=60000,  # $60k ($2000, MTC)
         income_high_threshold=100000,  # $100k ($2000, MTC)
@@ -116,7 +116,7 @@ class TestEndToEndFormatting:
             income_med_threshold=standard_config.income_med_threshold,
             income_high_threshold=standard_config.income_high_threshold,
             income_survey_year_to_ctramp_year=standard_config.income_survey_year_to_ctramp_year,
-            usability_flag_col="usable",
+            usability_profile="test",
         )
 
         households_ctramp = result["households_ctramp"]
@@ -145,7 +145,7 @@ class TestEndToEndFormatting:
             income_med_threshold=standard_config.income_med_threshold,
             income_high_threshold=standard_config.income_high_threshold,
             income_survey_year_to_ctramp_year=standard_config.income_survey_year_to_ctramp_year,
-            usability_flag_col="usable",
+            usability_profile="test",
         )
 
         households_ctramp = result["households_ctramp"]
@@ -178,7 +178,7 @@ class TestEndToEndFormatting:
             income_med_threshold=standard_config.income_med_threshold,
             income_high_threshold=standard_config.income_high_threshold,
             income_survey_year_to_ctramp_year=standard_config.income_survey_year_to_ctramp_year,
-            usability_flag_col="usable",
+            usability_profile="test",
         )
 
         persons_ctramp = result["persons_ctramp"]
@@ -206,7 +206,7 @@ class TestEndToEndFormatting:
             income_med_threshold=standard_config.income_med_threshold,
             income_high_threshold=standard_config.income_high_threshold,
             income_survey_year_to_ctramp_year=standard_config.income_survey_year_to_ctramp_year,
-            usability_flag_col="usable",
+            usability_profile="test",
         )
 
         persons_ctramp = result["persons_ctramp"]
@@ -237,7 +237,7 @@ class TestTheGate:
                 "tour_id": [r[0] for r in rows],
                 "tour_data_quality": [TourDataQuality.VALID.value] * len(rows),
                 "tour_category": [TourCategory.COMPLETE.value] * len(rows),
-                "usable": [r[1] for r in rows],
+                "usable_test": [r[1] for r in rows],
             }
         )
 
@@ -248,7 +248,7 @@ class TestTheGate:
                 "linked_trip_id": [r[0] * 10 for r in rows],
                 "tour_id": [r[0] for r in rows],
                 "joint_trip_id": [None] * len(rows),
-                "usable": [r[1] for r in rows],
+                "usable_test": [r[1] for r in rows],
             },
             schema_overrides={"joint_trip_id": pl.Int64},
         )
@@ -260,7 +260,7 @@ class TestTheGate:
                 "tours": self._tours([(1, True), (2, False), (3, True), (4, False)]),
                 "linked_trips": self._linked_trips([(1, True), (2, False), (3, True), (4, False)]),
             },
-            "usable",
+            "test",
         )
 
         assert sorted(kept["tours"]["tour_id"].to_list()) == [1, 3]
@@ -273,7 +273,7 @@ class TestTheGate:
                 "tours": self._tours([(1, True), (2, True)]),
                 "linked_trips": self._linked_trips([(1, True), (2, True)]),
             },
-            "usable",
+            "test",
         )
 
         assert sorted(kept["tours"]["tour_id"].to_list()) == [1, 2]
@@ -293,8 +293,8 @@ class TestTheGate:
             }
         )
 
-        with pytest.raises(ValueError, match="no 'usable' column"):
-            keep_usable({"tours": tours}, "usable")
+        with pytest.raises(ValueError, match="no 'usable_test' column"):
+            keep_usable({"tours": tours}, "test")
 
     def test_a_missing_gate_names_what_is_present(self):
         """The error has to be actionable: which columns *are* there.
@@ -303,18 +303,19 @@ class TestTheGate:
         silently keeping every record was the old behaviour and is the worst of
         the options.
         """
-        tours = pl.DataFrame({"tour_id": [1], "ctramp_usable": [True], "complete": [True]})
+        tours = pl.DataFrame({"tour_id": [1], "usable_ctramp": [True], "survey_complete": [True]})
 
-        with pytest.raises(ValueError, match="ctramp_usable"):
-            keep_usable({"tours": tours}, "daysim_usable")
+        with pytest.raises(ValueError, match="ctramp"):
+            keep_usable({"tours": tours}, "daysim")
 
     def test_a_null_verdict_excludes_rather_than_guesses(self):
         """A null means the cascade never reached the row -- not a licence to keep it."""
         tours = pl.DataFrame(
-            {"tour_id": [1, 2], "usable": [True, None]}, schema_overrides={"usable": pl.Boolean}
+            {"tour_id": [1, 2], "usable_test": [True, None]},
+            schema_overrides={"usable_test": pl.Boolean},
         )
 
-        kept = keep_usable({"tours": tours}, "usable")
+        kept = keep_usable({"tours": tours}, "test")
 
         assert kept["tours"]["tour_id"].to_list() == [1]
 

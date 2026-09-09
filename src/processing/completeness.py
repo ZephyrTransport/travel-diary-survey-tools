@@ -3,7 +3,7 @@
 Two kinds of flag roll **up** from two atomic facts -- whether each **trip** was
 surveyed, and each tour's structural validity:
 
-* ``complete`` -- was it reported? Rolls up from surveyed trips. One answer per
+* ``survey_complete`` -- was it reported? Rolls up from surveyed trips. One answer per
   run, never narrowed by model criteria and never configurable: if it is wrong,
   the fix belongs upstream in the project cleaner.
 * one column per **usability profile** -- can the model consume it? Fuses each
@@ -18,7 +18,7 @@ trip-level estimation does not, and needs no model geography at all.
 Every profile is named in config and answers every axis, so a column's meaning
 reads off the config without knowing a base rule, and no verdict appears that
 nobody asked for. Consumers name the profile they read
-(``usability_flag_col``), and ``complete`` is always available as the floor
+(``usability_flag_col``), and ``survey_complete`` is always available as the floor
 beneath all of them.
 
 Each flag comes from one place in the tree -- its **direction** -- via a counting
@@ -111,6 +111,36 @@ HOUSEHOLD_DAY_NEEDS = (ALL_MEMBERS, NOTHING)
 # produced, so the legal set is whatever that step was configured to build.
 NO_ZONE_COVERAGE = "none"  # no geographic requirement
 
+# A profile is a name -- `ctramp`, `analysis` -- and every column belonging to it
+# is that name suffixed onto a family: `usable_ctramp` for the verdict,
+# `hh_day_ctramp` for the household-date reduction, `hh_weight_ctramp` for the
+# weight fitted over it. One profile, one suffix, one rule per family.
+USABLE_FAMILY = "usable"
+
+# Survey reporting completeness, from the vendor. Deliberately not a profile: it
+# answers "did we collect this record?", not "do the models take it?", and a
+# consumer may name it to mean the whole valid survey. It has no family prefix
+# because it belongs to no family.
+SURVEY_COMPLETE = "survey_complete"
+
+
+def usable_col_for(profile: str) -> str:
+    """The column carrying *profile*'s verdict.
+
+    Args:
+        profile: A usability profile named in config, or
+            :data:`SURVEY_COMPLETE` to mean the whole valid survey.
+
+    Returns:
+        ``usable_<profile>``, or :data:`SURVEY_COMPLETE` unchanged -- that column
+        is vendor data rather than a verdict this pipeline reached, so it is
+        addressable but not a member of the family.
+    """
+    if profile == SURVEY_COMPLETE:
+        return SURVEY_COMPLETE
+    return f"{USABLE_FAMILY}_{profile}"
+
+
 # Zone columns the zone step writes, by table. A record is addressable when
 # every one of its locations landed in the named geography.
 _ZONE_PREFIXES: dict[str, tuple[str, ...]] = {
@@ -153,7 +183,7 @@ class UsabilityProfile:
     "addressable" is a question only a named consumer can answer.
 
     Two things hold at every setting and so are not axes. A profile is always a
-    subset of ``complete`` -- a usability column admitting unreported records
+    subset of ``survey_complete`` -- a usability column admitting unreported records
     would be a different flag wearing the name. And no profile admits a tour
     with *missing data* (a missing leg, an activity that never happened), as
     opposed to one that merely ends somewhere unexpected.
@@ -176,7 +206,7 @@ class UsabilityProfile:
     @property
     def flag(self) -> str:
         """Per-record verdict column."""
-        return self.name
+        return usable_col_for(self.name)
 
     @property
     def requires_zones(self) -> bool:
@@ -199,7 +229,7 @@ class UsabilityProfile:
         return self.household_day_needs == ALL_MEMBERS
 
 
-# Records that sit on a day: their ``complete`` is their own AND their day's
+# Records that sit on a day: their ``survey_complete`` is their own AND their day's
 # (a trip or tour is no more complete than the day it belongs to).
 _DAY_RECORDS = ("unlinked_trips", "linked_trips", "joint_trips", "tours", "joint_tours")
 
@@ -218,7 +248,7 @@ _JOINT_GROUPINGS = (
 
 
 def rollup_completeness(tables: dict[str, pl.DataFrame | None]) -> None:
-    """Roll ``complete`` UP from days, then broadcast each day's value down, in place.
+    """Roll ``survey_complete`` UP from days, then broadcast each day's value down, in place.
 
     Completeness is measured at the person-day (``day.complete`` is set upstream
     by the project cleaner from surveyed trips / a declared no-travel day). This
@@ -230,36 +260,36 @@ def rollup_completeness(tables: dict[str, pl.DataFrame | None]) -> None:
       day it sits in.
 
     ``household.complete`` is a household-day rollup and is set separately by
-    :func:`rollup_household_complete` (it needs ``hh_day_complete`` first). Tables
-    lacking ``complete`` or the join key are left unchanged. Idempotent.
+    :func:`rollup_household_complete` (it needs ``hh_day_survey_complete`` first). Tables
+    lacking ``survey_complete`` or the join key are left unchanged. Idempotent.
     """
     days = tables.get("days")
-    if days is None or "complete" not in days.columns:
+    if days is None or "survey_complete" not in days.columns:
         return
-    day_complete = pl.col("complete").fill_null(value=False)
+    day_complete = pl.col("survey_complete").fill_null(value=False)
 
     persons = tables.get("persons")
     if persons is not None and "person_id" in days.columns:
         per_flag = days.group_by("person_id").agg(day_complete.any().alias("_c"))
         tables["persons"] = (
-            persons.drop("complete", strict=False)
+            persons.drop("survey_complete", strict=False)
             .join(per_flag, on="person_id", how="left")
-            .with_columns(pl.col("_c").fill_null(value=False).alias("complete"))
+            .with_columns(pl.col("_c").fill_null(value=False).alias("survey_complete"))
             .drop("_c")
         )
 
     day_flag = days.select("day_id", day_complete.alias("_day_complete"))
     for name in _DAY_RECORDS:
         df = tables.get(name)
-        if df is None or "complete" not in df.columns or "day_id" not in df.columns:
+        if df is None or "survey_complete" not in df.columns or "day_id" not in df.columns:
             continue
         tables[name] = (
             df.join(day_flag, on="day_id", how="left")
             .with_columns(
                 (
-                    pl.col("complete").fill_null(value=False)
+                    pl.col("survey_complete").fill_null(value=False)
                     & pl.col("_day_complete").fill_null(value=True)
-                ).alias("complete")
+                ).alias("survey_complete")
             )
             .drop("_day_complete")
         )
@@ -269,7 +299,7 @@ def rollup_household_complete(tables: dict[str, pl.DataFrame | None]) -> None:
     """Set ``household.complete`` = has at least one complete household-day, in place.
 
     A household is complete when at least one date was coherently observed (every
-    member complete). Requires ``hh_day_complete`` on days (from
+    member complete). Requires ``hh_day_survey_complete`` on days (from
     :func:`flag_household_day_complete`). Left unchanged if days or the flag is
     absent.
     """
@@ -278,20 +308,20 @@ def rollup_household_complete(tables: dict[str, pl.DataFrame | None]) -> None:
     if (
         households is None
         or days is None
-        or "hh_day_complete" not in days.columns
+        or "hh_day_survey_complete" not in days.columns
         or "hh_id" not in days.columns
     ):
         return
     has_complete_day = (
-        days.filter(pl.col("hh_day_complete").fill_null(value=False))
+        days.filter(pl.col("hh_day_survey_complete").fill_null(value=False))
         .select("hh_id")
         .unique()
         .with_columns(pl.lit(value=True).alias("_h"))
     )
     tables["households"] = (
-        households.drop("complete", strict=False)
+        households.drop("survey_complete", strict=False)
         .join(has_complete_day, on="hh_id", how="left")
-        .with_columns(pl.col("_h").fill_null(value=False).alias("complete"))
+        .with_columns(pl.col("_h").fill_null(value=False).alias("survey_complete"))
         .drop("_h")
     )
 
@@ -317,33 +347,33 @@ def _join_surveyable(days: pl.DataFrame, persons: pl.DataFrame | None) -> pl.Dat
 
 
 def flag_household_day_complete(tables: dict[str, pl.DataFrame | None]) -> None:
-    """Stamp ``hh_day_complete`` on the days table, in place (reverse cascade).
+    """Stamp ``hh_day_survey_complete`` on the days table, in place (reverse cascade).
 
     A **household-day** -- the set of person-days sharing one ``hh_id`` and
     ``travel_date`` -- is complete only when every *surveyable* member's day is
     complete (an ALL reduction over surveyable member-days). The result is
-    written back onto each day on that date, so ``hh_day_complete`` marks
+    written back onto each day on that date, so ``hh_day_survey_complete`` marks
     whether the day belongs to a coherently observed household-date.
 
     Unsurveyable members (see :func:`_join_surveyable`) neither veto the date
     nor borrow its verdict: their own day rows -- if a data source carries any
-    -- keep their own ``complete``, which is normally False since they file no
+    -- keep their own ``survey_complete``, which is normally False since they file no
     trips. A source that nonetheless marks one complete is believed rather than
     overruled: the contradiction is upstream, and inventing a verdict here would
     hide it.
 
-    This runs after :func:`rollup_completeness`, so ``complete`` already
+    This runs after :func:`rollup_completeness`, so ``survey_complete`` already
     reflects ancestry; the reduction then flows the other way, up from members to
     the shared date. Idempotent. Days without ``hh_id`` / ``travel_date`` (e.g.
-    schema-only fixtures) fall back to each day's own ``complete``.
+    schema-only fixtures) fall back to each day's own ``survey_complete``.
     """
     days = tables.get("days")
-    if days is None or "complete" not in days.columns:
+    if days is None or "survey_complete" not in days.columns:
         return
 
-    own = pl.col("complete").fill_null(value=False)
+    own = pl.col("survey_complete").fill_null(value=False)
     if "hh_id" not in days.columns or "travel_date" not in days.columns:
-        tables["days"] = days.with_columns(own.alias("hh_day_complete"))
+        tables["days"] = days.with_columns(own.alias("hh_day_survey_complete"))
         return
 
     days = _join_surveyable(days, tables.get("persons"))
@@ -351,17 +381,17 @@ def flag_household_day_complete(tables: dict[str, pl.DataFrame | None]) -> None:
     # members has no surveyable observation to fail -- and no surveyable day to
     # gain usability from it either.
     household_day = days.group_by("hh_id", "travel_date").agg(
-        own.filter(pl.col("_surveyable")).all().alias("_hh_day_complete")
+        own.filter(pl.col("_surveyable")).all().alias("_hh_day_survey_complete")
     )
     tables["days"] = (
         days.join(household_day, on=["hh_id", "travel_date"], how="left")
         .with_columns(
             pl.when(pl.col("_surveyable"))
-            .then(pl.col("_hh_day_complete").fill_null(value=False))
+            .then(pl.col("_hh_day_survey_complete").fill_null(value=False))
             .otherwise(own)
-            .alias("hh_day_complete")
+            .alias("hh_day_survey_complete")
         )
-        .drop("_hh_day_complete", "_surveyable")
+        .drop("_hh_day_survey_complete", "_surveyable")
     )
 
 
@@ -413,7 +443,7 @@ def _flag_person_usable(
     than silently passing every person.
     """
     persons = tables.get("persons")
-    if persons is None or "complete" not in persons.columns:
+    if persons is None or "survey_complete" not in persons.columns:
         return
     days = tables.get("days")
     if days is not None and cols.flag not in days.columns:
@@ -424,7 +454,7 @@ def _flag_person_usable(
         raise ValueError(msg)
     if days is None or "person_id" not in days.columns:
         tables["persons"] = persons.with_columns(
-            pl.col("complete").fill_null(value=False).alias(cols.flag)
+            pl.col("survey_complete").fill_null(value=False).alias(cols.flag)
         )
         return
     has_usable_day = (
@@ -514,7 +544,7 @@ def _trips_addressable_per_tour(
     say nothing about the legs between: a tour can start and end in the model
     area while one intermediate stop falls outside it. CT-RAMP needs a zone for
     every trip it writes, so one unaddressable leg makes the whole tour
-    unusable -- the same shape as ``complete``, which is an ALL over the tour's
+    unusable -- the same shape as ``survey_complete``, which is an ALL over the tour's
     trips rather than a property of its endpoints.
 
     Returns None when the profile asks nothing of geography, or when the trips
@@ -554,7 +584,7 @@ def _flag_tours(
     household-date, and -- where the profile names a geography -- every one of its
     trips can be addressed in it, not merely its own endpoints. Without the coherence term
     CT-RAMP (which reads the tour's flag) would keep a tour the weighting has
-    zeroed. ``hh_day_complete`` is available because the reverse cascade runs
+    zeroed. ``hh_day_survey_complete`` is available because the reverse cascade runs
     before this.
 
     Subtours then take their parent's verdict on top of their own: an at-work
@@ -563,7 +593,7 @@ def _flag_tours(
     in the output, and would strand the parent's ``atWork_freq``.
     """
     tours = tables.get("tours")
-    if tours is None or "complete" not in tours.columns:
+    if tours is None or "survey_complete" not in tours.columns:
         return
 
     usable = _tour_usable_expr(
@@ -597,20 +627,20 @@ def _flag_tours(
     if (
         not coherence_required
         or days is None
-        or "hh_day_complete" not in days.columns
+        or "hh_day_survey_complete" not in days.columns
         or "day_id" not in tours.columns
     ):
         flagged = tours.with_columns(usable.alias(cols.flag))
     else:
         coherence = days.select(
-            "day_id", pl.col("hh_day_complete").alias("_hh_day_complete")
+            "day_id", pl.col("hh_day_survey_complete").alias("_hh_day_survey_complete")
         ).unique(subset="day_id")
         flagged = (
             tours.join(coherence, on="day_id", how="left")
             .with_columns(
-                (usable & pl.col("_hh_day_complete").fill_null(value=False)).alias(cols.flag)
+                (usable & pl.col("_hh_day_survey_complete").fill_null(value=False)).alias(cols.flag)
             )
-            .drop("_hh_day_complete")
+            .drop("_hh_day_survey_complete")
         )
 
     if home is not None:
@@ -695,7 +725,7 @@ def _tour_usable_expr(
             (pl.col("tour_category") == TourCategory.COMPLETE.value).fill_null(value=False)
         )
 
-    return pl.col("complete").fill_null(value=False) & structural
+    return pl.col("survey_complete").fill_null(value=False) & structural
 
 
 def _flag_joint_groupings(
@@ -711,7 +741,7 @@ def _flag_joint_groupings(
     participant reaching CT-RAMP, where it would violate ``num_participants >= 2``.
 
     A member table that was never supplied is a legitimate partial call and the
-    grouping falls back to its own ``complete``. A member table that *is* present
+    grouping falls back to its own ``survey_complete``. A member table that *is* present
     but carries no verdict column is a caller ordering error and raises: the
     fallback would silently pass every grouping, which is exactly the behaviour
     this rule exists to replace.
@@ -721,10 +751,10 @@ def _flag_joint_groupings(
     """
     for joint_table, member_table, key in _JOINT_GROUPINGS:
         df = tables.get(joint_table)
-        if df is None or "complete" not in df.columns:
+        if df is None or "survey_complete" not in df.columns:
             continue
 
-        base = pl.col("complete").fill_null(value=False)
+        base = pl.col("survey_complete").fill_null(value=False)
         members = tables.get(member_table)
 
         if members is not None and cols.flag not in members.columns:
@@ -780,10 +810,10 @@ def _flag_households(
         ValueError: If days is present but has not been flagged yet.
     """
     households = tables.get("households")
-    if households is None or "complete" not in households.columns:
+    if households is None or "survey_complete" not in households.columns:
         return
 
-    base = pl.col("complete").fill_null(value=False)
+    base = pl.col("survey_complete").fill_null(value=False)
     # The date-level reduction is only the rule while coherence is required.
     counts = cols.household_day if cols.needs_whole_household_day else cols.flag
     days = tables.get("days")
@@ -811,7 +841,7 @@ def _flag_households(
 
 
 def cascade_complete(tables: dict[str, pl.DataFrame | None]) -> None:
-    """Derive every ``complete`` flag, in place.
+    """Derive every ``survey_complete`` flag, in place.
 
     Survey reporting only: what the vendor collected, cascaded through the
     hierarchy. Nothing here consults a model criterion, and one run of the
@@ -838,8 +868,8 @@ def stamp_usable(
 ) -> None:
     """Derive one usability verdict for every table, in place.
 
-    Reads the ``complete`` flags :func:`cascade_complete` left behind and writes
-    the pair of columns *cols* names. It never writes ``complete``, so it can be
+    Reads the ``survey_complete`` flags :func:`cascade_complete` left behind and writes
+    the pair of columns *cols* names. It never writes ``survey_complete``, so it can be
     run more than once over the same tables to stamp several verdicts side by
     side, each under its own name.
 
@@ -857,16 +887,16 @@ def stamp_usable(
     # -- Days (needs a coherent household-date AND a usable tour) -------------
     # A day is usable only within a complete household-day: even a genuine
     # no-travel day is only a clean observation when the whole household was
-    # observed that date. ``hh_day_complete`` already implies the day's own
-    # ``complete`` (it is an ALL over the members, which includes this one), so
+    # observed that date. ``hh_day_survey_complete`` already implies the day's own
+    # ``survey_complete`` (it is an ALL over the members, which includes this one), so
     # a profile admitting incomplete household-days falls back to that own
     # reporting rather than dropping the term entirely.
     days = tables.get("days")
-    if days is not None and "complete" in days.columns:
+    if days is not None and "survey_complete" in days.columns:
         base = (
-            pl.col("complete").fill_null(value=False)
+            pl.col("survey_complete").fill_null(value=False)
             if not cols.needs_whole_household_day
-            else pl.col("hh_day_complete").fill_null(value=False)
+            else pl.col("hh_day_survey_complete").fill_null(value=False)
         )
         if tours is not None and cols.flag not in tours.columns:
             msg = (
@@ -914,9 +944,9 @@ def stamp_usable(
         tour_usable = tours.select("tour_id", pl.col(cols.flag).alias("_tour_usable"))
     for name in _TOUR_MEMBER_TABLES:
         df = tables.get(name)
-        if df is None or "complete" not in df.columns:
+        if df is None or "survey_complete" not in df.columns:
             continue
-        base = pl.col("complete").fill_null(value=False)
+        base = pl.col("survey_complete").fill_null(value=False)
         if tour_usable is not None and "tour_id" in df.columns:
             df = df.join(tour_usable, on="tour_id", how="left")
             tables[name] = df.with_columns(
@@ -934,7 +964,7 @@ def compute_usability(
     tables: dict[str, pl.DataFrame | None],
     profile: UsabilityProfile,
 ) -> None:
-    """Stamp ``complete`` and one profile's verdict on every table, in place.
+    """Stamp ``survey_complete`` and one profile's verdict on every table, in place.
 
     The two halves in order: reporting completeness once, then one usability
     pass over it. A run stamping several profiles calls :func:`cascade_complete`
@@ -959,7 +989,7 @@ _ZONE_AXIS = "zone_coverage"
 
 # Columns the reporting cascade owns. A profile taking one of these names would
 # overwrite a survey fact with a modelling judgement.
-_RESERVED_NAMES = ("complete", "hh_day_complete")
+_RESERVED_NAMES = ("survey_complete", "hh_day_survey_complete")
 
 
 def parse_usability_profiles(spec: dict[str, dict[str, str]]) -> list[UsabilityProfile]:
@@ -992,7 +1022,6 @@ def parse_usability_profiles(spec: dict[str, dict[str, str]]) -> list[UsabilityP
         raise ValueError(msg)
 
     profiles = [_one_profile(name, axes) for name, axes in spec.items()]
-    _reject_column_collisions(profiles)
     return profiles
 
 
@@ -1065,32 +1094,6 @@ def _one_profile(name: str, axes: dict[str, str]) -> UsabilityProfile:
         household_day_needs=axes["household_day_needs"],
         zone_coverage=coverage,
     )
-
-
-def _reject_column_collisions(profiles: list[UsabilityProfile]) -> None:
-    """Two profiles must not write the same column.
-
-    Each profile writes two columns and derives one of them from its name, so a
-    profile called ``hh_day_ctramp_usable`` writes its verdict into the column
-    ``ctramp_usable`` derives for its household-day reduction -- and whichever
-    ran second would win, silently. Distinct names are not enough; the columns
-    they generate have to be distinct too.
-
-    Raises:
-        ValueError: If any two profiles write the same column.
-    """
-    written: dict[str, str] = {}
-    for profile in profiles:
-        for column in (profile.flag, profile.household_day):
-            if column in written:
-                msg = (
-                    f"usability_profiles '{written[column]}' and '{profile.name}' both "
-                    f"write the column '{column}', so one would silently overwrite the "
-                    "other. Each profile writes its own name and 'hh_day_' plus its "
-                    "name; rename one of them."
-                )
-                raise ValueError(msg)
-            written[column] = profile.name
 
 
 def suggest_usability_columns(frame: pl.DataFrame) -> str:
@@ -1172,13 +1175,14 @@ def _log_gate_summary(
             f'Usability gate applied: "{profile.flag}".',
             "  " + _describe(profile)[profile.flag],
             "",
-            f"  {'table':<16}{'rows':>10}{'complete':>12}{profile.flag:>18}{'newly unusable':>16}",
+            f"  {'table':<16}{'rows':>10}{'survey_complete':>16}"
+            f"{profile.flag:>18}{'newly unusable':>16}",
         ]
         for name, df in tables.items():
             if df is None or profile.flag not in df.columns:
                 continue
             n = df.height
-            n_complete = df.filter(pl.col("complete").fill_null(value=False)).height
+            n_complete = df.filter(pl.col("survey_complete").fill_null(value=False)).height
             n_usable = df.filter(pl.col(profile.flag)).height
             # Survey data that reported fine and the model still cannot use,
             # which is the column worth reading: the loss this gate adds alone.
@@ -1191,8 +1195,8 @@ def _log_gate_summary(
 
 @step(
     requires={
-        "days": {"day_id", "hh_id", "travel_date", "complete"},
-        "tours": {"tour_id", "day_id", "complete"},
+        "days": {"day_id", "hh_id", "travel_date", "survey_complete"},
+        "tours": {"tour_id", "day_id", "survey_complete"},
     },
 )
 def cascade_completeness(
@@ -1207,17 +1211,17 @@ def cascade_completeness(
     usability_profiles: dict[str, dict[str, str]] | None = None,
     canonical_data: CanonicalData | None = None,
 ) -> dict[str, pl.DataFrame]:
-    """Cascade ``complete`` through the hierarchy and stamp one column per profile.
+    """Cascade ``survey_complete`` through the hierarchy and stamp one column per profile.
 
     Walks both kinds of flag across every table so they are internally consistent
     with whatever was set upstream (the vendor's day-level completeness, any
     manual adjustments in the project cleaner, and the structural verdicts from
     tour extraction):
 
-    * ``complete`` -- survey reporting completeness, cascaded hh <-> person <->
+    * ``survey_complete`` -- survey reporting completeness, cascaded hh <-> person <->
       day <-> trip/tour. Never narrowed by model criteria, and never
       configurable: if it is wrong the fix belongs upstream in the cleaner.
-    * one column per usability profile -- the subset of ``complete`` that
+    * one column per usability profile -- the subset of ``survey_complete`` that
       profile admits.
 
     A profile states its standard on two axes: which home has to close a tour,
@@ -1227,10 +1231,10 @@ def cascade_completeness(
 
     ```yaml
     usability_profiles:
-      ctramp_usable:
+      ctramp:
         tour_closes_at: primary_home
         household_day_needs: all_members
-      analysis_usable:
+      analysis:
         tour_closes_at: anywhere
         household_day_needs: nothing
     ```
@@ -1239,7 +1243,7 @@ def cascade_completeness(
     profile answers both axes. Consumers then choose which to honour by name
     (``usability_flag_col``, in the weighting and both formatters), and none of
     them re-derive completeness or tour validity -- the formatters read the
-    column and raise if it is absent. ``complete`` is always available as the
+    column and raise if it is absent. ``survey_complete`` is always available as the
     floor without being declared.
 
     See [`stamp_usable`][processing.completeness.stamp_usable] for the per-level
@@ -1265,7 +1269,7 @@ def cascade_completeness(
             output and documented rather than silently dropped.
 
     Returns:
-        The provided tables, each with ``complete`` reconciled and one column
+        The provided tables, each with ``survey_complete`` reconciled and one column
         per profile added.
 
     Raises:
@@ -1275,7 +1279,7 @@ def cascade_completeness(
         msg = (
             "cascade_completeness requires usability_profiles. There is no default "
             "because the choice decides what every downstream consumer can read. "
-            "Declare at least one profile, e.g. 'ctramp_usable: {tour_closes_at: "
+            "Declare at least one profile, e.g. 'ctramp: {tour_closes_at: "
             "primary_home, household_day_needs: all_members}'."
         )
         raise ValueError(msg)

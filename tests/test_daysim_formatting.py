@@ -71,7 +71,7 @@ class TestDayCompleteness:
                     person_num=1,
                     day_num=1,
                     travel_dow=TravelDow.MONDAY,
-                    complete=True,
+                    survey_complete=True,
                 )
             ]
         )
@@ -98,7 +98,7 @@ class TestDayCompleteness:
                     person_num=1,
                     day_num=i,
                     travel_dow=TravelDow(i),
-                    complete=True,
+                    survey_complete=True,
                 )
                 for i in range(1, 8)
             ]
@@ -126,7 +126,7 @@ class TestDayCompleteness:
                     person_num=1,
                     day_num=1,
                     travel_dow=TravelDow.TUESDAY,
-                    complete=True,
+                    survey_complete=True,
                 ),
                 create_day(
                     day_id=2,
@@ -135,7 +135,7 @@ class TestDayCompleteness:
                     person_num=1,
                     day_num=2,
                     travel_dow=TravelDow.WEDNESDAY,
-                    complete=False,
+                    survey_complete=False,
                 ),
                 create_day(
                     day_id=3,
@@ -144,7 +144,7 @@ class TestDayCompleteness:
                     person_num=1,
                     day_num=3,
                     travel_dow=TravelDow.THURSDAY,
-                    complete=True,
+                    survey_complete=True,
                 ),
             ]
         )
@@ -167,7 +167,7 @@ class TestDayCompleteness:
                     hh_id=1,
                     person_num=1,
                     travel_dow=TravelDow.MONDAY,
-                    complete=True,
+                    survey_complete=True,
                 ),
                 create_day(
                     day_id=2,
@@ -175,7 +175,7 @@ class TestDayCompleteness:
                     hh_id=1,
                     person_num=2,
                     travel_dow=TravelDow.MONDAY,
-                    complete=False,
+                    survey_complete=False,
                 ),
             ]
         )
@@ -203,7 +203,7 @@ class TestPersonFormatting:
                     work_mode=Mode.HOUSEHOLD_VEHICLE_1,
                     work_taz=200,
                     work_maz=2000,
-                    days=[{"day_id": 1, "person_id": 101, "complete": True}],
+                    days=[{"day_id": 1, "person_id": 101, "survey_complete": True}],
                 )
             ]
         )
@@ -217,7 +217,7 @@ class TestPersonFormatting:
                     person_num=1,
                     day_num=1,
                     travel_dow=TravelDow.MONDAY,
-                    complete=True,
+                    survey_complete=True,
                 )
             ]
         )
@@ -262,7 +262,7 @@ class TestPersonFormatting:
                     person_num=1,
                     day_num=1,
                     travel_dow=TravelDow.TUESDAY,
-                    complete=True,
+                    survey_complete=True,
                 )
             ]
         )
@@ -307,7 +307,7 @@ class TestPersonFormatting:
                     person_num=1,
                     day_num=1,
                     travel_dow=TravelDow.WEDNESDAY,
-                    complete=True,
+                    survey_complete=True,
                 )
             ]
         )
@@ -354,7 +354,7 @@ class TestPersonFormatting:
                     person_num=1,
                     day_num=1,
                     travel_dow=TravelDow.THURSDAY,
-                    complete=True,
+                    survey_complete=True,
                 )
             ]
         )
@@ -397,7 +397,7 @@ class TestPersonFormatting:
                     person_num=1,
                     day_num=1,
                     travel_dow=TravelDow.FRIDAY,
-                    complete=True,
+                    survey_complete=True,
                 )
             ]
         )
@@ -417,7 +417,7 @@ class TestPersonFormatting:
                 person_num=1,
                 day_num=1,
                 travel_dow=TravelDow.SATURDAY,
-                complete=True,
+                survey_complete=True,
             )
         ]
         persons = pl.DataFrame(
@@ -450,7 +450,7 @@ class TestPersonFormatting:
                 person_num=1,
                 day_num=1,
                 travel_dow=TravelDow.SUNDAY,
-                complete=True,
+                survey_complete=True,
             )
         ]
         persons = pl.DataFrame(
@@ -484,7 +484,7 @@ class TestPersonFormatting:
                 person_num=1,
                 day_num=1,
                 travel_dow=TravelDow.MONDAY,
-                complete=True,
+                survey_complete=True,
             )
         ]
         persons = pl.DataFrame(
@@ -518,7 +518,7 @@ class TestPersonFormatting:
                 person_num=1,
                 day_num=1,
                 travel_dow=TravelDow.MONDAY,
-                complete=True,
+                survey_complete=True,
             ),
             create_day(
                 day_id=2,
@@ -527,7 +527,7 @@ class TestPersonFormatting:
                 person_num=1,
                 day_num=2,
                 travel_dow=TravelDow.TUESDAY,
-                complete=True,
+                survey_complete=True,
             ),
             create_day(
                 day_id=3,
@@ -536,7 +536,7 @@ class TestPersonFormatting:
                 person_num=1,
                 day_num=3,
                 travel_dow=TravelDow.WEDNESDAY,
-                complete=True,
+                survey_complete=True,
             ),
             create_day(
                 day_id=4,
@@ -545,7 +545,7 @@ class TestPersonFormatting:
                 person_num=1,
                 day_num=4,
                 travel_dow=TravelDow.THURSDAY,
-                complete=False,
+                survey_complete=False,
             ),
             create_day(
                 day_id=5,
@@ -554,7 +554,7 @@ class TestPersonFormatting:
                 person_num=1,
                 day_num=5,
                 travel_dow=TravelDow.FRIDAY,
-                complete=False,
+                survey_complete=False,
             ),
         ]
         persons = pl.DataFrame(
@@ -595,7 +595,7 @@ class TestPersonFormatting:
                 person_num=1,
                 day_num=1,
                 travel_dow=TravelDow.MONDAY,
-                complete=True,
+                survey_complete=True,
             ),
             create_day(
                 day_id=2,
@@ -604,7 +604,7 @@ class TestPersonFormatting:
                 person_num=2,
                 day_num=1,
                 travel_dow=TravelDow.MONDAY,
-                complete=True,
+                survey_complete=True,
             ),
         ]
         persons = pl.DataFrame(
@@ -667,7 +667,7 @@ class TestHouseholdFormatting:
                 person_num=1,
                 day_num=1,
                 travel_dow=TravelDow.MONDAY,
-                complete=True,
+                survey_complete=True,
             )
         ]
         persons = pl.DataFrame(
@@ -1269,7 +1269,7 @@ class TestEndToEndDaysimFormatting:
             data["linked_trips"],
             data["tours"],
             data["days"],
-            usability_flag_col="usable",
+            usability_profile="test",
         )
 
         # Verify all expected keys present
@@ -1295,7 +1295,7 @@ class TestEndToEndDaysimFormatting:
             data["linked_trips"],
             data["tours"],
             data["days"],
-            usability_flag_col="usable",
+            usability_profile="test",
         )
 
         # Verify transit mode detected
@@ -1317,7 +1317,7 @@ class TestEndToEndDaysimFormatting:
             data["linked_trips"],
             data["tours"],
             data["days"],
-            usability_flag_col="usable",
+            usability_profile="test",
         )
 
         # Verify household composition
@@ -1340,7 +1340,7 @@ class TestEndToEndDaysimFormatting:
             data["linked_trips"],
             data["tours"],
             data["days"],
-            usability_flag_col="usable",
+            usability_profile="test",
         )
 
         # Check household columns

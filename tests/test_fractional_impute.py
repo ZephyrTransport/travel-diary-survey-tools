@@ -92,7 +92,7 @@ def _make_survey_hh(n: int = 30, null_income_rate: float = 0.0) -> pl.DataFrame:
             "hh_id": list(range(1, n + 1)),
             "income_bin": incomes,
             "num_vehicles": rng.choice([0, 1, 2, 3], n).tolist(),
-            "complete": [True] * n,
+            "survey_complete": [True] * n,
         }
     )
 

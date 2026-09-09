@@ -80,7 +80,7 @@ def get_required_non_null_fields(model):
 def standard_config():
     """Standard test configuration with explicit parameters."""
     return CTRAMPConfig(
-        usability_flag_col="usable",
+        usability_profile="test",
         income_low_threshold=30000,  # $30k ($2000, MTC)
         income_med_threshold=60000,  # $60k ($2000, MTC)
         income_high_threshold=100000,  # $100k ($2000, MTC)
@@ -97,7 +97,7 @@ def joint_tours_for(tours: pl.DataFrame) -> pl.DataFrame:
     them makes the joint tour itself dangle and get dropped.
     """
     schema = model_to_polars_schema(JointTourModel)
-    schema["usable"] = pl.Boolean
+    schema["usable_test"] = pl.Boolean
     members = tours.filter(pl.col("joint_tour_id").is_not_null())
     if members.is_empty():
         return pl.DataFrame(schema=schema)
@@ -108,7 +108,7 @@ def joint_tours_for(tours: pl.DataFrame) -> pl.DataFrame:
             pl.col("day_id").first(),
             pl.len().cast(pl.Int64).alias("num_participants"),
         )
-        .with_columns(pl.lit(value=True).alias("usable"))
+        .with_columns(pl.lit(value=True).alias("usable_test"))
         .sort("joint_tour_id")
     )
 
@@ -278,7 +278,7 @@ class TestHouseholdFieldCorrections:
             income_med_threshold=standard_config.income_med_threshold,
             income_high_threshold=standard_config.income_high_threshold,
             income_survey_year_to_ctramp_year=standard_config.income_survey_year_to_ctramp_year,
-            usability_flag_col="usable",
+            usability_profile="test",
         )
 
         households_ctramp = result["households_ctramp"]
@@ -305,7 +305,7 @@ class TestHouseholdFieldCorrections:
             income_med_threshold=standard_config.income_med_threshold,
             income_high_threshold=standard_config.income_high_threshold,
             income_survey_year_to_ctramp_year=standard_config.income_survey_year_to_ctramp_year,
-            usability_flag_col="usable",
+            usability_profile="test",
         )
 
         households_ctramp = result["households_ctramp"]

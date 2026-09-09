@@ -32,7 +32,11 @@ import polars as pl
 from data_canon.codebook.tours import TourDataQuality
 from data_canon.core.dataclass import CANONICAL_MODELS
 from data_canon.validation.relational import foreign_key_edges
-from processing.completeness import MIN_JOINT_PARTICIPANTS, suggest_usability_columns
+from processing.completeness import (
+    MIN_JOINT_PARTICIPANTS,
+    suggest_usability_columns,
+    usable_col_for,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +150,7 @@ def _log_ledger(
 
 def select_profile_weights(
     tables: dict[str, pl.DataFrame],
-    usability_flag_col: str,
+    usability_profile: str,
 ) -> dict[str, pl.DataFrame]:
     """Resolve this consumer's weight columns to their base names.
 
@@ -161,7 +165,7 @@ def select_profile_weights(
 
     Args:
         tables: Canonical tables, keyed by name.
-        usability_flag_col: The profile this consumer reads.
+        usability_profile: The profile this consumer reads.
 
     Returns:
         The same mapping with this profile's weights under the base names. A
@@ -181,7 +185,7 @@ def select_profile_weights(
         base = _WEIGHT_COLUMNS.get(name)
         if base is None:
             continue
-        mine = f"{base}_{usability_flag_col}"
+        mine = f"{base}_{usability_profile}"
 
         # Another profile's copy is not ours to deliver, and leaving it beside
         # the base name invites reading the wrong one.
@@ -192,7 +196,7 @@ def select_profile_weights(
                 weighted = sorted(col.removeprefix(f"{base}_") for col in others)
                 msg = (
                     f"{name} carries weights for {weighted} but not for "
-                    f"{usability_flag_col!r}, the profile this consumer reads. Add it to "
+                    f"{usability_profile!r}, the profile this consumer reads. Add it to "
                     f"the weighting step's weight_profiles; falling back to {base!r} would "
                     f"publish another universe's expansion factors, or none."
                 )
@@ -214,7 +218,7 @@ def select_profile_weights(
     if read_from:
         logger.info(
             "Weights read for %s: %s",
-            usability_flag_col,
+            usability_profile,
             ", ".join(f"{name} <- {col}" for name, col in sorted(read_from.items())),
         )
     return resolved
@@ -222,15 +226,15 @@ def select_profile_weights(
 
 def keep_usable(
     tables: dict[str, pl.DataFrame],
-    usability_flag_col: str,
+    usability_profile: str,
 ) -> dict[str, pl.DataFrame]:
-    """Keep the records *usability_flag_col* admits, across every table.
+    """Keep the records *usability_profile* admits, across every table.
 
     Args:
         tables: Canonical tables, keyed by name.
-        usability_flag_col: The usability profile this consumer reads. It names
-            both the verdict to gate on and the weight columns to read, since a
-            profile's weight columns carry its name.
+        usability_profile: The usability profile this consumer reads. It names
+            both the verdict to gate on (``usable_<profile>``) and the weights to
+            read (``hh_weight_<profile>``), so one setting settles both.
 
     Returns:
         The same mapping, filtered, with this profile's weights under the base
@@ -240,7 +244,8 @@ def keep_usable(
         ValueError: If a gated table carries no verdict, which means
             `cascade_completeness` did not run or stamped a different profile.
     """
-    tables = select_profile_weights(tables, usability_flag_col)
+    tables = select_profile_weights(tables, usability_profile)
+    usability_flag_col = usable_col_for(usability_profile)
 
     missing = [
         name
@@ -502,18 +507,18 @@ def _warn_zero_weight(tables: dict[str, pl.DataFrame], usability_flag_col: str) 
 
 
 def _completeness_split(df: pl.DataFrame) -> tuple[int, int]:
-    """Return (already_incomplete, newly_unusable) counts from the ``complete`` flag.
+    """Return (already_incomplete, newly_unusable) counts from the ``survey_complete`` flag.
 
     ``already_incomplete`` are records flagged incomplete (household / person /
     day cascade) — they were already excluded from the weighted model.
     ``newly_unusable`` are otherwise-complete records the profile still rejects.
-    When the ``complete`` column is absent (e.g. tests), everything is treated as
+    When the ``survey_complete`` column is absent (e.g. tests), everything is treated as
     newly unusable.
     """
     total = df.height
-    if "complete" not in df.columns:
+    if "survey_complete" not in df.columns:
         return 0, total
-    incomplete = df.filter(~pl.col("complete").fill_null(value=False)).height
+    incomplete = df.filter(~pl.col("survey_complete").fill_null(value=False)).height
     return incomplete, total - incomplete
 
 

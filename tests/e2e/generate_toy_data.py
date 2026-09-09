@@ -169,7 +169,7 @@ class _Day:
                 "travel_dow": dep_dt.weekday() + 1,  # 1=Mon … 7=Sun
                 "driver": drv,
                 "num_travelers": ntrav,
-                "complete": True,
+                "survey_complete": True,
                 "unlinked_trip_weight": None,
             }
         )
@@ -203,7 +203,7 @@ class _Survey:
         veh=1,
         npeople=1,
         nworkers=1,
-        complete=True,
+        survey_complete=True,
     ):
         self.hhs.append(
             {
@@ -216,7 +216,7 @@ class _Survey:
                 "num_vehicles": veh,
                 "num_people": npeople,
                 "num_workers": nworkers,
-                "complete": complete,
+                "survey_complete": survey_complete,
                 "hh_weight": None,
             }
         )
@@ -273,7 +273,7 @@ class _Survey:
                 "transit_pass": tp,
                 "is_proxy": proxy,
                 "num_days_complete": ndays,
-                "complete": comp,
+                "survey_complete": comp,
                 "person_weight": None,
             }
         )
@@ -290,7 +290,7 @@ class _Survey:
                 "travel_dow": dow,
                 "person_num": pnum,
                 "day_num": dnum,
-                "complete": comp,
+                "survey_complete": comp,
                 "day_weight": None,
             }
         )
@@ -583,7 +583,12 @@ def _build_records():
 
     # HH 12 - incomplete household (missing data)
     s.household(
-        12, "home_l", rent=RENT_OWN_MISSING, res=RES_MISSING, income=INC_MISSING, complete=False
+        12,
+        "home_l",
+        rent=RENT_OWN_MISSING,
+        res=RES_MISSING,
+        income=INC_MISSING,
+        survey_complete=False,
     )
     s.person(
         1201,

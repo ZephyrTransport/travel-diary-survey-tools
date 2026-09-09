@@ -39,7 +39,7 @@ weighting excluded.
 
 A run may weight several usability profiles, each fitted to its own universe. The
 columns above are then suffixed with the profile's name, verbatim and unabridged
-(``hh_weight_ctramp_usable``), so a column names the universe it expands and no
+(``hh_weight_ctramp``), so a column names the universe it expands and no
 rule is needed to read one back. Only [`weight_col_for`][processing.weighting.core
 .hierarchy.weight_col_for] and its siblings spell that suffix; ``Level.weight_col``
 stays the base name, which is what keeps ``id_col`` derivable.

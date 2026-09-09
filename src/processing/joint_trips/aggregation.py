@@ -64,8 +64,8 @@ def build_joint_trips_table(
     ]
 
     # Propagate complete: a joint trip is complete only if all member trips are complete
-    if "complete" in joint_members.columns:
-        agg_exprs.append(pl.all("complete").alias("complete"))
+    if "survey_complete" in joint_members.columns:
+        agg_exprs.append(pl.all("survey_complete").alias("survey_complete"))
 
     joint_trips_table = joint_members.group_by("joint_trip_id").agg(agg_exprs)
 

@@ -311,8 +311,8 @@ def process_scenario_through_pipeline(
     # fixtures mean: they exist to exercise formatting, not gating. A test about
     # gating stamps its own values.
     for name, frame in data_with_zones.items():
-        if "usable" not in frame.columns:
-            data_with_zones[name] = frame.with_columns(pl.lit(value=True).alias("usable"))
+        if "usable_test" not in frame.columns:
+            data_with_zones[name] = frame.with_columns(pl.lit(value=True).alias("usable_test"))
 
     return data_with_zones
 

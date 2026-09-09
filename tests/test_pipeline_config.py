@@ -119,7 +119,7 @@ _PROFILE_CONSUMERS = (
 
 # Always available: the cascade stamps it on every run, whatever profiles a
 # project declares.
-_ALWAYS_STAMPED = frozenset({"complete"})
+_ALWAYS_STAMPED = frozenset({"survey_complete"})
 
 
 @pytest.mark.parametrize("project_dir", _project_dirs(), ids=lambda p: p.name)

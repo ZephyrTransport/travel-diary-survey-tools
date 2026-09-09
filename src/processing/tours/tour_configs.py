@@ -300,7 +300,7 @@ class TourConfig(BaseModel):
             "A tour is flagged SPATIAL_GAP when any internal junction has a "
             "gap greater than this (meters) between one trip's destination and "
             "the next trip's origin - i.e. a missing leg the tour extractor "
-            "would otherwise silently weld into one 'complete' tour. Default "
+            "would otherwise silently weld into one 'survey_complete' tour. Default "
             "1 km catches genuine teleports while ignoring same-place geocoding "
             "jitter."
         ),

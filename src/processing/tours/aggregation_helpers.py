@@ -375,7 +375,7 @@ def _aggregate_and_classify_tours(
             pl.col("_anchor_location_type").first().alias("_anchor_location_type"),
             pl.col("_o_at_anchor").first().alias("_o_at_anchor"),
             pl.col("_d_at_anchor").last().alias("_d_at_anchor"),
-            *([pl.all("complete")] if "complete" in linked_trips.columns else []),
+            *([pl.all("survey_complete")] if "survey_complete" in linked_trips.columns else []),
         ]
     )
 

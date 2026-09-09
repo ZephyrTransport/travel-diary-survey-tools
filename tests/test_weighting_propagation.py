@@ -388,14 +388,14 @@ def _make_tables_with_complete():
         {
             "hh_id": [1, 2],
             "hh_weight": [10.0, 20.0],
-            "complete": [True, False],
+            "survey_complete": [True, False],
         }
     )
     persons = pl.DataFrame(
         {
             "person_id": [1, 2, 3],
             "hh_id": [1, 1, 2],
-            "complete": [True, True, False],
+            "survey_complete": [True, True, False],
         }
     )
     days = pl.DataFrame(
@@ -403,7 +403,7 @@ def _make_tables_with_complete():
             "day_id": [10, 20, 30],
             "person_id": [1, 2, 3],
             "hh_id": [1, 1, 2],
-            "complete": [True, False, False],
+            "survey_complete": [True, False, False],
         }
     )
     unlinked_trips = pl.DataFrame(
@@ -411,7 +411,7 @@ def _make_tables_with_complete():
             "unlinked_trip_id": [100, 200, 300, 400],
             "day_id": [10, 10, 20, 30],
             "linked_trip_id": [1, 1, 2, 2],
-            "complete": [True, True, False, False],
+            "survey_complete": [True, True, False, False],
         }
     )
     linked_trips = pl.DataFrame(
@@ -439,14 +439,14 @@ def _make_tables_partial_usability():
     1 is usable. Every parent keeps at least one child, so the carry-forward
     checksum must hold exactly at every level.
     """
-    households = pl.DataFrame({"hh_id": [1], "hh_weight": [10.0], "complete": [True]})
-    persons = pl.DataFrame({"person_id": [1], "hh_id": [1], "complete": [True]})
+    households = pl.DataFrame({"hh_id": [1], "hh_weight": [10.0], "survey_complete": [True]})
+    persons = pl.DataFrame({"person_id": [1], "hh_id": [1], "survey_complete": [True]})
     days = pl.DataFrame(
         {
             "day_id": [10, 20, 30, 40],
             "person_id": [1, 1, 1, 1],
             "hh_id": [1, 1, 1, 1],
-            "complete": [True, True, False, False],
+            "survey_complete": [True, True, False, False],
         }
     )
     unlinked_trips = pl.DataFrame(
@@ -454,7 +454,7 @@ def _make_tables_partial_usability():
             "unlinked_trip_id": [100, 200, 300, 400],
             "day_id": [10, 10, 10, 10],
             "linked_trip_id": [1, 1, 2, 2],
-            "complete": [True, False, False, False],
+            "survey_complete": [True, False, False, False],
         }
     )
     return {
@@ -472,15 +472,15 @@ class TestPropagateUsableColumn:
     """Tests for spreading each parent's weight across its usable children.
 
     Usability defaults to ``usable``; these exercise it against
-    ``complete``, the other supported column.
+    ``survey_complete``, the other supported column.
     """
 
     def test_unusable_persons_get_zero_weight(self):
-        """Persons with complete=False get weight 0 even if parent HH has weight."""
+        """Persons with survey_complete=False get weight 0 even if parent HH has weight."""
         tables = _make_tables_with_complete()
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight, usability_flag_col="complete")
+        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
 
         persons = tables["persons"].sort("person_id")
         assert persons["person_weight"].to_list() == [10.0, 10.0, 0.0]
@@ -492,14 +492,14 @@ class TestPropagateUsableColumn:
 
         propagate_weights(tables, has_weight, usability_flag_col=None)
 
-        # Person 3 (complete=False, in HH 2 with weight 20) keeps 20 instead of 0
+        # Person 3 (survey_complete=False, in HH 2 with weight 20) keeps 20 instead of 0
         persons = tables["persons"].sort("person_id")
         assert persons["person_weight"].to_list() == [10.0, 10.0, 20.0]
         days = tables["days"].sort("day_id")
         assert days["day_weight"].to_list() == [10.0, 10.0, 20.0]
 
     def test_unusable_days_get_zero_weight(self):
-        """Days with complete=False get weight 0; their person's weight is a shortfall.
+        """Days with survey_complete=False get weight 0; their person's weight is a shortfall.
 
         Person 2's only day is unusable, so their weight goes unrepresented at
         the day level -- it is **not** pooled onto person 1's day. Person 1's
@@ -509,7 +509,7 @@ class TestPropagateUsableColumn:
         tables = _make_tables_with_complete()
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight, usability_flag_col="complete")
+        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
 
         days = tables["days"].sort("day_id")
         assert days["day_weight"].to_list() == [10.0, 0.0, 0.0]
@@ -517,11 +517,11 @@ class TestPropagateUsableColumn:
         assert days["day_weight"].sum() == pytest.approx(10.0)
 
     def test_unusable_unlinked_trips_get_zero_weight(self):
-        """Unlinked trips with complete=False get weight 0."""
+        """Unlinked trips with survey_complete=False get weight 0."""
         tables = _make_tables_with_complete()
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight, usability_flag_col="complete")
+        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
 
         ut = tables["unlinked_trips"].sort("unlinked_trip_id")
         # Day 10 carries 10.0 and both its trips are usable, so each keeps 10.0.
@@ -532,7 +532,7 @@ class TestPropagateUsableColumn:
         tables = _make_tables_with_complete()
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight, usability_flag_col="complete")
+        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
 
         lt = tables["linked_trips"].sort("linked_trip_id")
         # linked_trip 1: unlinked 100 (wt=10) + 200 (wt=10) -> mean=10
@@ -544,7 +544,7 @@ class TestPropagateUsableColumn:
         tables = _make_tables()  # no complete/usable column
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight, usability_flag_col="complete")
+        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
 
         persons = tables["persons"].sort("person_id")
         assert persons["person_weight"].to_list() == [10.0, 10.0, 20.0]
@@ -553,12 +553,12 @@ class TestPropagateUsableColumn:
         """A tour flagged unusable gets 0, even if a member trip has weight."""
         tables = _make_tables_with_complete()
         tables["linked_trips"] = tables["linked_trips"].with_columns(
-            pl.lit(value=True).alias("complete")
+            pl.lit(value=True).alias("survey_complete")
         )
-        tables["tours"] = tables["tours"].with_columns(pl.lit(value=False).alias("complete"))
+        tables["tours"] = tables["tours"].with_columns(pl.lit(value=False).alias("survey_complete"))
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight, usability_flag_col="complete")
+        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
 
         assert tables["linked_trips"]["linked_trip_weight"].to_list() == [10.0, 0.0]
         assert tables["tours"]["tour_weight"].to_list() == [0.0]
@@ -567,14 +567,16 @@ class TestPropagateUsableColumn:
         """When every record is usable, weights propagate normally."""
         tables = _make_tables_with_complete()
         # Override all to complete
-        tables["persons"] = tables["persons"].with_columns(pl.lit(value=True).alias("complete"))
-        tables["days"] = tables["days"].with_columns(pl.lit(value=True).alias("complete"))
+        tables["persons"] = tables["persons"].with_columns(
+            pl.lit(value=True).alias("survey_complete")
+        )
+        tables["days"] = tables["days"].with_columns(pl.lit(value=True).alias("survey_complete"))
         tables["unlinked_trips"] = tables["unlinked_trips"].with_columns(
-            pl.lit(value=True).alias("complete")
+            pl.lit(value=True).alias("survey_complete")
         )
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight, usability_flag_col="complete")
+        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
 
         persons = tables["persons"].sort("person_id")
         assert persons["person_weight"].to_list() == [10.0, 10.0, 20.0]
@@ -592,7 +594,7 @@ class TestPropagateRedistribution:
         tables = _make_tables_partial_usability()
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight, usability_flag_col="complete")
+        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
 
         days = tables["days"].sort("day_id")
         assert days["day_weight"].to_list() == [5.0, 5.0, 0.0, 0.0]
@@ -602,7 +604,7 @@ class TestPropagateRedistribution:
         tables = _make_tables_partial_usability()
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight, usability_flag_col="complete")
+        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
 
         ut = tables["unlinked_trips"].sort("unlinked_trip_id")
         # day 10 carries 5.0 and kept 1 of its 4 trips -> 5 * 4/1
@@ -613,7 +615,7 @@ class TestPropagateRedistribution:
         tables = _make_tables_partial_usability()
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight, usability_flag_col="complete")
+        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
 
         # 1 household at 10.0 with 1 person
         assert tables["persons"]["person_weight"].sum() == pytest.approx(10.0)
@@ -631,16 +633,18 @@ class TestPropagateRedistribution:
         to cover it, or person-day totals would be silently distorted.
         """
         tables = {
-            "households": pl.DataFrame({"hh_id": [1], "hh_weight": [10.0], "complete": [True]}),
+            "households": pl.DataFrame(
+                {"hh_id": [1], "hh_weight": [10.0], "survey_complete": [True]}
+            ),
             "persons": pl.DataFrame(
-                {"person_id": [1, 2], "hh_id": [1, 1], "complete": [True, True]}
+                {"person_id": [1, 2], "hh_id": [1, 1], "survey_complete": [True, True]}
             ),
             "days": pl.DataFrame(
                 {
                     "day_id": [10, 20, 30, 40],
                     "person_id": [1, 1, 2, 2],
                     "hh_id": [1, 1, 1, 1],
-                    "complete": [True, True, False, False],
+                    "survey_complete": [True, True, False, False],
                 }
             ),
             "unlinked_trips": None,
@@ -650,7 +654,7 @@ class TestPropagateRedistribution:
         }
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight, usability_flag_col="complete")
+        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
 
         # Both persons keep their weight -- person 2 is still a real person.
         assert tables["persons"]["person_weight"].to_list() == [10.0, 10.0]
@@ -667,16 +671,18 @@ class TestPropagateRedistribution:
         the *other* household members kept. No cross-person transfer.
         """
         tables = {
-            "households": pl.DataFrame({"hh_id": [1], "hh_weight": [100.0], "complete": [True]}),
+            "households": pl.DataFrame(
+                {"hh_id": [1], "hh_weight": [100.0], "survey_complete": [True]}
+            ),
             "persons": pl.DataFrame(
-                {"person_id": [1, 2], "hh_id": [1, 1], "complete": [True, True]}
+                {"person_id": [1, 2], "hh_id": [1, 1], "survey_complete": [True, True]}
             ),
             "days": pl.DataFrame(
                 {
                     "day_id": [10, 20, 30, 40],
                     "person_id": [1, 1, 2, 2],
                     "hh_id": [1, 1, 1, 1],
-                    "complete": [True, True, True, False],
+                    "survey_complete": [True, True, True, False],
                 }
             ),
             "unlinked_trips": None,
@@ -686,7 +692,7 @@ class TestPropagateRedistribution:
         }
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight, usability_flag_col="complete")
+        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
 
         days = tables["days"].sort("day_id")
         # person 1: 100/2 per usable day; person 2: 100/1 on their single usable day
@@ -699,10 +705,10 @@ class TestPropagateRedistribution:
     def test_parent_with_no_usable_child_leaves_a_shortfall(self):
         """A person keeping no day has nowhere to spread, so their days stay 0."""
         tables = _make_tables_partial_usability()
-        tables["days"] = tables["days"].with_columns(pl.lit(value=False).alias("complete"))
+        tables["days"] = tables["days"].with_columns(pl.lit(value=False).alias("survey_complete"))
         has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight, usability_flag_col="complete")
+        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
 
         # The shortfall is real and deliberate: it is not silently rescaled away.
         assert tables["days"]["day_weight"].to_list() == [0.0, 0.0, 0.0, 0.0]

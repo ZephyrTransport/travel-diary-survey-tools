@@ -22,7 +22,8 @@ import polars as pl
 
 from processing.formatting.usable_records import keep_usable
 
-FLAG = "ctramp_usable"
+PROFILE = "ctramp"
+FLAG = "usable_ctramp"  # the column that profile stamps
 
 
 def _tours(rows: list[tuple[int, int | None, bool]]) -> pl.DataFrame:
@@ -64,7 +65,7 @@ class TestAJointTripIsItsOwnGrouping:
         """Its joint_tour_id is null, so only a trip-level rule reaches it.
 
         The second member leaves because its *tour* is unusable, which is the
-        only way a member can depart. A tour's ``complete`` is the ALL over its
+        only way a member can depart. A tour's ``survey_complete`` is the ALL over its
         member trips, so an incomplete trip makes its own tour incomplete and
         therefore unusable -- a usable tour never holds an unusable trip. On
         BATS 2023 that holds for all 324,965 linked trips, zero exceptions.
@@ -75,7 +76,7 @@ class TestAJointTripIsItsOwnGrouping:
                 "linked_trips": _linked_trips([(1, 1, 900, True), (2, 2, 900, False)]),
                 "joint_trips": _groups("joint_trip_id", [(900, False)]),
             },
-            FLAG,
+            PROFILE,
         )
 
         assert kept["joint_trips"].height == 0, "the under-quorum group must not be emitted"
@@ -91,7 +92,7 @@ class TestAJointTripIsItsOwnGrouping:
                 "linked_trips": _linked_trips([(1, 1, 900, True), (2, 2, 900, False)]),
                 "joint_trips": _groups("joint_trip_id", [(900, False)]),
             },
-            FLAG,
+            PROFILE,
         )
 
         assert kept["linked_trips"]["linked_trip_id"].to_list() == [1]
@@ -107,7 +108,7 @@ class TestTheTourGroupingIsSeparate:
                 "tours": _tours([(1, 500, True), (2, 500, False)]),
                 "joint_tours": _groups("joint_tour_id", [(500, False)]),
             },
-            FLAG,
+            PROFILE,
         )
 
         assert kept["joint_tours"].height == 0
@@ -133,7 +134,7 @@ class TestNoRecordOutlivesItsParent:
                     {"person_id": [10, 20], "hh_id": [1, 2], FLAG: [True, True]}
                 ),
             },
-            FLAG,
+            PROFILE,
         )
 
         assert kept["persons"]["person_id"].to_list() == [10], (
@@ -157,7 +158,7 @@ class TestNoRecordOutlivesItsParent:
                     }
                 ),
             },
-            FLAG,
+            PROFILE,
         )
 
         assert kept["days"]["day_id"].to_list() == [100]
@@ -193,7 +194,7 @@ class TestTheIdIsClearedEverywhereItIsCarried:
                 "joint_tours": _groups("joint_tour_id", [(500, False)]),
                 "joint_trips": _groups("joint_trip_id", [(900, False)]),
             },
-            FLAG,
+            PROFILE,
         )
 
         trips = kept["linked_trips"]
@@ -220,7 +221,7 @@ class TestTheIdIsClearedEverywhereItIsCarried:
                 ),
                 "joint_tours": _groups("joint_tour_id", [(500, False)]),
             },
-            FLAG,
+            PROFILE,
         )
 
         assert kept["unlinked_trips"]["joint_tour_id"].to_list() == [None]
@@ -237,7 +238,7 @@ class TestAnAdmittedGroupIsLeftAlone:
                 "linked_trips": _linked_trips([(1, 1, 900, True), (2, 2, 900, True)]),
                 "joint_trips": _groups("joint_trip_id", [(900, True)]),
             },
-            FLAG,
+            PROFILE,
         )
 
         assert kept["joint_trips"].height == 1
@@ -251,7 +252,7 @@ class TestAnAdmittedGroupIsLeftAlone:
                 "linked_trips": _linked_trips([(1, 1, None, True)]),
                 "joint_trips": _groups("joint_trip_id", []),
             },
-            FLAG,
+            PROFILE,
         )
 
         assert kept["linked_trips"]["joint_trip_id"].to_list() == [None]

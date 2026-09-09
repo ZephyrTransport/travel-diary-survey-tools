@@ -790,7 +790,7 @@ def flag_measured_completeness(
     Both are facts the vendor recorded, so they are the project's to set. The
     trip leaf matters as much as the day one: tours are built from trips, and
     ``cascade_completeness`` broadcasts a day's verdict onto the records that sit
-    on it rather than inventing one, so a trip table with no ``complete`` leaves
+    on it rather than inventing one, so a trip table with no ``survey_complete`` leaves
     tours with none either and the usability pass has nothing to stand on.
 
     Args:
@@ -798,11 +798,11 @@ def flag_measured_completeness(
         unlinked_trips: Trips carrying ``survey_complete_trip``.
 
     Returns:
-        Tuple of (days, unlinked_trips), each carrying ``complete``, plus the
+        Tuple of (days, unlinked_trips), each carrying ``survey_complete``, plus the
         per-day trip counts kept for debugging.
     """
     unlinked_trips = unlinked_trips.with_columns(
-        (pl.col("survey_complete_trip") == 1).alias("complete")
+        (pl.col("survey_complete_trip") == 1).alias("survey_complete")
     )
 
     # Add num_complete_trips column to help with debugging and weighting later
@@ -831,7 +831,7 @@ def flag_measured_completeness(
         pl.when(pl.col("survey_complete_day").is_null())
         .then(pl.lit(value=False))
         .otherwise(pl.col("survey_complete_day") == 1)
-        .alias("complete"),
+        .alias("survey_complete"),
     )
     return days, unlinked_trips
 

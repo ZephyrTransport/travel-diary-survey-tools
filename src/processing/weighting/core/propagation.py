@@ -9,7 +9,7 @@ steps. The shape being walked is declared in [`processing.weighting.core.hierarc
 A record is admitted by a *usability flag* -- one of the usability profiles
 stamped by the ``cascade_completeness`` step (see [`processing.completeness`]
 [processing.completeness]), so the weighted sample matches the records that
-profile's consumer actually keeps.  Pass ``complete`` instead to weight the whole
+profile's consumer actually keeps.  Pass ``survey_complete`` instead to weight the whole
 valid survey, including partial and overnight tours.
 
 Unusable records carry no weight, but their population does not vanish: it is
@@ -135,8 +135,8 @@ def is_usable(usability_flag_col: str) -> pl.Expr:
 def seed_admits(usability_flag_col: str) -> pl.Expr:
     """True when a household belongs in the balancer's seed for this profile.
 
-    The profile's own flag, floored by ``complete``. Every profile is a subset of
-    ``complete`` by construction, so the floor changes no number -- it states the
+    The profile's own flag, floored by ``survey_complete``. Every profile is a subset of
+    ``survey_complete`` by construction, so the floor changes no number -- it states the
     invariant where the seed is chosen, and covers a hand-written flag that is
     not.
 
@@ -145,9 +145,9 @@ def seed_admits(usability_flag_col: str) -> pl.Expr:
     output promises a zero.
     """
     admits = pl.col(usability_flag_col).fill_null(value=False)
-    if usability_flag_col == "complete":
+    if usability_flag_col == "survey_complete":
         return admits
-    return admits & pl.col("complete").fill_null(value=False)
+    return admits & pl.col("survey_complete").fill_null(value=False)
 
 
 def distribute_within_scope(
@@ -422,7 +422,7 @@ def propagate_weights(
             column and its name. E.g. ``{"households": "hh_weight"}``.
         skip: Table names to leave alone (e.g. externally supplied weights).
         usability_flag_col: Boolean column deciding which records may carry
-            weight -- a usability profile stamped upstream. Pass ``complete`` to
+            weight -- a usability profile stamped upstream. Pass ``survey_complete`` to
             weight the whole valid survey including partial/overnight tours, or
             None to give every record its claim regardless of usability (split
             levels still divide the parent weight equally, over *all* children).

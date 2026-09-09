@@ -473,7 +473,7 @@ def format_ctramp(  # noqa: PLR0913
     joint_trips: pl.DataFrame,
     joint_tours: pl.DataFrame,
     days: pl.DataFrame,
-    usability_flag_col: str,
+    usability_profile: str,
     income_low_threshold: int,
     income_med_threshold: int,
     income_high_threshold: int,
@@ -508,7 +508,7 @@ def format_ctramp(  # noqa: PLR0913
         days: Canonical person-days data. Required columns: person_id, hh_id,
             day_id. Used to expand persons and households to the person-day
             level and encode the survey day into CTRAMP hh_id / person_id so
-        usability_flag_col: Which usability profile decides the tour universe.
+        usability_profile: Which usability profile decides the tour universe.
             Required: with several profiles stamped there is no defensible
             default, and naming a different one from the DaySim formatter or
             the weighting means those outputs describe different universes.
@@ -561,7 +561,7 @@ def format_ctramp(  # noqa: PLR0913
             income_med_threshold=60000,          # $60k divides medium from high ($2000)
             income_high_threshold=100000,        # $100k divides high from very high ($2000)
             income_survey_year_to_ctramp_year=0.5319148936,  # 1/1.88: convert 2023 income to $2000
-            usability_flag_col="ctramp_usable",  # the profile deciding the record universe
+            usability_profile="ctramp",  # the profile deciding the record universe
         )
 
         # Access formatted tables
@@ -576,7 +576,7 @@ def format_ctramp(  # noqa: PLR0913
     """
     # Validate configuration parameters
     config = CTRAMPConfig(
-        usability_flag_col=usability_flag_col,
+        usability_profile=usability_profile,
         income_low_threshold=income_low_threshold,
         income_med_threshold=income_med_threshold,
         income_high_threshold=income_high_threshold,
@@ -599,7 +599,7 @@ def format_ctramp(  # noqa: PLR0913
             "joint_trips": joint_trips,
             "joint_tours": joint_tours,
         },
-        config.usability_flag_col,
+        config.usability_profile,
     )
     households = gated["households"]
     persons = gated["persons"]

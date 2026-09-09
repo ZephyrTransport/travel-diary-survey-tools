@@ -12,7 +12,7 @@ unplaceable trips, which reached the output as null ``orig_taz``/``dest_taz`` an
 failed validation.
 
 The rule is therefore an ALL over the tour's trips -- the same shape as
-``complete``, which is also a property of the legs rather than the ends.
+``survey_complete``, which is also a property of the legs rather than the ends.
 """
 
 import polars as pl
@@ -31,9 +31,11 @@ def _tables(trip_zones: list[tuple[int | None, int | None]]) -> dict[str, pl.Dat
     """
     n = len(trip_zones)
     return {
-        "households": pl.DataFrame({"hh_id": [1], f"home_{ZONE}": [100], "complete": [True]}),
+        "households": pl.DataFrame(
+            {"hh_id": [1], f"home_{ZONE}": [100], "survey_complete": [True]}
+        ),
         "persons": pl.DataFrame(
-            {"person_id": [1], "hh_id": [1], "complete": [True], "surveyable": [True]}
+            {"person_id": [1], "hh_id": [1], "survey_complete": [True], "surveyable": [True]}
         ),
         "days": pl.DataFrame(
             {
@@ -41,7 +43,7 @@ def _tables(trip_zones: list[tuple[int | None, int | None]]) -> dict[str, pl.Dat
                 "person_id": [1],
                 "hh_id": [1],
                 "travel_date": ["2023-01-02"],
-                "complete": [True],
+                "survey_complete": [True],
             }
         ),
         "tours": pl.DataFrame(
@@ -50,7 +52,7 @@ def _tables(trip_zones: list[tuple[int | None, int | None]]) -> dict[str, pl.Dat
                 "day_id": [1],
                 "person_id": [1],
                 "hh_id": [1],
-                "complete": [True],
+                "survey_complete": [True],
                 "tour_data_quality": [VALID],
                 "tour_category": [COMPLETE],
                 f"o_{ZONE}": [100],
@@ -62,7 +64,7 @@ def _tables(trip_zones: list[tuple[int | None, int | None]]) -> dict[str, pl.Dat
                 "linked_trip_id": list(range(1, n + 1)),
                 "tour_id": [1] * n,
                 "day_id": [1] * n,
-                "complete": [True] * n,
+                "survey_complete": [True] * n,
                 f"o_{ZONE}": [z[0] for z in trip_zones],
                 f"d_{ZONE}": [z[1] for z in trip_zones],
             },
@@ -75,7 +77,7 @@ def _verdict(trip_zones, *, coverage: str) -> bool:
     tables = _tables(trip_zones)
     profile = UsabilityProfile("u", "primary_home", "all_members", zone_coverage=coverage)
     compute_usability(tables, profile=profile)
-    return bool(tables["tours"]["u"][0])
+    return bool(tables["tours"]["usable_u"][0])
 
 
 class TestALegOutsideTheAreaCostsTheTour:

@@ -12,8 +12,8 @@ import pytest
 
 from processing.formatting.usable_records import select_profile_weights
 
-STRICT = "ctramp_usable"
-RELAXED = "analysis_usable"
+STRICT = "ctramp"
+RELAXED = "analysis"
 
 
 def _households(**columns) -> dict[str, pl.DataFrame]:
@@ -92,7 +92,7 @@ class TestTheUnweightedProfile:
         expansion factor.
         """
         tables = _households(**{f"hh_weight_{RELAXED}": [9.0]})
-        with pytest.raises(ValueError, match="but not for 'ctramp_usable'"):
+        with pytest.raises(ValueError, match="but not for 'ctramp'"):
             select_profile_weights(tables, STRICT)
 
     def test_the_message_names_the_profiles_that_were_weighted(self):

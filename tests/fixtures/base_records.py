@@ -92,7 +92,7 @@ def create_household(
     record["home_walk_subzone"] = home_walk_subzone
     record["residence_type"] = residence_type.value if residence_type else None
     record["residence_rent_own"] = residence_rent_own.value if residence_rent_own else None
-    record["usable"] = usable
+    record["usable_test"] = usable
 
     return {**record, **overrides}
 
@@ -225,7 +225,7 @@ def create_person(
 
     # Compute num_days_complete from days if provided
     if days is not None:
-        num_complete_days = sum(1 for day in days if day.get("complete", False))
+        num_complete_days = sum(1 for day in days if day.get("survey_complete", False))
 
     # Always include DaySim-specific fields with sensible defaults
 
@@ -258,7 +258,7 @@ def create_person(
 
     # The verdict cascade_completeness stamps; formatters read it rather than
     # deriving a criterion of their own.
-    record["usable"] = usable
+    record["usable_test"] = usable
 
     # Apply overrides
     record = {**record, **overrides}
@@ -274,7 +274,7 @@ def create_day(
     day_num: int = 1,
     travel_date: date | None = None,
     travel_dow: TravelDow = TravelDow.MONDAY,
-    complete: bool = True,
+    survey_complete: bool = True,
     num_trips: int = 0,
     day_weight: float = 1.0,
     usable: bool = True,
@@ -294,7 +294,7 @@ def create_day(
         day_num: Day number in survey period (for DaySim)
         travel_date: Travel date (defaults to today)
         travel_dow: Day of week enum
-        complete: Day complete (person at home at start/end)
+        survey_complete: Day complete (person at home at start/end)
         num_trips: Number of trips on this day
         day_weight: Day expansion factor (for DaySim)
         usable: The usability verdict cascade_completeness stamps. Formatters
@@ -315,11 +315,11 @@ def create_day(
         "day_num": day_num,
         "travel_date": travel_date,
         "travel_dow": travel_dow.value,
-        "complete": complete,
+        "survey_complete": survey_complete,
         "num_trips": num_trips,
         "day_weight": day_weight,
     }
 
-    record["usable"] = usable
+    record["usable_test"] = usable
 
     return {**record, **overrides}

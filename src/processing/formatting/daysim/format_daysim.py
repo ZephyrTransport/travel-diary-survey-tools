@@ -80,7 +80,7 @@ def format_daysim(
     linked_trips: pl.DataFrame,
     tours: pl.DataFrame,
     days: pl.DataFrame,
-    usability_flag_col: str,
+    usability_profile: str,
 ) -> dict[str, pl.DataFrame]:
     """Format canonical survey data to DaySim model specification.
 
@@ -96,7 +96,7 @@ def format_daysim(
         linked_trips: Journey records with coordinates, mode, purpose, and timing.
         tours: Tour records with purpose, timing, and location fields.
         days: Person-day records for completeness calculation.
-        usability_flag_col: Which usability profile decides the record universe.
+        usability_profile: Which usability profile decides the record universe.
             Required: with several profiles stamped there is no defensible
             default, and naming a different one from the CT-RAMP formatter or
             the weighting means those outputs describe different universes.
@@ -146,7 +146,7 @@ def format_daysim(
             "linked_trips": linked_trips,
             "unlinked_trips": unlinked_trips,
         },
-        usability_flag_col,
+        usability_profile,
     )
     households = gated["households"]
     persons = gated["persons"]

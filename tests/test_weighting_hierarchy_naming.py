@@ -17,7 +17,7 @@ from processing.weighting.core.hierarchy import (
     weight_columns_for,
 )
 
-PROFILE = "analysis_usable"
+PROFILE = "analysis"
 
 
 class TestNoProfile:
@@ -45,8 +45,8 @@ class TestVerbatimSuffix:
         """The trailing _usable every profile name happens to carry is kept."""
         # The obvious "tidier" rule would drop the _usable that every profile
         # name in practice ends with. It must not.
-        assert weight_col_for("day_weight", PROFILE) == "day_weight_analysis_usable"
-        assert weight_col_for("hh_weight", "ctramp_usable") == "hh_weight_ctramp_usable"
+        assert weight_col_for("day_weight", PROFILE) == "day_weight_analysis"
+        assert weight_col_for("hh_weight", "ctramp") == "hh_weight_ctramp"
 
     def test_case_and_underscores_survive(self):
         """A profile name is a label, not something to normalise."""
@@ -54,7 +54,7 @@ class TestVerbatimSuffix:
 
     def test_seed_column_takes_the_same_suffix(self):
         """base_weight belongs to a fit, so it is suffixed like the weights."""
-        assert seed_col_for("base_weight", PROFILE) == "base_weight_analysis_usable"
+        assert seed_col_for("base_weight", PROFILE) == "base_weight_analysis"
 
     @pytest.mark.parametrize("level", HIERARCHY, ids=lambda level: level.table)
     def test_every_level_resolves(self, level):
@@ -86,11 +86,11 @@ class TestIdColumnsAreUnaffected:
     """The suffix must not reach ``id_col`` or ``key``.
 
     Both are read off ``weight_col`` by stripping ``_weight``, so a suffixed
-    stem would silently produce ``hh_weight_ctramp_usable_id``. Keeping the
+    stem would silently produce ``hh_weight_ctramp_id``. Keeping the
     suffix out of ``Level`` is what prevents that.
     """
 
-    @pytest.mark.parametrize("profile", [None, PROFILE, "ctramp_usable"])
+    @pytest.mark.parametrize("profile", [None, PROFILE, "ctramp"])
     @pytest.mark.parametrize("level", HIERARCHY, ids=lambda level: level.table)
     def test_id_col_and_key_do_not_move(self, level, profile):
         """Resolving a weight column leaves the id columns where they were."""

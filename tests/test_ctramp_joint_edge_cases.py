@@ -52,7 +52,7 @@ MEMBER_WEIGHTS = (10.0, 30.0)
 def standard_config():
     """CT-RAMP config with the usual thresholds."""
     return CTRAMPConfig(
-        usability_flag_col="usable",
+        usability_profile="test",
         income_low_threshold=30000,
         income_med_threshold=60000,
         income_high_threshold=100000,

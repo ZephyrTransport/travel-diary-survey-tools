@@ -30,13 +30,14 @@ itself -- it is the *pairing* of a gate with its own columns that these check.
 import polars as pl
 import pytest
 
+from processing.completeness import usable_col_for
 from processing.weighting.core.hierarchy import weight_col_for
 from processing.weighting.validation.weight_checks import _check_hierarchy, _check_joint_sums
 
 # The profiles tests/e2e/conftest.py hands add_existing_weights. STRICT gates out
 # records the relaxed one keeps, which is what makes their columns differ.
-STRICT = "ctramp_usable"
-RELAXED = "analysis_usable"
+STRICT = "ctramp"
+RELAXED = "analysis"
 PROFILES = (STRICT, RELAXED)
 
 
@@ -71,11 +72,11 @@ class TestNothingIsLost:
         split level conserves a person's days summing to their own weight. Both
         are read from HIERARCHY rather than restated here.
         """
-        _check_hierarchy(weighted, profile, profile)
+        _check_hierarchy(weighted, usable_col_for(profile), profile)
 
     def test_the_joint_groupings_reconcile(self, weighted, profile):
         """A joint entity equals the member records it kept."""
-        _check_joint_sums(weighted, profile, profile)
+        _check_joint_sums(weighted, usable_col_for(profile), profile)
 
 
 @pytest.mark.parametrize("profile", PROFILES)
@@ -108,15 +109,16 @@ class TestTheProfilesDoNotCollide:
     def test_the_relaxed_profile_keeps_more_records(self, weighted):
         """Otherwise the two column sets describe the same universe and prove nothing."""
         days = weighted["days"]
-        strict_kept = days.filter(pl.col(STRICT).fill_null(value=False)).height
-        relaxed_kept = days.filter(pl.col(RELAXED).fill_null(value=False)).height
+        strict_kept = days.filter(pl.col(usable_col_for(STRICT)).fill_null(value=False)).height
+        relaxed_kept = days.filter(pl.col(usable_col_for(RELAXED)).fill_null(value=False)).height
         assert relaxed_kept > strict_kept
 
     def test_a_record_the_strict_gate_drops_is_weighted_by_the_relaxed_one(self, weighted):
         """The zero belongs to the profile that excluded it, not to the record."""
         days = weighted["days"]
         gated_out = days.filter(
-            ~pl.col(STRICT).fill_null(value=False) & pl.col(RELAXED).fill_null(value=False)
+            ~pl.col(usable_col_for(STRICT)).fill_null(value=False)
+            & pl.col(usable_col_for(RELAXED)).fill_null(value=False)
         )
         if gated_out.is_empty():
             pytest.skip("no day separates the two profiles in this run")
@@ -159,7 +161,7 @@ class TestTheSplitDividesAmongUsableDays:
 
     def test_a_dropped_day_carries_no_weight(self, weighted, profile):
         """Its share moves to the days that survived, rather than disappearing."""
-        unusable = weighted["days"].filter(~pl.col(profile).fill_null(value=False))
+        unusable = weighted["days"].filter(~pl.col(usable_col_for(profile)).fill_null(value=False))
         if unusable.is_empty():
             pytest.skip(f"no day was gated out by {profile} in this run")
 
@@ -173,7 +175,7 @@ class TestTheGateDecidesWhoCarriesWeight:
     @pytest.mark.parametrize("table", ["persons", "days"])
     def test_no_unusable_record_carries_weight(self, weighted, table, profile):
         """Each profile's zeros line up with that profile's own verdict."""
-        unusable = weighted[table].filter(~pl.col(profile).fill_null(value=False))
+        unusable = weighted[table].filter(~pl.col(usable_col_for(profile)).fill_null(value=False))
         if unusable.is_empty():
             pytest.skip(f"every {table} record was usable under {profile} in this run")
 

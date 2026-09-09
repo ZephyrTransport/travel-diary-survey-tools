@@ -29,7 +29,7 @@ from processing.completeness import (
 )
 
 # Same standard, two names. Any hardcoded column would make them disagree.
-FIRST = UsabilityProfile("ctramp_usable", PRIMARY_HOME, ALL_MEMBERS)
+FIRST = UsabilityProfile("ctramp", PRIMARY_HOME, ALL_MEMBERS)
 ALIAS = UsabilityProfile("alt_usable", PRIMARY_HOME, ALL_MEMBERS)
 
 
@@ -41,12 +41,12 @@ def _tables() -> dict[str, pl.DataFrame]:
     loses a member.
     """
     return {
-        "households": pl.DataFrame({"hh_id": [1], "complete": [True]}),
+        "households": pl.DataFrame({"hh_id": [1], "survey_complete": [True]}),
         "persons": pl.DataFrame(
             {
                 "person_id": [1, 2],
                 "hh_id": [1, 1],
-                "complete": [True, True],
+                "survey_complete": [True, True],
                 "surveyable": [True, True],
             }
         ),
@@ -56,7 +56,7 @@ def _tables() -> dict[str, pl.DataFrame]:
                 "person_id": [1, 2],
                 "hh_id": [1, 1],
                 "travel_date": [datetime(2023, 5, 1)] * 2,
-                "complete": [True, True],
+                "survey_complete": [True, True],
             }
         ),
         "tours": pl.DataFrame(
@@ -64,7 +64,7 @@ def _tables() -> dict[str, pl.DataFrame]:
                 "tour_id": [10, 20],
                 "day_id": [1, 2],
                 "person_id": [1, 2],
-                "complete": [True, True],
+                "survey_complete": [True, True],
                 "parent_tour_id": [10, 20],
                 "joint_tour_id": [100, 100],
                 "tour_data_quality": [
@@ -83,7 +83,7 @@ def _tables() -> dict[str, pl.DataFrame]:
                 "tour_id": [10, 20],
                 "day_id": [1, 2],
                 "joint_trip_id": [500, 500],
-                "complete": [True, True],
+                "survey_complete": [True, True],
             }
         ),
         "unlinked_trips": pl.DataFrame(
@@ -91,11 +91,15 @@ def _tables() -> dict[str, pl.DataFrame]:
                 "unlinked_trip_id": [1, 2],
                 "tour_id": [10, 20],
                 "day_id": [1, 2],
-                "complete": [True, True],
+                "survey_complete": [True, True],
             }
         ),
-        "joint_tours": pl.DataFrame({"joint_tour_id": [100], "day_id": [1], "complete": [True]}),
-        "joint_trips": pl.DataFrame({"joint_trip_id": [500], "day_id": [1], "complete": [True]}),
+        "joint_tours": pl.DataFrame(
+            {"joint_tour_id": [100], "day_id": [1], "survey_complete": [True]}
+        ),
+        "joint_trips": pl.DataFrame(
+            {"joint_trip_id": [500], "day_id": [1], "survey_complete": [True]}
+        ),
     }
 
 
@@ -166,13 +170,17 @@ class TestCompleteIsUntouched:
     """The reporting flags belong to ``cascade_complete`` and never move."""
 
     def test_a_second_usable_pass_does_not_rewrite_complete(self):
-        """Only ``cascade_complete`` writes ``complete``."""
+        """Only ``cascade_complete`` writes ``survey_complete``."""
         tables: dict[str, pl.DataFrame | None] = dict(_tables())
         cascade_complete(tables)
-        before = {name: df["complete"].to_list() for name, df in tables.items() if df is not None}
+        before = {
+            name: df["survey_complete"].to_list() for name, df in tables.items() if df is not None
+        }
 
         stamp_usable(tables, FIRST)
         stamp_usable(tables, ALIAS)
 
-        after = {name: df["complete"].to_list() for name, df in tables.items() if df is not None}
+        after = {
+            name: df["survey_complete"].to_list() for name, df in tables.items() if df is not None
+        }
         assert after == before
