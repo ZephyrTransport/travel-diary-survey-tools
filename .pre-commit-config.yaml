@@ -1,0 +1,28 @@
+exclude: '^(archive/|.*\.html$|uv\.lock$)'
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.3.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^docs/(COLUMN_REQUIREMENTS\.md|column_requirements\.csv)$
+      - id: end-of-file-fixer
+        exclude: ^docs/(COLUMN_REQUIREMENTS\.md|column_requirements\.csv)$
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: generate-column-matrix
+        name: Generate Column Requirements Matrix
+        entry: bash -c 'python scripts/generate_column_matrix.py && git add docs/COLUMN_REQUIREMENTS.md docs/column_requirements.csv; exit 0'
+        language: system
+        files: ^src/data_canon/
+        pass_filenames: false

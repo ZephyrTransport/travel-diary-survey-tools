@@ -1,0 +1,214 @@
+"""Tour record builders for canonical tour data.
+
+This module provides builders for tour records.
+"""
+
+from datetime import UTC, datetime, time
+
+import polars as pl
+
+from data_canon.codebook.days import TravelDow
+from data_canon.codebook.tours import TourCategory, TourDataQuality, TourType
+from data_canon.codebook.trips import Mode, PurposeCategory
+from data_canon.models.survey import TourModel
+
+from .field_utils import add_optional_fields_batch
+from .schema_utils import model_to_polars_schema
+
+
+def create_tour(
+    tour_id: int = 1001,
+    person_id: int = 101,
+    hh_id: int = 1,
+    person_num: int = 1,
+    day_id: int = 1,
+    day_num: int = 1,
+    tour_num: int = 1,
+    tour_purpose: PurposeCategory = PurposeCategory.WORK,
+    tour_type: TourType | None = None,
+    tour_category: TourCategory = TourCategory.COMPLETE,
+    o_taz: int = 100,
+    d_taz: int = 200,
+    o_maz: int | None = None,
+    d_maz: int | None = None,
+    o_lat: float | None = None,
+    o_lon: float | None = None,
+    d_lat: float | None = None,
+    d_lon: float | None = None,
+    o_location_type: int = 1,  # Default to HOME
+    d_location_type: int = 4,  # Default to OTHER
+    origin_depart_time: datetime | None = None,
+    origin_arrive_time: datetime | None = None,
+    dest_depart_time: datetime | None = None,
+    dest_arrive_time: datetime | None = None,
+    travel_dow: TravelDow = TravelDow.MONDAY,
+    num_trips: int = 2,
+    num_travelers: int = 1,
+    tour_mode: Mode = Mode.MISSING,
+    student_category: str = "Not student",
+    data_quality: TourDataQuality = TourDataQuality.VALID,
+    tour_weight: float = 1.0,
+    joint_tour_id: int | None = None,
+    parent_tour_id: int | None = None,
+    subtour_num: int = 0,
+    usable: bool = True,
+    **overrides,
+) -> dict:
+    """Create a complete canonical tour record.
+
+    Args:
+        tour_id: Tour ID
+        person_id: Person ID
+        hh_id: Household ID
+        person_num: Person number
+        day_id: Day ID
+        day_num: Day number
+        tour_num: Tour number within the day
+        tour_purpose: Tour purpose enum
+        tour_type: What the tour is anchored on. Defaults to WORK_BASED when
+            the record looks like a subtour (``subtour_num`` set, or a
+            ``parent_tour_id`` pointing at a different tour), else HOME_BASED.
+        tour_category: How completely the tour reaches that anchor
+        o_taz: Origin TAZ
+        d_taz: Destination TAZ
+        o_maz: Origin MAZ (optional, for Daysim)
+        d_maz: Destination MAZ (optional, for Daysim)
+        o_lat: Origin latitude (optional)
+        o_lon: Origin longitude (optional)
+        d_lat: Destination latitude (optional)
+        d_lon: Destination longitude (optional)
+        o_location_type: Origin location type
+        d_location_type: Destination location type
+        origin_depart_time: Origin departure time (defaults to 8 AM)
+        origin_arrive_time: Origin arrival time (defaults to 5 PM)
+        dest_depart_time: Destination departure time
+        dest_arrive_time: Destination arrival time
+        travel_dow: Day of week enum
+        num_trips: Number of trips on tour
+        num_travelers: Number of people (1 individual, 2+ joint)
+        tour_mode: Primary tour mode enum
+        student_category: Student category for work/school tours
+        data_quality: Data quality flag enum
+        tour_weight: Tour expansion factor
+        joint_tour_id: Joint tour ID (None for individual tours)
+        parent_tour_id: Parent tour (None for primary tours)
+        subtour_num: Subtour number (0 for primary tours)
+        usable: The usability verdict cascade_completeness stamps. Formatters
+            read it rather than deriving a criterion of their own.
+        **overrides: Override any default values
+
+        usable: Value for the usability gate the formatters read.
+            Named by a project's profile in production, so not a model
+            field. True by default: these records exist to exercise
+            formatting, and a test about gating sets it explicitly.
+
+    Returns:
+        Complete tour record dict
+    """
+    # A subtour is a tour numbered under a parent, or one whose parent is some
+    # other tour. Primary tours self-reference, matching canonical data.
+    if tour_type is None:
+        is_subtour = subtour_num > 0 or (parent_tour_id is not None and parent_tour_id != tour_id)
+        tour_type = TourType.WORK_BASED if is_subtour else TourType.HOME_BASED
+
+    # Default times if not provided - use defaults from canonical schema
+    default_depart = datetime.combine(datetime.now(tz=UTC).date(), time(8, 0))
+    default_arrive = datetime.combine(datetime.now(tz=UTC).date(), time(17, 0))
+
+    if origin_depart_time is None:
+        origin_depart_time = default_depart
+    if origin_arrive_time is None:
+        origin_arrive_time = default_arrive
+    if dest_depart_time is None:
+        dest_depart_time = origin_depart_time + (origin_arrive_time - origin_depart_time) / 2
+    if dest_arrive_time is None:
+        dest_arrive_time = origin_depart_time + (origin_arrive_time - origin_depart_time) / 2
+
+    record = {
+        "tour_id": tour_id,
+        "person_id": person_id,
+        "hh_id": hh_id,
+        "person_num": person_num,
+        "day_id": day_id,
+        "day_num": day_num,
+        "tour_num": tour_num,
+        "tour_purpose": tour_purpose.value,
+        "tour_type": tour_type.value,
+        "tour_category": tour_category.value,
+        "o_taz": o_taz,
+        "d_taz": d_taz,
+        "o_TAZ1454": o_taz,  # Copy for CTRAMP compatibility
+        "d_TAZ1454": d_taz,  # Copy for CTRAMP compatibility
+        "o_lat": o_lat,
+        "o_lon": o_lon,
+        "d_lat": d_lat,
+        "d_lon": d_lon,
+        "o_location_type": o_location_type,
+        "d_location_type": d_location_type,
+        "origin_depart_time": origin_depart_time,
+        "origin_arrive_time": origin_arrive_time,
+        "dest_depart_time": dest_depart_time,
+        "dest_arrive_time": dest_arrive_time,
+        "travel_dow": travel_dow.value,
+        "trip_count": num_trips,
+        "stop_count": max(num_trips - 1, 0),
+        "num_travelers": num_travelers,
+        "tour_mode": tour_mode.value,
+        "student_category": student_category,
+        "tour_data_quality": data_quality.value,
+        "tour_weight": tour_weight,
+        "joint_tour_id": joint_tour_id,
+        "parent_tour_id": tour_id if parent_tour_id is None else parent_tour_id,
+        "subtour_num": subtour_num,
+        # The usability gate the formatters read. Stamped by cascade_completeness
+        # under whatever name a project's profile carries, so it is not a model
+        # field -- but every tours frame reaching a formatter has one, and the
+        # formatters require it rather than re-deriving a criterion of their own.
+        # Default True: these records exist to exercise formatting. A test about
+        # gating passes usable=... explicitly.
+        "usable_test": usable,
+    }
+
+    # Add optional MAZ fields
+    add_optional_fields_batch(record, o_maz=o_maz, d_maz=d_maz)
+
+    record["usable_test"] = usable
+
+    return {**record, **overrides}
+
+
+def get_tour_schema() -> dict[str, type]:
+    """Get Polars schema for tour DataFrames from the canonical TourModel.
+
+    Adds test-specific zone ID fields that are not in the canonical model
+    but are commonly used in test fixtures.
+
+    Example:
+        tours = pl.DataFrame(
+            [create_tour(...)],
+            schema=get_tour_schema()
+        )
+    """
+    schema = model_to_polars_schema(TourModel)
+
+    # Add test-specific zone ID fields
+    schema.update(
+        {
+            "person_num": pl.Int64,
+            "day_num": pl.Int64,
+            "o_taz": pl.Int64,
+            "d_taz": pl.Int64,
+            "o_TAZ1454": pl.Int64,
+            "d_TAZ1454": pl.Int64,
+            "travel_dow": pl.Int64,
+            "student_category": pl.String,
+            # The usability gate. Named by a project's profile, so not a model
+            # field, but present on every tours frame a formatter sees.
+            "usable_test": pl.Boolean,
+            # Likewise the weight: named per fitted profile, and resolved to this
+            # base name by the gate before a formatter reads it.
+            "tour_weight": pl.Float64,
+        }
+    )
+
+    return schema

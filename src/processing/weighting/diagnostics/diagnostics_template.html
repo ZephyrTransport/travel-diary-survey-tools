@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>{{ title }}</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 2rem; color: #222; }
+  #page-overlay { position: fixed; inset: 0; z-index: 99999; background: white; }
+  h1 { border-bottom: 2px solid #333; padding-bottom: .3rem; }
+  h2 { margin-top: 2rem; color: #444; }
+  table { border-collapse: collapse; margin: 1rem 0; }
+  th, td { border: 1px solid #ccc; padding: .4rem .8rem; text-align: right; }
+  th { background: #f5f5f5; text-align: center; }
+  td:first-child, th:first-child { text-align: left; }
+  .converged { color: #2a7f2a; }
+  .failed { color: #c33; font-weight: bold; }
+  details { margin: .5rem 0; }
+  summary { cursor: pointer; font-weight: 600; }
+  .chart { margin: 1rem 0; overflow: hidden; }
+  .chart-map { margin: 1rem 0; max-width: 960px; overflow: hidden; }
+  .note { color: #666; font-size: 0.9em; margin-bottom: 1rem; }
+  table.sparsity { table-layout: fixed; width: 100%; }
+  table.sparsity th, table.sparsity td { word-wrap: break-word; overflow-wrap: break-word; }
+</style>
+</head>
+<body>
+<div id="page-overlay"></div>
+
+<h1>{{ title }}</h1>
+
+{% if imputation_table %}
+<h2>0 &mdash; Data Quality &amp; Imputation</h2>
+<p class="note">
+  Controls with null survey values are imputed using Random Forest predicted class-membership
+  probabilities trained on complete PUMS microdata.  The table below shows the null rate and
+  RF cross-validated diagnostics for each control.  Controls exceeding 25% null are flagged &mdash;
+  consider removing them as targets if imputation quality (log_loss, F1) is poor.<br><br>
+  &bull; <b>log_loss</b>: Cross-entropy between predicted probabilities and true labels (lower is better; &lt;&thinsp;0.5 is good).<br>
+  &bull; <b>F1</b>: Macro-averaged F1 score across all categories (higher is better; &gt;&thinsp;0.7 is good).<br>
+</p>
+{{ imputation_table }}
+{% if imputation_chart %}
+<p class="note">
+  Category shares for imputed controls.  Each survey bar is split into the
+  <b>observed</b> (pre-imputation) portion and the <b>imputed</b> (RF-predicted)
+  contribution.  The PUMS bar provides the reference distribution.
+  All counts are unweighted.  Large discrepancies suggest the RF predictions
+  may not generalise well to the survey population.
+</p>
+<div class="chart">{{ imputation_chart }}</div>
+{% endif %}
+{% endif %}
+
+<p class="note">
+  This map depicts the spatial crosswalk from PUMAs to the target geographies. This allows us to use any custom target geography, regardless of PUMA geography. If zones overlap, the PUMAs are allocated using a block-group-level population-weighted share of the PUMA that contributes to that target geography. If PUMAs nest within the target geographies, then the allocations are all 100% or 0%.
+</p>
+{{ crosswalk_section }}
+{{ crosswalk_table }}
+
+<h2>2 &mdash; Balancer Performance</h2>
+<p class="note">
+  Did the balancer converge and how well do the weighted totals match PUMS-derived targets?<br>
+  What to look for:<br>
+
+    &bull; <b>Convergence</b>: Did the balancer converge within the specified tolerance and iteration limit?<br>
+
+    &bull; <b>Household/Person</b>: Population totals are derived from the first household- and person-level control.
+      Do both household and persons match? If not you may need to apply greater importance on h_total or p_total to overcome the inherent sampling bias
+      against large-households that results in total population being deflated.<br>
+
+    &bull; <b>Mean Absolute Percent Error (MAPE)</b> is the mean |%&nbsp;error| across all control categories for the zone. Average fit.<br>
+
+    &bull; <b>P90</b> is the 90th percentile |%&nbsp;error|; highlights how bad the worst-fitting categories are without being swamped by a single outlier.<br>
+
+    &bull; <b>Max</b> is the single worst |%&nbsp;error| across all categories for the zone.<br>
+
+    &bull; <b>Coefficient of Variation (CV)</b>: standard deviation / mean of the weights.
+    CV depends heavily on the number and type of controls:<br>
+    &nbsp;&nbsp;&bull; <b>&lt;&thinsp;0.6</b> &mdash; excellent; typical only with few (2&ndash;3) household-level controls<br>
+    &nbsp;&nbsp;&bull; <b>0.6&ndash;1.0</b> &mdash; good; expected with a moderate control spec (4&ndash;6 controls)<br>
+    &nbsp;&nbsp;&bull; <b>1.0&ndash;1.5</b> &mdash; typical for rich control specs with many person-level controls aggregated to households (e.g.&nbsp;age, commute mode, employment, gender, student status); not inherently problematic if fit is acceptable<br>
+    &nbsp;&nbsp;&bull; <b>&gt;&thinsp;1.5</b> &mdash; high; review whether controls are competing or cells are too sparse<br>
+
+    &bull; <b>Effective Sample Size (ESS)</b> = (&sum;w)<sup>2</sup> / &sum;w<sup>2</sup> (Kish statistic), expressed as a percentage of the unweighted sample size. ESS is inversely related to the design effect (DEFF&nbsp;=&nbsp;1/ESS%). Expected values depend on the control specification complexity:<br>
+    &nbsp;&nbsp;&bull; <b>&gt;&thinsp;60%</b> &mdash; excellent; generally only achievable with few controls or very large samples<br>
+    &nbsp;&nbsp;&bull; <b>40&ndash;60%</b> &mdash; good; typical for travel diary surveys balancing 6&ndash;10 controls including person-level variables<br>
+    &nbsp;&nbsp;&bull; <b>30&ndash;40%</b> &mdash; acceptable; common when many person-level controls create high-dimensional household incidence vectors<br>
+    &nbsp;&nbsp;&bull; <b>&lt;&thinsp;30%</b> &mdash; low; a few records likely dominate &mdash; investigate merges, drop competing controls, or relax expansion bounds<br>
+    Person-level controls (age, gender, employment, commute mode, etc.) are each aggregated to household counts, creating high-dimensional incidence vectors. Each additional person-level control can substantially reduce ESS because household-level weights must simultaneously satisfy many per-person constraints. A rich spec with 5+ person-level controls will typically land in the 35&ndash;55% range.<br>
+</p>
+{{ balancer_performance_table }}
+
+<h2>3 &mdash; Weight Quality</h2>
+<p class="note">
+  How variable or extreme are the resulting weights?<br>
+  We expect a roughly log-normal distribution of weights and not too lumpy; it is plotted on log-scale so it should be closer to &ldquo;normal&rdquo;. Multi-modality is not wrong per se, but is indicative that weights are being driven by a few key variables (e.g. a single dominant control category) and may be unstable.
+
+  What to look for:<br>
+
+  &bull; <b>Expansion factors (EF)</b>: the ratio of final weight to base weight. Min/Max EF hitting the configured bounds means those households were constrained and the balancer wanted to push them further. This means the data are being spread too thin and some broader aggregation is required.<br>
+
+</p>
+{{ weight_quality_table }}
+<div class="chart">{{ violins_html }}</div>
+
+{{ ef_tradeoff_section }}
+
+<h2>{% if ef_tradeoff_section %}5{% else %}4{% endif %} &mdash; Target Fit (% Error)</h2>
+<p class="note">
+  Bars show (weighted &minus; target) / target &times; 100. Hover for absolute values.<br>
+  What to look for:<br>
+  &bull; Bars close to zero indicate good fit; large bars indicate poor fit.<br>
+  &bull; <b>Error bars</b> (when present) show the PUMS sampling uncertainty derived from Census replicate weights. Bars within the whiskers are within expected sampling noise of the target &mdash; the deviation may reflect uncertainty in the target itself rather than a weighting problem. Grey bars indicate fit within sampling uncertainty.<br>
+</p>
+<p class="note" style="font-size:0.85em; color:#555; margin-top:0;">
+  <b>Legend:</b><br>
+  <span style="color:#999;">&marker;</span> Bar = % error (weighted &minus; target) / target.<br>
+  <span style="color:#c33;">&marker;</span> Red = error exceeds 1 SE of the PUMS target estimate.<br>
+  <span style="color:rgba(0,0,0,0.35);">&#9478;</span> Whiskers = &plusmn;1 standard error from PUMS successive-difference replication (80 replicate weights).<br>
+</p>
+<div class="chart">{{ fit_bars_html }}</div>
+
+<h2>{% if ef_tradeoff_section %}6{% else %}5{% endif %} &mdash; Unweighted Cell Counts (Data Sparsity)</h2>
+<p class="note">
+  Unweighted household or person counts per control category per zone versus PUMS-derived targets in italic parentheses to provide context for how well-represented a category is in the underlying population.<br>
+<br>
+  What to look for:<br>
+
+  &bull; Low overall sample count in a zone is a candidate for merging that zone with another (e.g. merge two adjacent low-sample zones into one larger zone). Zones don't technically need to be adjacent to be merged, but it makes intuitive sense and usually aligns with larger contextual geography.<br>
+
+  &bull; Low counts across all zones are candidate for global category merging (e.g. collapsing age 65+ instead of 65-74, 75-84, 85+).<br>
+
+  &bull; Low counts in a specific zone-category pair can be surgically merged for that cell only. But be careful with this approach as it can lead to a patchwork of different category definitions across zones, which can be hard to track and interpret.<br>
+  
+  &bull; There is no hard threshold for what constitutes a &ldquo;low&rdquo; count, but cells with fewer than 30 unweighted records are highlighted in red as a warning sign. The appropriate threshold can depend on the context and the variability of the data, but 10 is a common rule of thumb in survey analysis for minimum cell counts to ensure stability of estimates.<br>
+
+  &bull; If a category has a low sample count but also represents a small percentage of the population, it may be less concerning than a low count in a category that represents a large share of the population. If PUMS target is also low then it is a strong candidate for merging.<br>
+
+</p>
+{{ sparsity_html }}
+
+<script>
+window.addEventListener('load', function() {
+  requestAnimationFrame(function() {
+    var o = document.getElementById('page-overlay');
+    if (o) o.remove();
+  });
+});
+</script>
+
+</body>
+</html>

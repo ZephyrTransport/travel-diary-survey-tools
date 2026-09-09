@@ -1,0 +1,267 @@
+---
+title: "CTRAMP Output Comparison Analysis - Key Findings"
+date: "December 31, 2025"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    embed-resources: true
+jupyter: python3
+---
+
+
+```{python}
+#| label: setup
+#| include: false
+
+import sys
+import os
+import logging
+import math
+from pathlib import Path
+import polars as pl
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+from data_canon.models import ctramp
+from data_canon.codebook import ctramp as ctramp_codebook
+from helper_functions import compare_distributions, load_data
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Model output directory
+model_dir = r"\\model3-b\Model3B-Share\Projects\2023_TM161_IPA_35\main"
+
+# Survey output directory
+survey_dir = r"\\models.ad.mtc.ca.gov\data\models\Data\HomeInterview\Bay Area Travel Study 2023\Data\Processed\pipeline_20251230\ctramp"
+
+# Check if directories exist
+for path in [survey_dir, model_dir]:
+    if not Path(path).exists():
+        logger.error(f"Directory does not exist: {path}")
+        sys.exit(1)
+
+# Tables to compare
+data_models = {
+    "HouseholdData": ctramp.HouseholdCTRAMPModel,
+    "PersonData": ctramp.PersonCTRAMPModel,
+    # "MandatoryLocationData": ctramp.MandatoryLocationCTRAMPModel,
+    "IndivTripData": ctramp.IndividualTripCTRAMPModel,
+    "IndivTourData": ctramp.IndividualTourCTRAMPModel,
+    "JointTripData": ctramp.JointTripCTRAMPModel,
+    "JointTourData": ctramp.JointTourCTRAMPModel,
+}
+```
+
+```{python}
+#| label: load-data
+#| include: false
+#| echo: false
+
+# The formatted survey data is small, and can be loaded fully into memory.
+# But the model output data is large, and we may want to leverage lazy loading.
+# Load all tables
+data = load_data(
+    survey_dir=survey_dir,
+    model_dir=model_dir,
+    data_models=data_models,
+    iteration=3,
+    cache=True
+)
+```
+
+
+# Issues:
+## Households:
+- [x] income: Looks okay
+- [x] workers: Looks okay
+- [x] size: Looks okay
+- [x] autos: Looks okay
+- [x] jtf_choice: We have more joint tours in survey data than model data -- but could be OK?
+
+## Persons:
+- [x] age: Is OK, but spikey at median age bins -- might consider random distribution within bins
+- [x] gender: Looks okay
+- [x] type: Looks okay
+- [x] fp_choice: Looks okay
+- [x] activity_pattern: Looks okay
+- [x] imf_choice: Looks okay
+- [x] inmf_choice: Looks okay
+- [x] wfh_choice: Looks okay
+
+## Individual Trips:
+- [x] inbound: Looks okay
+- [x] tour_purpose: Looks okay
+- [x] orig/dest_purpose: Looks okay
+- [x] orig/dest_taz: Looks okay
+- [x] trip_mode: Looks okay
+- [x] depart_hour: Looks okay
+
+## Individual Tours:
+- [x] person_type: Looks okay
+- [x] tour_category: Looks okay
+- [x] tour_purpose: Looks okay
+- [x] orig/dest_taz: Looks okay
+- [x] start_hour / end_hour: Looks okay
+- [x] tour_mode: Looks okay
+- [x] atWork_freq: Looks okay
+- [x] num_ob_stops / num_ib_stops: Looks okay
+
+## Joint Trips:
+- [x] inbound: Looks okay
+- [x] tour_purpose: Looks okay
+- [x] orig/dest_purpose: Looks okay
+- [x] orig/dest_taz:  Looks okay
+- [x] parking_taz: Looks okay
+- [x] tour_mode: Looks okay
+- [x] tour_category: Looks okay
+- [x] num_participants: Looks okay
+- [x] depart_hour: Looks okay
+
+## Joint Tours:
+- [x] tour_category: Looks okay
+- [x] tour_purpose: Looks okay
+- [x] tour_composition: Looks okay
+- [x] tour_participants: Looks okay
+- [x] orig/dest_taz:  Looks okay
+- [x] end_hour / start_hour: Looks okay
+- [x] tour_mode: Looks okay
+- [x] num_ob_stops / num_ib_stops: Looks a bit off but code looks correct
+
+# Household Data Comparison
+```{python}
+#| label: compare-households
+#| echo: false
+
+hh_fields = [
+    "income",
+    "autos",
+    "jtf_choice",
+    "size",
+    "workers"
+]
+
+# Example comparison for HouseholdData table
+compare_distributions(data["HouseholdData"], hh_fields, table_name="HouseholdData")
+
+```
+
+# Person Data Comparison
+```{python}
+#| label: compare-persons
+#| echo: false
+
+person_fields = [
+  'age',
+  'gender',
+  'type',
+  'fp_choice',
+  'activity_pattern',
+  'imf_choice',
+  'inmf_choice',
+  'wfh_choice'
+]
+# Example comparison for PersonData table
+compare_distributions(data["PersonData"], person_fields, table_name="PersonData")
+```
+
+# Individual Trip Data Comparison
+```{python}
+#| label: compare-indiv-trips
+#| echo: false
+
+indiv_trip_fields = [
+  'inbound',
+  'tour_purpose',
+  'orig_purpose',
+  'dest_purpose',
+  'orig_taz',
+  'dest_taz',
+  'trip_mode',
+  'depart_hour',
+ ]
+# Example comparison for IndivTripData table
+compare_distributions(data["IndivTripData"], indiv_trip_fields, table_name="IndivTripData")
+
+# Get list of missing trip_modes in survey data
+# model_trip_modes = data["IndivTripData"]["model"].select("trip_mode").unique().collect().to_series().to_list()
+# survey_trip_modes = data["IndivTripData"]["survey"].select("trip_mode").unique().collect().to_series().to_list()
+# missing_trip_modes = set(model_trip_modes) - set(survey_trip_modes)
+
+# logger.info(f"Missing trip modes in survey data: {missing_trip_modes}")
+
+```
+
+# Individual Tour Data Comparison
+```{python}
+#| label: compare-indiv-tours
+#| echo: false
+
+indiv_tour_fields = [
+  'person_type',
+  'tour_category',
+  'tour_purpose',
+  'orig_taz',
+  'dest_taz',
+  'start_hour',
+  'end_hour',
+  'tour_mode',
+  'atWork_freq',
+  'num_ob_stops',
+  'num_ib_stops'
+ ]
+
+# Example comparison for IndivTourData table
+compare_distributions(data["IndivTourData"], indiv_tour_fields, table_name="IndivTourData")
+```
+
+# Joint Trip Data Comparison
+```{python}
+#| label: compare-joint-trips
+#| echo: false
+
+joint_trip_fields = [
+  'inbound',
+  'tour_purpose',
+  'orig_purpose',
+  'dest_purpose',
+  'orig_taz',
+  'dest_taz',
+  'parking_taz',
+  'trip_mode',
+  'tour_mode',
+  'tour_category',
+  'num_participants',
+  'depart_hour',
+]
+# Example comparison for JointTripData table
+compare_distributions(data["JointTripData"], joint_trip_fields, table_name="JointTripData")
+
+```
+
+# Joint Tour Data Comparison
+```{python}
+#| label: compare-joint-tours
+#| echo: false
+
+joint_tour_fields = [
+  'tour_category',
+  'tour_purpose',
+  'tour_composition',
+  # 'tour_participants',
+  'orig_taz',
+  'dest_taz',
+  'start_hour',
+  'end_hour',
+  'tour_mode',
+  'num_ob_stops',
+  'num_ib_stops'
+]
+
+# Example comparison for JointTourData table
+compare_distributions(data["JointTourData"], joint_tour_fields, table_name="JointTourData")
+```
