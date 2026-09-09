@@ -3,6 +3,8 @@
 import inspect
 import json
 import logging
+import os
+import re
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -27,6 +29,148 @@ def _substitute(text: str, variables: dict[str, str]) -> str:
     for name, value in variables.items():
         text = text.replace(f"{{{{ {name} }}}}", str(value))
     return text
+
+
+#: Config key holding committed root defaults. Anything declared here is a
+#: default the environment may replace, not a claim about this machine.
+ENVS_KEY = "ENVS"
+
+
+def _template_namespace(config: dict[str, Any]) -> dict[str, str]:
+    """Everything a ``{{ name }}`` may refer to, lowest precedence first.
+
+    Three sources feed one namespace, which is what keeps this from being a
+    second mechanism bolted beside the templating that already exists:
+
+    1. the config's own top-level strings -- ``output_dir`` and friends, so
+       ``log_file: "{{ output_dir }}/run.log"`` keeps working;
+    2. committed defaults under ``ENVS``, for a root that genuinely is the same
+       everywhere;
+    3. the environment, including a ``.env`` the runners load, which is where a
+       machine says where it mounts a shared location.
+
+    The environment wins, and that is not an override of anything stated as
+    fact: a config says ``{{ MTC_DATA }}/Data/...``, which is true wherever
+    MTC_DATA points. Only the root is machine-specific, and only the root comes
+    from outside. The structure beneath it is shared knowledge and stays in the
+    config where it can be reviewed.
+
+    Args:
+        config: The raw configuration, before substitution.
+
+    Returns:
+        Mapping of template name to value.
+    """
+    namespace = {key: value for key, value in config.items() if isinstance(value, str)}
+
+    declared = config.get(ENVS_KEY) or {}
+    if not isinstance(declared, dict):
+        msg = (
+            f"'{ENVS_KEY}' must be a mapping of root name to value, got {type(declared).__name__}."
+        )
+        raise TypeError(msg)
+    namespace.update({str(k): str(v) for k, v in declared.items()})
+
+    for name in list(namespace) + [str(k) for k in declared]:
+        value = os.environ.get(name)
+        if value:
+            namespace[name] = value
+
+    # A root referenced but declared nowhere still has to come from somewhere.
+    for name in _referenced_names(config):
+        if name not in namespace and os.environ.get(name):
+            namespace[name] = os.environ[name]
+
+    return namespace
+
+
+def _referenced_names(config: dict[str, Any]) -> set[str]:
+    """Every ``{{ name }}`` appearing anywhere in the config."""
+    return set(re.findall(r"\{\{\s*(\w+)\s*\}\}", yaml.safe_dump(config)))
+
+
+def _check_roots_resolved(config: dict[str, Any], namespace: dict[str, str]) -> None:
+    """Fail if a referenced root is declared nowhere, naming it.
+
+    Left unresolved, ``{{ MTC_DATA }}`` renders literally and surfaces later as
+    a baffling "no such file or directory" containing brace characters. The
+    root is missing, and saying so is more useful than anything downstream can
+    work out.
+
+    Raises:
+        ValueError: Naming every unresolved root and where to set it.
+    """
+    missing = sorted(name for name in _referenced_names(config) if name not in namespace)
+    if not missing:
+        return
+    listed = "\n  - ".join(missing)
+    msg = (
+        f"The config refers to root(s) that are not set anywhere:\n  - {listed}"
+        f"\n\nA root says where a shared location is mounted on this machine, so it "
+        f"cannot be committed. Set each one in a .env file beside the project (see "
+        f"example.env), or in your environment. Everything below the root stays in the "
+        f"config and is the same for everyone."
+    )
+    raise ValueError(msg)
+
+
+def _shorthands_used_by_steps(raw_config: dict[str, Any]) -> set[str]:
+    """Which shorthands the configured steps actually refer to.
+
+    Read off the *unsubstituted* steps, so a shorthand is only in scope when a
+    step names it as ``{{ key }}``. A commented-out parameter is not a
+    reference: YAML drops comments before this sees them, which is what makes
+    the distinction free. ``pums_dir`` in bats_2023 is exactly that -- declared,
+    and used only by two commented lines -- so requiring it to exist would
+    refuse to start a run that never reads it.
+    """
+    rendered = yaml.safe_dump(raw_config.get("steps", []))
+    return {key for key in raw_config if isinstance(key, str) and f"{{{{ {key} }}}}" in rendered}
+
+
+def _check_input_paths(config: dict[str, Any], used: set[str]) -> None:
+    """Fail before the first step if an input directory a step needs is missing.
+
+    Every one of these is read by some step, but never the first one, so a wrong
+    drive letter surfaces minutes into a run rather than at the start -- and one
+    path at a time: fix, re-run, wait, discover the next. A wrong
+    ``TM2_shapefile_dir`` was found this way, eight steps in, after the survey
+    had been read, trips linked, tours built and weights computed.
+
+    Only inputs a configured step refers to are checked. Output directories are
+    created on demand, and a path nothing reads is not this function's business.
+
+    Args:
+        config: The fully substituted configuration.
+        used: Shorthands the steps refer to, from
+            :func:`_shorthands_used_by_steps`.
+
+    Raises:
+        ValueError: Naming every missing path at once, and how to redirect them.
+    """
+    missing = [
+        f"{key}: {value}"
+        for key, value in sorted(config.items())
+        if key in used
+        and isinstance(value, str)
+        and key.endswith("_dir")
+        and not key.startswith("output")
+        and "{{" not in value  # unresolved: the template error covers it
+        and not Path(value).exists()
+    ]
+    if not missing:
+        return
+
+    plural = "ies do" if len(missing) > 1 else "y does"
+    listed = "\n  - ".join(missing)
+    msg = (
+        f"Configured input director{plural} not exist on this machine:\n  - {listed}"
+        f"\n\nChecked before the pipeline starts, so a wrong path costs a second "
+        "rather than a run. Point each one somewhere real by setting an environment "
+        "variable of the same name -- a .env file beside the project is read "
+        "automatically -- which keeps machine-specific paths out of the shared config."
+    )
+    raise ValueError(msg)
 
 
 def _resolve_variables(variables: dict[str, str]) -> dict[str, str]:
@@ -150,8 +294,8 @@ class Pipeline:
             config = yaml.safe_load(f)
 
         # Extract top-level variables for substitution
-        variables = {key: value for key, value in config.items() if isinstance(value, str)}
-        variables = _resolve_variables(variables)
+        _check_roots_resolved(config, _template_namespace(config))
+        variables = _resolve_variables(_template_namespace(config))
 
         def replace_templates(obj: Any) -> Any:  # noqa: ANN401
             if isinstance(obj, str):
@@ -165,7 +309,9 @@ class Pipeline:
 
             return obj
 
-        return replace_templates(config)
+        resolved = replace_templates(config)
+        _check_input_paths(resolved, _shorthands_used_by_steps(config))
+        return resolved
 
     def _scan_cache(self) -> None:
         """Scan cache directory to determine which steps have cached data.

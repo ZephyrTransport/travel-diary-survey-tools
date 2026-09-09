@@ -3,11 +3,27 @@
 
 # config.yaml
 
-# Define directory shorthands
-survey_dir: "M:/Data/HomeInterview/Bay Area Travel Study 2018-2019/Data/Final Version with Imputations/Final Updated Dataset as of 10-18-2021"
-output_dir: "E:/Box/Modeling and Surveys/Surveys/Travel Diary Survey/BATS_across_years/20260327"
-TM1_shapefile_dir: "E:/GitHub/travel-model-one/utilities/geographies"
-TM2_shapefile_dir: "E:/GitHub/TM2/tm2py-utils/tm2py_utils/inputs/maz_taz/shapefiles"
+# Directory shorthands.
+#
+# Paths are built from *roots* -- MTC_DATA, BOX_DIR, TM1_CLONE and so on -- which
+# say where a shared location is mounted on this machine. Roots come from your
+# environment or a `.env` file beside the project; see `example.env` for the
+# ones this config needs. A root that is referenced but set nowhere is an error
+# naming the root, before the pipeline starts.
+#
+# Only the root is machine-specific. Everything below it is the same for
+# everyone and belongs here, where it can be reviewed.
+#
+# A root that genuinely is the same everywhere can be given a committed default
+# in an `ENVS` block, which the environment still wins over:
+#
+#   ENVS:
+#     SOME_SHARED_ROOT: "/opt/shared"
+#
+survey_dir: "{{ MTC_DATA }}/Data/HomeInterview/Bay Area Travel Study 2018-2019/Data/Final Version with Imputations/Final Updated Dataset as of 10-18-2021"
+output_dir: "{{ BOX_DIR }}/Surveys/Travel Diary Survey/BATS_across_years/20260327"
+TM1_shapefile_dir: "{{ TM1_CLONE }}/utilities/geographies"
+TM2_shapefile_dir: "{{ TM2PY_UTILS_CLONE }}/tm2py_utils/inputs/maz_taz/shapefiles"
 log_file: "{{ output_dir }}/pipeline_2019.log" # If not set, logs just to console, if not absolute saves to .cache directory
 
 # Pipeline configuration
