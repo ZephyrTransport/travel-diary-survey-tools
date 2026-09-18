@@ -1,0 +1,876 @@
+---
+title: "Daysim Comparison Analysis - Key Findings"
+date: "December 12, 2025"
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    embed-resources: true
+jupyter: python3
+---
+
+```{python}
+#| label: setup
+#| include: false
+
+import sys
+import os
+import logging
+from pathlib import Path
+import polars as pl
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+# Set up logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Map network drives if needed
+drives = {
+    "M:": r"\\models.ad.mtc.ca.gov\data\models",
+    "X:": r"\\model3-a\Model3A-Share",
+}
+
+for drive, path in drives.items():
+    if not Path(drive).exists():
+        logger.info("Mapping network drive %s to %s", drive, path)
+        os.system(f"net use {drive} {path}")  # noqa: S605
+
+# Add the compare directory to path for imports
+sys.path.insert(0, str(Path.cwd()))
+from helpers import load_legacy_data, load_new_pipeline_data
+
+# Load data
+legacy_dir = Path(
+    "M:/Data/HomeInterview/Bay Area Travel Study 2023/"
+    "Data/Processed/test/03b-assign_day/wt-wkday_3day"
+)
+config_path = Path.cwd().parent / "config.yaml"
+cache_dir = Path.cwd().parent.parent.parent / ".cache"
+
+legacy_raw = load_legacy_data(legacy_dir)
+new_raw = load_new_pipeline_data(config_path, cache_dir)
+
+# IMPORTANT: Legacy uses 3-day weekday (Tue, Wed, Thu = days 2, 3, 4)
+DAYS_TO_COMPARE = [2, 3, 4]  # Tuesday, Wednesday, Thursday
+
+# Filter to common households for apples-to-apples comparison
+common_hhnos = set(legacy_raw["hh"]["hhno"]) & set(new_raw["hh"]["hhno"])
+logger.info(f"Common households: {len(common_hhnos):,}")
+
+# Get persons who have at least one day in days 2-4 in BOTH pipelines
+legacy_persons_with_days = set(
+    zip(
+        *legacy_raw["personday"]
+        .filter(pl.col("hhno").is_in(common_hhnos) & pl.col("day").is_in(DAYS_TO_COMPARE))
+        .select(["hhno", "pno"])
+        .unique()
+        .to_dict(as_series=False)
+        .values()
+    )
+)
+new_persons_with_days = set(
+    zip(
+        *new_raw["personday"]
+        .filter(pl.col("hhno").is_in(common_hhnos) & pl.col("day").is_in(DAYS_TO_COMPARE))
+        .select(["hhno", "pno"])
+        .unique()
+        .to_dict(as_series=False)
+        .values()
+    )
+)
+common_persons = legacy_persons_with_days & new_persons_with_days
+logger.info(f"Persons with days 2-4 in both pipelines: {len(common_persons):,}")
+
+# Apply common household AND common persons filter to all tables
+# This ensures we only compare persons who report the same days in both pipelines
+legacy = {
+    name: df.filter(pl.col("hhno").is_in(common_hhnos))
+    for name, df in legacy_raw.items()
+}
+new = {
+    name: df.filter(pl.col("hhno").is_in(common_hhnos))
+    for name, df in new_raw.items()
+}
+
+# For days/tours/trips, also filter to common persons on days 2-4
+# to avoid including legacy's artificially reassigned persons
+for table in ["personday", "tour", "trip"]:
+    if table in legacy:
+        legacy[table] = legacy[table].filter(
+            pl.struct(["hhno", "pno"]).is_in([{"hhno": h, "pno": p} for h, p in common_persons])
+        )
+    if table in new:
+        new[table] = new[table].filter(
+            pl.struct(["hhno", "pno"]).is_in([{"hhno": h, "pno": p} for h, p in common_persons])
+        )
+```
+
+**Methodology Note:** All comparisons filter to:
+
+1. households present in both pipelines, and
+2. persons who report the same days (Tue/Wed/Thu) in both pipelines.
+
+This is important because it means it excludes legacycode's reassigned persons who traveled Monday but were assigned to weekdays for the "wt-wkday_3day" weighting scheme.
+
+Also, comparison of tour purposes and modes are only compared on matched tours, so it's slightly inflated but ensures an apples-to-apples comparison and helps rule out methodological differences versus logical errors in the code.
+
+---
+
+## Summary of Differences
+
+### 1. **Time Encoding Difference** [EXPLAINED BY SPECIFICATION CHANGE]
+**Status:** Different time encoding between pipelines
+
+**Description:**
+
+- Legacy uses HHMM format (e.g., 1244 for 12:44 PM), which is more human-readable but doesn't align with DaySim specs.
+- New pipeline uses minutes since midnight (e.g., 764 for 12:44 PM = 12×60+44) per DaySim specification
+
+The new pipeline follows the current DaySim standard for time encoding. I stuck with the DaySim specification rather than the human readable HHMM format because it's less prone to mathematical issues with time jumps since its always monotonically increasing (e.g., 0059 to 0100 is +1 minute, but HHMM arithmetic would suggest -59 minutes).
+
+---
+
+### 2. **Person-Days Difference** [EXPLAINED BY MONDAY REASSIGNMENT]
+**Status:** Legacy pipeline re-assigned Monday travelers to weekdays for 3-day weighting scheme, new pipeline uses actual travel days.
+
+```{python}
+#| label: person-days-summary
+
+# Filter to common days
+legacy_days = legacy["personday"].filter(pl.col("day").is_in(DAYS_TO_COMPARE))
+new_days = new["personday"].filter(pl.col("day").is_in(DAYS_TO_COMPARE))
+
+# Totals
+print(f"**Person-days (days 2-3-4, common households):**")
+print(f"- Legacy: {len(legacy_days):,}")
+print(f"- New: {len(new_days):,}")
+print(f"- Difference: {len(new_days) - len(legacy_days):+,} ({(len(new_days) - len(legacy_days))/len(legacy_days)*100:+.1f}%)")
+print()
+
+# Unique persons
+legacy_persons = legacy_days.select(["hhno", "pno"]).unique()
+new_persons = new_days.select(["hhno", "pno"]).unique()
+
+print(f"**Unique persons with days 2-4:**")
+print(f"- Legacy: {len(legacy_persons):,}")
+print(f"- New: {len(new_persons):,}")
+print(f"- Difference: {len(new_persons) - len(legacy_persons):+,}")
+print()
+
+# Calculate average days per person
+avg_days_legacy = len(legacy_days) / len(legacy_persons)
+avg_days_new = len(new_days) / len(new_persons)
+print(f"**Average person-days per person:**")
+print(f"- Legacy: {avg_days_legacy:.2f} days/person")
+print(f"- New: {avg_days_new:.2f} days/person")
+```
+
+**Methodological difference identified:** The legacy pipeline's `03b-assign_day` step creates person-day records based on day completion flags (`tue_complete`, `wed_complete`, `thu_complete`) rather than actual travel days:
+
+- A person who traveled on Monday (day 1) but marked multiple weekdays as complete gets multiple person-day records (one for each completed day)
+- The new pipeline correctly uses the actual `travel_dow` (day of week when travel occurred)
+- **Result:** Same unique persons, but legacy has fewer total person-days because it's reassigning Monday travelers to weekdays for the "wt-wkday_3day" weighting scheme
+- Legacy averages **{avg_days_legacy:.2f} days/person** vs New's **{avg_days_new:.2f} days/person** - the new pipeline includes more actual travel days
+
+Not sure if this was intentional, but I think it somewhat misrepresents actual travel behavior?
+
+---
+
+### 3. **Tour Numbering Difference** [EXPLAINED BY METHODOLOGICAL CHANGE]
+**Status:** Different tour numbering conventions between pipelines results in impossible exact matching of tours between pipelines
+
+
+**Description:**
+
+- The legacy pipeline numbers tours sequentially per person across all days (e.g., a person with 2 tours on day 2 and 1 tour on day 3 would have tours numbered 1, 2, and 3).
+- The new pipeline numbers tours sequentially per person per day (e.g., the same person would have tours numbered 1 and 2 on day 2, and tour number 1 on day 3). This technically matches the DaySim specification but makes exact tour matching between pipelines impossible since tour numbers differ.
+
+This does not pose any issues for modeling, but it does complicate direct tour-level comparisons between pipelines. However, direct tour level comparison would be difficult either way since the tour extraction logic has changed in the new pipeline and any difference in tour detection would result in numbering sequence differences.
+
+
+---
+
+### 4. **Tour Matching Analysis** [SUBSTANTIAL AGREEMENT]
+**Status:** Overall strong agreement between pipelines on tours
+
+**Note:** Tours are filtered to common households and common persons who report days 2-4 in both pipelines. This excludes legacy's artificially reassigned persons who traveled Monday.
+
+**Matching Methodology:**
+
+Tours are matched between pipelines using household ID, person ID, day, and three tour times: departure from origin (`tlvorig`), arrival at primary destination (`tardest`), and arrival back at origin (`tarorig`). Since legacy uses HHMM time format and new uses minutes since midnight, new pipeline times are converted to HHMM for matching. A tour matches if all six fields are identical between pipelines.
+
+```{python}
+#| label: tour-matching-analysis
+
+def _minutes_to_hhmm(minutes: int) -> int:
+    """Convert minutes since midnight to HHMM format."""
+    if minutes < 0:
+        return -1
+    hours = minutes // 60
+    mins = minutes % 60
+    return hours * 100 + mins
+
+# NOTE: Tours are already filtered to common households and common persons
+# (persons who report days 2-4 in both pipelines) from the setup section above.
+# This excludes the 2,893 persons who were artificially reassigned by legacy.
+
+# Filter to the days we're comparing
+legacy_tours = legacy["tour"].filter(pl.col("day").is_in(DAYS_TO_COMPARE))
+new_tours = new["tour"].filter(pl.col("day").is_in(DAYS_TO_COMPARE))
+
+legacy_tour_count = len(legacy_tours)
+new_tour_count = len(new_tours)
+
+# Convert new pipeline times to HHMM for matching
+new_tours_with_hhmm = new_tours.with_columns([
+    pl.col("tlvorig").map_elements(_minutes_to_hhmm, return_dtype=pl.Int64).alias("tlvorig_hhmm"),
+    pl.col("tardest").map_elements(_minutes_to_hhmm, return_dtype=pl.Int64).alias("tardest_hhmm"),
+    pl.col("tarorig").map_elements(_minutes_to_hhmm, return_dtype=pl.Int64).alias("tarorig_hhmm"),
+])
+
+leg_tours_with_hhmm = legacy_tours.with_columns([
+    pl.col("tlvorig").alias("tlvorig_hhmm"),
+    pl.col("tardest").alias("tardest_hhmm"),
+    pl.col("tarorig").alias("tarorig_hhmm"),
+])
+
+# Match on household, person, day, and tour times
+MATCH_COLS = ["hhno", "pno", "day", "tlvorig_hhmm", "tardest_hhmm", "tarorig_hhmm"]
+
+leg_tours_match = leg_tours_with_hhmm.select(
+    MATCH_COLS + ["pdpurp", "tmodetp"]
+).rename({"pdpurp": "pdpurp_leg", "tmodetp": "tmodetp_leg"})
+
+new_tours_match = new_tours_with_hhmm.select(
+    MATCH_COLS + ["pdpurp", "tmodetp"]
+).rename({"pdpurp": "pdpurp_new", "tmodetp": "tmodetp_new"})
+
+# Inner join to get matched tours
+matched = leg_tours_match.join(new_tours_match, on=MATCH_COLS, how="inner")
+match_rate = len(matched) / legacy_tour_count * 100
+
+print(f"**Tour Counts:**")
+print(f"- Legacy: {legacy_tour_count:,} tours")
+print(f"- New: {new_tour_count:,} tours")
+print(f"- Matched (by hhno, pno, day, times): {len(matched):,} ({match_rate:.1f}%)")
+print()
+
+# Analyze matched tours - individual tour-level comparison
+purpose_match = matched.filter(pl.col("pdpurp_leg") == pl.col("pdpurp_new"))
+mode_match = matched.filter(pl.col("tmodetp_leg") == pl.col("tmodetp_new"))
+both_match = matched.filter(
+    (pl.col("pdpurp_leg") == pl.col("pdpurp_new"))
+    & (pl.col("tmodetp_leg") == pl.col("tmodetp_new"))
+)
+
+print(f"**Matched Tour Attribute Consistency (tour-level):**")
+print(f"- Purpose matches: {len(purpose_match):,} ({len(purpose_match)/len(matched)*100:.1f}%)")
+print(f"- Mode matches: {len(mode_match):,} ({len(mode_match)/len(matched)*100:.1f}%)")
+print(f"- Both match: {len(both_match):,} ({len(both_match)/len(matched)*100:.1f}%)")
+```
+
+**Key Finding:** 83.8% of tours match between pipelines when comparing household, person, day, departure time, destination arrival time, and return time. Among matched tours, 97.8% have matching purpose and 98.3% have matching mode at the individual tour level.
+
+**Unmatched Tours Breakdown:** The 16.2% unmatched tours break down into two categories:
+
+#### Mismatch Category Breakdown
+
+| Category | Person-Days | Tours Affected | Description |
+|----------|-------------|----------------|-------------|
+| **Different Tour Counts** | 4,598 | ~11,293 (76%) | Pipelines extract different numbers of tours from same trip data |
+| **Same Count, Different Boundaries** | 2,858 | ~2,858 (24%) | Same number of tours but different start/end times or destinations |
+
+#### Different Tour Count Examples
+
+Most common tour count differences (person-days):
+
+| Legacy Tours | New Tours | Person-Days | Explanation |
+|--------------|-----------|-------------|-------------|
+| 0 | 1 | 1,527 | New pipeline found a tour, legacy didn't |
+| 2 | 1 | 1,091 | Legacy split into 2 tours, new kept as 1 |
+| 1 | 0 | 513 | Legacy found a tour, new didn't |
+| 3 | 2 | 420 | Legacy extracted more tours from pattern |
+| 0 | 2 | 371 | New pipeline found 2 tours, legacy found none |
+
+**Root Causes:**
+
+- **Buffer-based (new) vs TAZ-based (legacy) home anchor detection**: With 64.9% of trips showing GPS variance, the buffer approach better handles spatial discontinuity in determining tour boundaries
+- **Different tour boundary detection logic**: Different criteria for determining where tours start and end
+- **Multi-stop pattern handling**: Different algorithms for grouping intermediate stops into tours
+- **Anchor Destination Logic**: New pipeline allows for more than just work-based trips, e.g., school and "other" anchors.
+
+---
+
+```{python}
+#| label: unmatched-analysis
+
+# Analyze unmatched tours
+unmatched_legacy = leg_tours_match.join(new_tours_match, on=MATCH_COLS, how="anti")
+unmatched_new = new_tours_match.join(leg_tours_match, on=MATCH_COLS, how="anti")
+
+print(f"**Unmatched Details:**")
+print(f"- Unmatched legacy: {len(unmatched_legacy):,} tours")
+print(f"- Unmatched new: {len(unmatched_new):,} tours")
+print()
+
+# Check for near-matches (matching without return time)
+MATCH_NO_RETURN = ["hhno", "pno", "day", "tlvorig_hhmm", "tardest_hhmm"]
+leg_no_return = leg_tours_match.select(MATCH_NO_RETURN + ["tarorig_hhmm"]).rename({"tarorig_hhmm": "tarorig_leg"})
+new_no_return = new_tours_match.select(MATCH_NO_RETURN + ["tarorig_hhmm"]).rename({"tarorig_hhmm": "tarorig_new"})
+matched_no_return = leg_no_return.join(new_no_return, on=MATCH_NO_RETURN, how="inner")
+
+additional_matches = len(matched_no_return) - len(matched)
+
+print(f"**Near-Matches (same departure/arrival, different return):** {additional_matches:,} tours")
+print(f"**Fundamental differences (different departure or arrival):** {len(unmatched_legacy) - additional_matches:,} tours")
+```
+
+#### Example Cases of Same Tour Count But Different Boundaries
+
+Let's examine specific examples where both pipelines found the same number of tours for a person-day, but the tour boundaries differ:
+
+```{python}
+#| label: boundary-examples
+
+# Get person-days with same tour count in both pipelines
+legacy_counts = legacy_tours.group_by(["hhno", "pno", "day"]).agg(pl.len().alias("legacy_count"))
+new_counts = new_tours.group_by(["hhno", "pno", "day"]).agg(pl.len().alias("new_count"))
+
+same_count = legacy_counts.join(new_counts, on=["hhno", "pno", "day"], how="inner").filter(
+    pl.col("legacy_count") == pl.col("new_count")
+)
+
+# Find person-days with same count but at least one unmatched tour
+same_count_unmatched = (
+    same_count
+    .join(unmatched_legacy.select(["hhno", "pno", "day"]).unique(), on=["hhno", "pno", "day"], how="inner")
+    .filter(pl.col("legacy_count") == 2)  # Focus on 2-tour days for clarity
+    .head(3)
+)
+
+# Show examples
+print("**Examples: Person-days with 2 tours in both pipelines but different boundaries**\n")
+
+for row in same_count_unmatched.iter_rows(named=True):
+    hhno, pno, day = row["hhno"], row["pno"], row["day"]
+
+    leg_tours_example = legacy_tours.filter(
+        (pl.col("hhno") == hhno) & (pl.col("pno") == pno) & (pl.col("day") == day)
+    ).sort("tlvorig")
+
+    new_tours_example = new_tours.filter(
+        (pl.col("hhno") == hhno) & (pl.col("pno") == pno) & (pl.col("day") == day)
+    ).sort("tlvorig")
+
+    print(f"**hhno={hhno}, pno={pno}, day={day}**")
+    print("  Legacy tours:")
+    for t in leg_tours_example.iter_rows(named=True):
+        print(f"    Tour {t['tour']}: depart={t['tlvorig']:04d}, dest={t['tardest']:04d}, return={t['tarorig']:04d}, purpose={t['pdpurp']}")
+
+    print("  New tours:")
+    for t in new_tours_example.iter_rows(named=True):
+        depart = _minutes_to_hhmm(t['tlvorig'])
+        dest = _minutes_to_hhmm(t['tardest'])
+        ret = _minutes_to_hhmm(t['tarorig'])
+        print(f"    Tour {t['tour']}: depart={depart:04d}, dest={dest:04d}, return={ret:04d}, purpose={t['pdpurp']}")
+    print()
+```
+
+These examples show how the same trip sequences can be parsed into different tour boundaries due to differences in anchor detection (buffer vs TAZ) and tour segmentation logic.
+
+---
+
+### 5. **Trip Count Difference** [CONSISTENT WITH TOURS]
+
+**Note:** Trips are filtered to common households and common persons who report days 2-4 in both pipelines. This excludes legacy's artificially reassigned persons who traveled Monday.
+
+```{python}
+#| label: trip-counts
+
+legacy_trips = legacy["trip"].filter(
+    pl.col("hhno").is_in(common_hhnos) & pl.col("day").is_in(DAYS_TO_COMPARE)
+)
+new_trips = new["trip"].filter(
+    pl.col("hhno").is_in(common_hhnos) & pl.col("day").is_in(DAYS_TO_COMPARE)
+)
+
+print(f"Legacy: {len(legacy_trips):,} trips | New: {len(new_trips):,} trips | Difference: {len(new_trips) - len(legacy_trips):+,}")
+```
+
+Trip count differences are consistent with tour differences, suggesting different tour trip linking logic rather than missing trips.
+
+---
+
+## Data Quality Observations
+
+### 6. **Tour Purpose Distribution Differences** [DIFFERENT INTEGER CODES]
+**Status:** Different purpose code integers between pipelines, but semantically equivalent after mapping
+
+**Note:** This comparison is filtered to the common households and persons (those with matching days 2-4 in both pipelines), consistent with the tour and trip comparisons above.
+
+**Code Mapping for Apples-to-Apples Comparison:**
+
+- **Legacy DaySim codes:** 10 = change mode, 11 = other ([02a-reformat.py#L503](../../scripts/daysim_old/survey_processing/02a-reformat.py#L503))
+- **New DaySim codes:** 8 = change mode, 9 = other ([daysim.py#L73](../../src/data_canon/codebook/daysim.py#L73))
+- **For comparison:** Legacy codes 10→8 and 11→9 are mapped to match new pipeline's semantic categories
+- **Both pipelines filter change mode tours** from final output, so code 8/10 tours do not appear in distributions below
+
+#### Purpose Distribution
+
+```{python}
+#| label: purpose-distribution
+
+# Purpose names (DaySim codes)
+purpose_names = {
+    0: "Home",
+    1: "Work",
+    2: "School",
+    3: "Escort",
+    4: "Personal Business",
+    5: "Shopping",
+    6: "Meal",
+    7: "Social/Recreation",
+    8: "Change Mode",
+    9: "Other",
+    10: "Change Mode",  # Legacy code
+    11: "Other",  # Legacy code
+}
+
+# Map legacy codes to semantic categories for comparison
+# Legacy uses 10/11, new uses 8/9 for the same purposes
+legacy_to_semantic = {
+    0: 0, 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 7,
+    10: 8,  # Legacy change mode (10) -> semantic change mode (8)
+    11: 9,  # Legacy other (11) -> semantic other (9)
+}
+new_to_semantic = {i: i for i in range(10)}  # New codes are already semantic
+
+# Get distributions with semantic mapping
+legacy_dist = (
+    legacy_tours.with_columns(
+        pl.col("pdpurp").replace_strict(legacy_to_semantic, default=pl.col("pdpurp")).alias("semantic_purp")
+    )
+    .group_by("semantic_purp")
+    .agg(pl.len().alias("legacy_count"))
+    .with_columns([
+        pl.col("legacy_count").cast(pl.Int64),
+        (pl.col("legacy_count") / pl.col("legacy_count").sum() * 100).alias("legacy_pct"),
+    ])
+    .rename({"semantic_purp": "pdpurp"})
+    .sort("pdpurp")
+)
+
+new_dist = (
+    new_tours.group_by("pdpurp")
+    .agg(pl.len().alias("new_count"))
+    .with_columns([
+        pl.col("new_count").cast(pl.Int64),
+        (pl.col("new_count") / pl.col("new_count").sum() * 100).alias("new_pct"),
+    ])
+    .sort("pdpurp")
+)
+
+# Join distributions
+comparison = (
+    legacy_dist.join(new_dist, on="pdpurp", how="full", coalesce=True)
+    .with_columns([
+        pl.col("legacy_count").fill_null(0),
+        pl.col("new_count").fill_null(0),
+        pl.col("legacy_pct").fill_null(0.0),
+        pl.col("new_pct").fill_null(0.0),
+    ])
+    .with_columns([
+        (pl.col("new_count") - pl.col("legacy_count")).alias("change"),
+        pl.when(pl.col("legacy_count") == 0)
+        .then(None)
+        .otherwise(((pl.col("new_count") - pl.col("legacy_count")).cast(pl.Float64) / pl.col("legacy_count").cast(pl.Float64)) * 100)
+        .alias("pct_change"),
+        pl.col("pdpurp")
+        .map_elements(lambda x: purpose_names.get(x, f"Unknown({x})"), return_dtype=pl.Utf8)
+        .alias("purpose_name"),
+    ])
+    .select(["pdpurp", "purpose_name", "legacy_count", "new_count", "change", "pct_change"])
+    .sort("pdpurp")
+)
+
+from IPython.display import Markdown, display
+display(Markdown(comparison.to_pandas().to_markdown(index=False, floatfmt=".1f")))
+```
+
+**Analysis:** The table above shows purpose distributions after mapping legacy codes to match new pipeline semantics. Both pipelines produce similar purpose distributions, with differences stemming from tour extraction logic rather than purpose classification. Change mode tours (code 8 in new, code 10 in legacy) do not appear because both pipelines filter them from final output.
+
+---
+
+### 7. **Mode Distribution Differences** [CLASSIFICATION LOGIC DIFFERENCES]
+**Status:** Different mode inference logic between pipelines
+
+```{python}
+#| label: mode-distribution
+
+# Mode names
+mode_names = {
+    0: "Other",
+    1: "Walk",
+    2: "Bike",
+    3: "SOV",
+    4: "HOV2",
+    5: "HOV3+",
+    6: "Walk-Transit",
+    7: "Drive-Transit",
+    8: "School Bus",
+    9: "TNC",
+}
+
+# Get distributions
+legacy_mode_dist = (
+    legacy_tours.group_by("tmodetp")
+    .agg(pl.len().alias("legacy_count"))
+    .with_columns(pl.col("legacy_count").cast(pl.Int64))
+    .sort("tmodetp")
+)
+
+new_mode_dist = (
+    new_tours.group_by("tmodetp")
+    .agg(pl.len().alias("new_count"))
+    .with_columns(pl.col("new_count").cast(pl.Int64))
+    .sort("tmodetp")
+)
+
+# Join distributions
+mode_comparison = (
+    legacy_mode_dist.join(new_mode_dist, on="tmodetp", how="full", coalesce=True)
+    .with_columns([
+        pl.col("legacy_count").fill_null(0),
+        pl.col("new_count").fill_null(0),
+    ])
+    .with_columns([
+        (pl.col("new_count") - pl.col("legacy_count")).alias("change"),
+        pl.when(pl.col("legacy_count") == 0)
+        .then(0.0)
+        .otherwise(((pl.col("new_count") - pl.col("legacy_count")).cast(pl.Float64) / pl.col("legacy_count").cast(pl.Float64)) * 100)
+        .alias("pct_change"),
+        pl.col("tmodetp")
+        .map_elements(lambda x: mode_names.get(x, f"Unknown({x})"), return_dtype=pl.Utf8)
+        .alias("mode_name"),
+    ])
+    .select(["tmodetp", "mode_name", "legacy_count", "new_count", "change", "pct_change"])
+    .sort("tmodetp")
+)
+
+from IPython.display import Markdown, display
+display(Markdown(mode_comparison.to_pandas().to_markdown(index=False, floatfmt=".1f")))
+```
+
+**Analysis:** Mode distributions differ primarily in:
+
+- **HOV3+ vs Other** - Different vehicle occupancy or shuttle classification logic
+- **Drive-to-transit** - Different transit access/egress mode detection methods
+- **SOV/HOV splits** - Possible differences in occupancy calculation
+
+Both pipelines use standard DaySim mode codes; differences reflect classification logic changes.
+
+---
+
+### 8. **Tour Mode and Purpose Comparisons**
+
+```{python}
+#| label: interactive-comparison-views
+
+# Get mode and purpose distributions from ALL tours (not just matched)
+# This ensures consistency with the distribution tables above
+
+# Get mode distributions - ensure all mode codes 0-9 are included
+all_mode_codes = list(range(10))
+mode_labels = [mode_names.get(i, f"Mode {i}") for i in all_mode_codes]
+
+legacy_mode_counts = (
+    legacy_tours.group_by("tmodetp")
+    .agg(pl.len().alias("count"))
+    .sort("tmodetp")
+)
+
+new_mode_counts = (
+    new_tours.group_by("tmodetp")
+    .agg(pl.len().alias("count"))
+    .sort("tmodetp")
+)
+
+# Build arrays with all mode codes, filling missing with 0
+legacy_by_mode = []
+new_by_mode = []
+for mode_code in all_mode_codes:
+    legacy_count = legacy_mode_counts.filter(pl.col("tmodetp") == mode_code)
+    new_count = new_mode_counts.filter(pl.col("tmodetp") == mode_code)
+    legacy_by_mode.append(legacy_count["count"][0] if len(legacy_count) > 0 else 0)
+    new_by_mode.append(new_count["count"][0] if len(new_count) > 0 else 0)
+
+legacy_by_mode = np.array(legacy_by_mode)
+new_by_mode = np.array(new_by_mode)
+
+# Get purpose distributions (with semantic mapping for legacy)
+# Ensure all purpose codes 0-9 are included
+all_purpose_codes = list(range(10))
+purpose_labels = [purpose_names.get(i, f"Purpose {i}") for i in all_purpose_codes]
+
+legacy_tours_semantic = legacy_tours.with_columns(
+    pl.col("pdpurp").replace_strict(legacy_to_semantic, default=pl.col("pdpurp")).alias("semantic_purp")
+)
+
+legacy_purpose_counts = (
+    legacy_tours_semantic.group_by("semantic_purp")
+    .agg(pl.len().alias("count"))
+    .sort("semantic_purp")
+)
+
+new_purpose_counts = (
+    new_tours.group_by("pdpurp")
+    .agg(pl.len().alias("count"))
+    .sort("pdpurp")
+)
+
+# Build arrays with all purpose codes, filling missing with 0
+legacy_by_purpose = []
+new_by_purpose = []
+for purpose_code in all_purpose_codes:
+    legacy_count = legacy_purpose_counts.filter(pl.col("semantic_purp") == purpose_code)
+    new_count = new_purpose_counts.filter(pl.col("pdpurp") == purpose_code)
+    legacy_by_purpose.append(legacy_count["count"][0] if len(legacy_count) > 0 else 0)
+    new_by_purpose.append(new_count["count"][0] if len(new_count) > 0 else 0)
+
+legacy_by_purpose = np.array(legacy_by_purpose)
+new_by_purpose = np.array(new_by_purpose)
+
+from scipy import stats
+
+# Calculate correlations
+r_mode = stats.pearsonr(legacy_by_mode, new_by_mode)[0]
+r_purpose = stats.pearsonr(legacy_by_purpose, new_by_purpose)[0]
+
+# Create subplots for mode and purpose scatter plots
+fig_scatter = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=(
+        f'Mode Distribution Comparison<br><sub>R² = {r_mode**2:.4f}</sub>',
+        f'Purpose Distribution Comparison<br><sub>R² = {r_purpose**2:.4f}</sub>'
+    ),
+    horizontal_spacing=0.12
+)
+
+# 1. Mode Scatter Plot
+max_mode = max(legacy_by_mode.max(), new_by_mode.max())
+fig_scatter.add_trace(
+    go.Scatter(
+        x=legacy_by_mode,
+        y=new_by_mode,
+        mode='markers',
+        marker=dict(size=12, opacity=0.7, color='steelblue'),
+        text=mode_labels,
+        hovertemplate='<b>%{text}</b><br>Legacy: %{x:,.0f}<br>New: %{y:,.0f}<extra></extra>',
+        name='Modes'
+    ),
+    row=1, col=1
+)
+
+fig_scatter.add_trace(
+    go.Scatter(
+        x=[0, max_mode],
+        y=[0, max_mode],
+        mode='lines',
+        line=dict(color='red', dash='dash', width=1),
+        name='Perfect Match',
+        hoverinfo='skip',
+        showlegend=False
+    ),
+    row=1, col=1
+)
+
+# 2. Purpose Scatter Plot
+max_purpose = max(legacy_by_purpose.max(), new_by_purpose.max())
+fig_scatter.add_trace(
+    go.Scatter(
+        x=legacy_by_purpose,
+        y=new_by_purpose,
+        mode='markers',
+        marker=dict(size=12, opacity=0.7, color='darkgreen'),
+        text=purpose_labels,
+        hovertemplate='<b>%{text}</b><br>Legacy: %{x:,.0f}<br>New: %{y:,.0f}<extra></extra>',
+        name='Purposes'
+    ),
+    row=1, col=2
+)
+
+fig_scatter.add_trace(
+    go.Scatter(
+        x=[0, max_purpose],
+        y=[0, max_purpose],
+        mode='lines',
+        line=dict(color='red', dash='dash', width=1),
+        name='Perfect Match',
+        hoverinfo='skip',
+        showlegend=False
+    ),
+    row=1, col=2
+)
+
+# Update axes with fixed aspect ratio
+fig_scatter.update_xaxes(title_text='Legacy Tour Count', row=1, col=1)
+fig_scatter.update_yaxes(title_text='New Tour Count', scaleanchor='x', scaleratio=1, row=1, col=1)
+fig_scatter.update_xaxes(title_text='Legacy Tour Count', row=1, col=2)
+fig_scatter.update_yaxes(title_text='New Tour Count', scaleanchor='x2', scaleratio=1, row=1, col=2)
+
+fig_scatter.update_layout(
+    height=500,
+    showlegend=False,
+    template='plotly_white',
+    hovermode='closest',
+    margin=dict(t=80, b=50, l=50, r=50)
+)
+
+fig_scatter.show()
+
+# 2. Sankey Diagrams: Mode and Purpose Flow
+# Use matched tours to show how classifications flow from legacy to new
+
+# Mode Sankey
+mode_flow = (
+    matched.group_by(['tmodetp_leg', 'tmodetp_new'])
+    .agg(pl.len().alias('count'))
+    .sort('count', descending=True)
+)
+
+# Create source/target lists for mode
+mode_sources = []
+mode_targets = []
+mode_values = []
+mode_labels = list(mode_names.values())
+n_modes = len(mode_labels)
+
+# Build node labels: Legacy modes first, then New modes
+mode_node_labels = [f"Legacy: {label}" for label in mode_labels] + [f"New: {label}" for label in mode_labels]
+
+for row in mode_flow.iter_rows(named=True):
+    legacy_mode = row['tmodetp_leg']
+    new_mode = row['tmodetp_new']
+    count = row['count']
+
+    # Find indices
+    legacy_idx = list(mode_names.keys()).index(legacy_mode)
+    new_idx = list(mode_names.keys()).index(new_mode) + n_modes
+
+    mode_sources.append(legacy_idx)
+    mode_targets.append(new_idx)
+    mode_values.append(count)
+
+# Purpose Sankey (with semantic mapping for legacy)
+matched_purpose = matched.with_columns(
+    pl.col("pdpurp_leg").replace_strict(legacy_to_semantic, default=pl.col("pdpurp_leg")).alias("pdpurp_leg_semantic")
+)
+
+purpose_flow = (
+    matched_purpose.group_by(['pdpurp_leg_semantic', 'pdpurp_new'])
+    .agg(pl.len().alias('count'))
+    .sort('count', descending=True)
+)
+
+# Create source/target lists for purpose
+purpose_sources = []
+purpose_targets = []
+purpose_values = []
+purpose_labels_list = [purpose_names[k] for k in sorted([k for k in purpose_names.keys() if k < 10])]
+n_purposes = len(purpose_labels_list)
+
+# Build node labels: Legacy purposes first, then New purposes
+purpose_node_labels = [f"Legacy: {label}" for label in purpose_labels_list] + [f"New: {label}" for label in purpose_labels_list]
+
+purpose_keys = sorted([k for k in purpose_names.keys() if k < 10])
+
+for row in purpose_flow.iter_rows(named=True):
+    legacy_purpose = row['pdpurp_leg_semantic']
+    new_purpose = row['pdpurp_new']
+    count = row['count']
+
+    try:
+        legacy_idx = purpose_keys.index(legacy_purpose)
+        new_idx = purpose_keys.index(new_purpose) + n_purposes
+
+        purpose_sources.append(legacy_idx)
+        purpose_targets.append(new_idx)
+        purpose_values.append(count)
+    except ValueError:
+        continue
+
+# Create Sankey diagrams
+fig_sankey = make_subplots(
+    rows=1, cols=2,
+    subplot_titles=('Mode Classification Flow', 'Purpose Classification Flow'),
+    specs=[[{"type": "sankey"}, {"type": "sankey"}]],
+    horizontal_spacing=0.05
+)
+
+# Mode Sankey
+fig_sankey.add_trace(
+    go.Sankey(
+        node=dict(
+            pad=15,
+            thickness=20,
+            line=dict(color="black", width=0.5),
+            label=mode_node_labels,
+        ),
+        link=dict(
+            source=mode_sources,
+            target=mode_targets,
+            value=mode_values,
+        )
+    ),
+    row=1, col=1
+)
+
+# Purpose Sankey
+fig_sankey.add_trace(
+    go.Sankey(
+        node=dict(
+            pad=15,
+            thickness=20,
+            line=dict(color="black", width=0.5),
+            label=purpose_node_labels,
+        ),
+        link=dict(
+            source=purpose_sources,
+            target=purpose_targets,
+            value=purpose_values,
+        )
+    ),
+    row=1, col=2
+)
+
+fig_sankey.update_layout(
+    height=600,
+    margin=dict(t=80, b=50, l=50, r=50)
+)
+
+fig_sankey.show()
+
+# Calculate summary statistics
+total_legacy = len(legacy_tours)
+total_new = len(new_tours)
+total_diff = total_new - total_legacy
+
+from IPython.display import Markdown, display
+display(Markdown(f"""
+**Summary Statistics:**
+
+- **Total Tours:** Legacy = {total_legacy:,} | New = {total_new:,} | Diff = {total_diff:+,}
+- **Mode Correlation (R):** {r_mode:.4f} (R² = {r_mode**2:.4f})
+- **Purpose Correlation (R):** {r_purpose:.4f} (R² = {r_purpose**2:.4f})
+"""))
+```
+
+**Analysis:** The visualizations reveal high consistency between pipelines:
+
+- **Scatter plots:** Strong correlations (R² ≈ 1.0) show mode and purpose distributions align well
+- **Sankey diagrams:** Thick straight-through flows show classification agreement; thin crossing flows highlight specific differences
+
+---

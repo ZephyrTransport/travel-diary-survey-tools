@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>{{ title }}</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; color: #222; background: #fff; }
+  #page-overlay { position: fixed; inset: 0; z-index: 99999; background: white; }
+  h1 { border-bottom: 2px solid #333; padding-bottom: .3rem; margin-top: 0; }
+  h2 { margin-top: 2.6rem; color: #444; scroll-margin-top: 1rem; }
+  h3 { margin-top: 1.6rem; margin-bottom: .3rem; color: #444; font-size: 1rem; }
+  table { border-collapse: collapse; margin: 1rem 0; }
+  th, td { border: 1px solid #ccc; padding: .4rem .8rem; text-align: right; }
+  th { background: #f5f5f5; text-align: center; }
+  td:first-child, th:first-child { text-align: left; }
+  .converged { color: #2a7f2a; }
+  .failed { color: #c33; font-weight: bold; }
+  .chart { margin: 1rem 0; overflow: hidden; }
+  .chart-map { margin: 1rem 0; max-width: 960px; overflow: hidden; }
+  .note { color: #666; font-size: 0.9em; margin: .4rem 0 1rem; max-width: 80ch; }
+  table.sparsity { table-layout: fixed; width: 100%; }
+  table.sparsity th, table.sparsity td { word-wrap: break-word; overflow-wrap: break-word; }
+  code { font-size: .92em; }
+  table.inherit td:nth-child(2), table.inherit td:nth-child(7) { text-align: left; }
+  table.runmeta { font-size: .85em; margin-top: .4rem; }
+  table.runmeta td { border: none; padding: .1rem .9rem .1rem 0; text-align: left; }
+  table.runmeta td.k { color: #777; text-transform: uppercase; letter-spacing: .05em; font-size: .85em; }
+
+  /* Layout: sidebar and document */
+  .layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); }
+  nav.side { position: sticky; top: 0; align-self: start; height: 100vh; overflow-y: auto;
+             box-sizing: border-box; padding: 1.2rem 1rem 2rem; background: #f7f8f9;
+             border-right: 1px solid #e2e4e6; font-size: .86em; }
+  main { padding: 1.6rem 2.2rem 5rem; min-width: 0; }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    nav.side { position: static; height: auto; border-right: none; border-bottom: 1px solid #e2e4e6; }
+    main { padding: 1.2rem 1rem 4rem; }
+  }
+  .side-title { font-weight: 650; margin-bottom: .9rem; color: #333; }
+  .side .lab { display: block; color: #777; text-transform: uppercase; letter-spacing: .06em;
+               font-size: .78em; margin: 0 0 .35rem; }
+  .toggle { margin-bottom: 1.1rem; display: flex; flex-wrap: wrap; gap: .3rem; }
+  .toggle .lab { flex-basis: 100%; }
+  .toggle button { font: inherit; background: #fff; color: #444; border: 1px solid #bbb;
+                   border-radius: 2px; padding: .2rem .6rem; cursor: pointer; }
+  .toggle button:hover { border-color: #2f6f9f; color: #2f6f9f; }
+  .toggle button[aria-pressed="true"] { background: #2f6f9f; border-color: #2f6f9f; color: #fff; }
+  .toggle button:focus-visible, .outline a:focus-visible { outline: 2px solid #2f6f9f; outline-offset: 2px; }
+  .outline { list-style: none; margin: 0; padding: 0; }
+  .outline li { margin: 0; }
+  .outline li.group { color: #777; text-transform: uppercase; letter-spacing: .06em;
+                      font-size: .78em; margin: .9rem 0 .25rem; }
+  .outline a { display: flex; gap: .45rem; padding: .22rem .4rem; border-radius: 2px;
+               color: #333; text-decoration: none; border-left: 2px solid transparent; }
+  .outline a:hover { background: #eceef0; }
+  .outline a.current { border-left-color: #2f6f9f; color: #2f6f9f; background: #eaf1f6; }
+  .outline .n { color: #999; min-width: 1.2em; font-variant-numeric: tabular-nums; }
+  .outline li.absent a { color: #aaa; }
+  .profile-name { color: #2f6f9f; }
+
+  /* Prose: one visible lede per section, the rest on request */
+  .lede { margin: .3rem 0 .6rem; max-width: 80ch; }
+  details.more { margin: 0 0 1rem; max-width: 80ch; color: #555; font-size: .9em; }
+  details.more summary { cursor: pointer; color: #2f6f9f; font-size: .95em; }
+  details.more > div { margin-top: .4rem; }
+  details.more ul { margin: .3rem 0; padding-left: 1.2rem; }
+  details.more li { margin: .25rem 0; }
+
+  /* Defined terms */
+  a.term { color: inherit; text-decoration: underline dotted #888; text-underline-offset: 2px; }
+  a.term:hover { color: #2f6f9f; }
+  details.defs { margin: .3rem 0; }
+  details.defs > summary { cursor: pointer; font-weight: 600; color: #444; padding: .2rem 0; }
+  details.defs[open] > summary { margin-bottom: .3rem; }
+  .glossary { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+              gap: .6rem 1.6rem; margin: .4rem 0 0; }
+  .glossary > div { scroll-margin-top: 1rem; padding: .1rem 0; }
+  .glossary > div:target { background: #fff7d6; outline: 4px solid #fff7d6; }
+  .glossary dt { font-weight: 600; }
+  .glossary dt .abbr { font-weight: 400; color: #777; margin-left: .3rem; }
+  .glossary dd { margin: .15rem 0 0; font-size: .9em; color: #555; }
+  .glossary .formula { font-family: ui-monospace, Consolas, monospace; font-size: .92em; color: #222; }
+
+  /* Weight set comparer */
+  .caveat { border-left: 3px solid #c33; background: #fdf6f5; padding: .5rem .9rem;
+            margin: .8rem 0; font-size: .92em; max-width: 80ch; }
+  .picker { border-top: 1px solid #ddd; border-bottom: 1px solid #ddd; padding: .5rem 0; margin: 1rem 0; }
+  .picker .row { display: flex; flex-wrap: wrap; gap: .3rem; align-items: center; margin: .25rem 0; }
+  .picker .lab { color: #777; text-transform: uppercase; letter-spacing: .06em;
+                 font-size: .75em; min-width: 3.2rem; }
+  .picker .lab.a { color: #2f6f9f; font-weight: 700; }
+  .picker .lab.b { color: #b2622a; font-weight: 700; }
+  button.pill { font: inherit; font-size: .85em; background: #fff; color: #444;
+                border: 1px solid #bbb; border-radius: 2px; padding: .2rem .6rem; cursor: pointer; }
+  button.pill:hover { border-color: #444; }
+  button.pill[aria-pressed="true"] { background: #333; border-color: #333; color: #fff; }
+  #cmp-a button.pill[aria-pressed="true"] { background: #2f6f9f; border-color: #2f6f9f; }
+  #cmp-b button.pill[aria-pressed="true"] { background: #b2622a; border-color: #b2622a; }
+  button.pill:disabled { opacity: .3; cursor: not-allowed; }
+  button.pill:disabled:hover { border-color: #bbb; }
+  button.pill:focus-visible { outline: 2px solid #2f6f9f; outline-offset: 2px; }
+  .cmp-split { display: flex; flex-wrap: wrap; gap: 1.4rem; align-items: flex-start; }
+  .tiles { display: flex; flex-wrap: wrap; gap: .4rem; margin: .4rem 0; }
+  .tile { border: 1px solid #ddd; padding: .4rem .7rem; min-width: 104px; }
+  .tile .k { display: block; color: #666; font-size: .78em; margin-bottom: .1rem; }
+  .tile .v { font-size: 1.25em; font-variant-numeric: tabular-nums; }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+<div id="page-overlay"></div>
+
+<div class="layout">
+
+<nav class="side" aria-label="Report sections">
+  <div class="side-title">Weighting diagnostics</div>
+  {% if panes|length > 1 %}
+  <div class="toggle" role="group" aria-label="Profile shown in the per-profile sections">
+    <span class="lab">Profile</span>
+    {% for pane in panes %}
+    <button type="button" data-profile="{{ pane.key }}" aria-pressed="{{ 'true' if loop.first else 'false' }}">{{ pane.profile }}</button>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <ol class="outline">
+    <li><a href="#definitions" data-sec="definitions"><span class="n"></span>Definitions</a></li>
+    {% for s in outline %}
+    {% if loop.changed(s.per_profile) and s.per_profile %}
+    <li class="group">Per profile</li>
+    {% endif %}
+    <li{% if s.per_profile %} class="pp"{% endif %}>
+      <a href="#sec-{{ s.key }}{% if s.per_profile %}-{{ panes[0].key }}{% endif %}" data-sec="{{ s.key }}"><span class="n">{{ s.num }}</span>{{ s.title }}</a>
+    </li>
+    {% endfor %}
+  </ol>
+</nav>
+
+<main>
+<h1>{{ title }}</h1>
+{% if run_meta %}
+<table class="runmeta">
+{% for label, value in run_meta.items() %}
+  <tr><td class="k">{{ label }}</td><td>{{ value }}</td></tr>
+{% endfor %}
+</table>
+{% endif %}
+
+<section id="definitions" data-sec="definitions">
+<h2 class="unnumbered">Definitions</h2>
+<p class="lede">Every statistic this report uses. Hover a dotted-underlined header for a short definition, or click it to open the full one here.</p>
+{% for group, terms in glossary %}
+<details class="defs">
+<summary>{{ group }}</summary>
+<dl class="glossary">
+{% for t in terms %}
+  <div id="g-{{ t.key }}">
+    <dt>{{ t.name }} <span class="abbr">{{ t.label }}</span></dt>
+    <dd><div class="formula">{{ t.formula }}</div><div>{{ t.measures }}</div></dd>
+  </div>
+{% endfor %}
+</dl>
+</details>
+{% endfor %}
+</section>
+
+<section id="sec-comparison" data-sec="comparison">
+<h2>{{ nums.comparison }} &mdash; {{ titles.comparison }}</h2>
+<p class="lede">One row per fitted profile. Every profile is balanced to the same controls, so the weight totals should agree.</p>
+<details class="more"><summary>How to read this</summary><div><ul>
+  <li><b>Two rows that match exactly</b> mean both profiles selected the same records, so two weighting runs produced the same result. Check whether the settings that distinguish the profiles have any effect.</li>
+  <li><b>&Sigma; weights</b> should agree across profiles to within a fraction of a percent, since all profiles are weighted to the same regional totals. A profile well below the others is not reaching its targets.</li>
+  <li><b>ESS %</b> and <b>max/med</b> are lower for a profile that includes more records, because the same population is spread across more of them.</li>
+</ul></div></details>
+{{ comparison_table }}
+</section>
+
+{% if nums.crosswalk is defined %}
+<section id="sec-crosswalk" data-sec="crosswalk">
+<h2>{{ nums.crosswalk }} &mdash; {{ titles.crosswalk }}</h2>
+<p class="lede">How PUMAs are allocated to the target zones. Hover a zone for each profile's sample count.</p>
+<details class="more"><summary>How to read this</summary><div>
+  The crosswalk lets any target geography be used, whatever its relation to PUMA boundaries. Where a
+  zone and a PUMA overlap, the PUMA is split by the block-group population share that falls in the
+  zone; where a PUMA lies entirely inside one zone, its allocation is 100% or 0%. Boundaries are
+  simplified to about 10&nbsp;m, which is not visible at this scale and keeps the file small.
+</div></details>
+{{ crosswalk_section }}
+{{ crosswalk_table }}
+</section>
+{% endif %}
+
+{% if nums.cascade is defined %}
+<section id="sec-cascade" data-sec="cascade">
+<h2>{{ nums.cascade }} &mdash; {{ titles.cascade }}</h2>
+<p class="lede">Records included and records weighted at each level, for every profile.</p>
+<details class="more"><summary>How to read this</summary><div><ul>
+  <li><b>Usable</b>: meets the profile's criteria for that level.</li>
+  <li><b>Weighted</b>: usable and assigned a weight.</li>
+  <li><b>Unweighted</b>: usable but assigned no weight. Below the household level, this means the record's household was excluded, so a person can be usable and still have no weight. At the household level, it means the household is outside every control zone (see the coverage table below).</li>
+</ul></div></details>
+{{ cascade_table }}
+
+<h3>Redistribution of dropped records' weight</h3>
+<p class="lede">Dropped records' weight is redistributed among the remaining records at that level. The table shows each record's {{ term("ratio", "weight divided by the weight of the record it belongs to") }}, such as a person's weight divided by their household's; 1.0 means nothing was dropped.</p>
+<details class="more"><summary>How to read this</summary><div>
+  Every remaining record that belongs to the same higher-level record is scaled up by the same factor. A maximum of 10 means one
+  person carries the weight of a ten-person household. This is arithmetically correct, but records with
+  high ratios have a large influence on estimates, so check how many there are.
+</div></details>
+{{ redistribution_table }}
+
+{% if inheritance_table %}
+<h3>How each level's weights relate to the level above</h3>
+<p class="lede">For each set of weights, whether the weights at a level were copied from the level above, redistributed from it, or adjusted afterwards. Includes weights supplied with the survey.</p>
+<details class="more"><summary>How to read this</summary><div><ul>
+  <li><b>Copied</b>: every record has the same weight as the record it belongs to. Comparing weight sets at this level shows nothing that the level above does not.</li>
+  <li><b>Redistributed</b>: records that belong to the same higher-level record, such as the trips on one day, are all scaled by the same factor, so totals at this level stay consistent with the level above.</li>
+  <li><b>Adjusted per record</b>: records that belong to the same higher-level record were scaled by different factors after the weights were assigned. Totals calculated at this level will not match the same totals calculated at the level above; for example, trip-based totals will not match day-based totals. <b>Groups with unequal adjustments</b> counts the higher-level records where this occurs, and <b>Largest difference</b> is the largest ratio between two factors within one of them.</li>
+</ul>Days are excluded, because a person's weight is divided among their days by design.</div></details>
+{{ inheritance_table }}
+{% endif %}
+
+<h3>Day split identity</h3>
+<p class="lede">A person's weight is divided among their usable days, so each person's day weights must add up to the person weight.</p>
+<details class="more"><summary>How to read this</summary><div>
+  Any gap larger than rounding error indicates a software defect. <b>With no usable lower-level record</b>
+  counts persons who have a weight but no usable day. Their weight is not passed down to the day level, rather
+  than being moved to other persons, which would distort day-level totals.
+</div></details>
+{{ split_identity_table }}
+
+<h3>Control geography coverage</h3>
+<p class="lede">Households outside every control zone cannot be assigned a weight.</p>
+{{ coverage_table }}
+</section>
+{% endif %}
+
+{% if nums.comparer is defined %}
+<section id="sec-comparer" data-sec="comparer">
+<h2>{{ nums.comparer }} &mdash; {{ titles.comparer }}</h2>
+<p class="lede">Compare any two weight sets at any level: this run's profiles against each other, or against weights supplied with the survey.</p>
+<div class="caveat">
+  <b>This is not a validation.</b> Weighting matches totals, not individual records, so two valid methods
+  can disagree on most records. The chart shows whether that disagreement is consistent across the range
+  of weights or larger at one end.
+</div>
+<details class="more"><summary>How to read this</summary><div><ul>
+  <li>The dashed line marks equal weights. The solid line is the {{ term("rma", "reduced major axis fit") }}; its slope compares how widely the two sets of weights vary.</li>
+  <li>Points are a sample of up to 700 records. The tiles and the line use every record that has a weight in both sets.</li>
+  <li>The chart below the tiles groups records into ten bands by their weight in B. Each bar shows how far apart the two sets are within that band.</li>
+  <li>A button is greyed out when that combination has no records to compare.</li>
+</ul></div></details>
+
+<div class="picker" id="cmp-picker">
+  <div class="row"><span class="lab">Level</span><span id="cmp-levels"></span></div>
+  <div class="row"><span class="lab a">A</span><span id="cmp-a"></span></div>
+  <div class="row"><span class="lab b">B</span><span id="cmp-b"></span></div>
+</div>
+
+<h3 id="cmp-title"></h3>
+<p class="note" id="cmp-sub"></p>
+<div class="cmp-split">
+  <div class="chart" id="cmp-scatter" style="width: 560px; height: 430px;"></div>
+  <div style="flex: 1; min-width: 320px;">
+    <div class="tiles">
+      <div class="tile"><span class="k">{{ term("fold", "Median difference") }}</span><span class="v" id="t-med"></span></div>
+      <div class="tile"><span class="k">{{ term("fold", "p90 difference") }}</span><span class="v" id="t-p90"></span></div>
+      <div class="tile"><span class="k">{{ term("fold", "Max difference") }}</span><span class="v" id="t-max"></span></div>
+      <div class="tile"><span class="k">{{ term("rho") }}</span><span class="v" id="t-rho"></span></div>
+      <div class="tile"><span class="k">{{ term("r2") }}</span><span class="v" id="t-r2"></span></div>
+    </div>
+    <div class="chart" id="cmp-stability" style="width: 100%; max-width: 440px; height: 240px;"></div>
+    <p class="note">Median and {{ term("iqr") }} of ln(A/B) within each decile of B.</p>
+  </div>
+</div>
+</section>
+{% endif %}
+
+{% for pane in panes %}
+<div class="profile-pane" data-profile="{{ pane.key }}"{% if not loop.first %} style="display:none"{% endif %}>
+
+{% if pane.imputation_table %}
+<section id="sec-imputation-{{ pane.key }}" data-sec="imputation">
+<h2>{{ nums.imputation }} &mdash; {{ titles.imputation }} &mdash; <span class="profile-name">{{ pane.profile }}</span></h2>
+<p class="lede">Estimated probabilities used in place of missing control values, within this weighting run only. <b>This is not the survey <code>imputation</code> step and does not change survey data.</b></p>
+<details class="more"><summary>How to read this</summary><div>
+  <p>The survey <code>imputation</code> step assigns a value to each missing field and saves it to the
+  survey tables. The values described here are used only within this weighting run and are discarded
+  afterwards. The control totals come from PUMS and are not changed.</p>
+  <p>A household with a missing control value would still count toward the total number of households,
+  but would be left out of that control's target. Instead, the missing value is replaced with
+  probabilities from a Random Forest model trained on complete PUMS records, for example 0.6&thinsp;male
+  and 0.4&thinsp;female (fractional imputation, Kim &amp; Fuller 2004). This keeps the household in that
+  target; it is not a statement about the household itself.</p>
+  <p>The table shows how much of the sample relies on these estimates and how reliable the model is.
+  Controls with more than 25% missing values are flagged. If model quality is also low, consider removing
+  the control as a target, because its target is then met largely by estimated values.
+  {{ term("logloss") }} below 0.5 and {{ term("f1") }} above 0.7 are good. A dash means no model was
+  fitted, either because the control had no missing values or because a category had too few records to
+  test.</p>
+</div></details>
+{{ pane.imputation_table }}
+{% if pane.imputation_chart %}
+<p class="note">Category shares for controls with missing values. Each survey bar is split into reported
+and estimated values, and the PUMS bar is the reference. All counts are unweighted. A large gap suggests
+the model's estimates do not suit the survey population.</p>
+<div class="chart">{{ pane.imputation_chart }}</div>
+{% endif %}
+</section>
+{% endif %}
+
+<section id="sec-balancer-{{ pane.key }}" data-sec="balancer">
+<h2>{{ nums.balancer }} &mdash; {{ titles.balancer }} &mdash; <span class="profile-name">{{ pane.profile }}</span></h2>
+<p class="lede">Whether weighting succeeded in each zone, how closely weighted totals match their targets, and how much the weights vary.</p>
+<details class="more"><summary>How to read this</summary><div><ul>
+  <li><b>Conv?</b>: whether weighting reached the required accuracy within the maximum number of iterations.</li>
+  <li><b>Household / Person</b>: total households and persons, from the first household-level and person-level control. If either does not match, consider increasing the importance of <code>h_total</code> or <code>p_total</code>. Surveys tend to under-sample large households, which lowers the person total.</li>
+  <li><b>{{ term("cv") }}</b> depends heavily on the number and type of controls: below 0.6 is typical only with 2&ndash;3 household controls; 0.6&ndash;1.0 with a moderate specification of 4&ndash;6; 1.0&ndash;1.5 with many controls, including many person-level controls, and is not a problem if the targets are met; above 1.5, check for conflicting controls or categories with few records.</li>
+  <li><b>{{ term("ess") }}</b> depends on the specification too: above 60% usually needs few controls or a very large sample; 40&ndash;60% is typical for a travel diary survey balancing 6&ndash;10 controls including person-level ones; 30&ndash;40% is common with many person-level controls; below 30% means a few records probably carry much of the weight, so consider combining categories, removing conflicting controls, or changing the expansion factor limits.</li>
+  <li>Each person-level control (age, gender, employment, commute mode, and so on) is counted per household, and each one added gives the household weights more targets to meet at once. With five or more, ESS is usually 35&ndash;55%.</li>
+</ul></div></details>
+{{ pane.balancer_performance_table }}
+</section>
+
+<section id="sec-quality-{{ pane.key }}" data-sec="quality">
+<h2>{{ nums.quality }} &mdash; {{ titles.quality }} &mdash; <span class="profile-name">{{ pane.profile }}</span></h2>
+<p class="lede">How much the weights vary, and how far weighting moved them from their starting values.</p>
+<details class="more"><summary>How to read this</summary><div>
+  Weights should be roughly log-normal. The charts use a log scale, so they should look roughly
+  bell-shaped. Several peaks are not necessarily a problem, but suggest that a few variables, such as one
+  large control category, are driving the weights. {{ term("ef", "Expansion factors") }} at the configured
+  limits mean weighting would have moved those households further if allowed. The sample is too small for
+  the controls, and some categories or zones should be combined.
+</div></details>
+{{ pane.weight_quality_table }}
+<div class="chart">{{ pane.violins_html }}</div>
+</section>
+
+{% if pane.ef_tradeoff_section %}
+<section id="sec-ef_tradeoff-{{ pane.key }}" data-sec="ef_tradeoff">
+<h2>{{ nums.ef_tradeoff }} &mdash; {{ titles.ef_tradeoff }} &mdash; <span class="profile-name">{{ pane.profile }}</span></h2>
+<p class="lede">Target fit against weight quality across a grid of <code>max_expansion_factor</code> values. The dashed line marks the value this run used.</p>
+<details class="more"><summary>How to read this</summary><div>
+  A lower {{ term("ef") }} limit gives less variable weights, with lower {{ term("cv") }} and higher
+  {{ term("ess") }}, but targets may be matched less closely, with higher {{ term("mape") }} and
+  {{ term("p90") }}.
+</div></details>
+{{ pane.ef_tradeoff_section }}
+</section>
+{% endif %}
+
+<section id="sec-fit_bars-{{ pane.key }}" data-sec="fit_bars">
+<h2>{{ nums.fit_bars }} &mdash; {{ titles.fit_bars }} &mdash; <span class="profile-name">{{ pane.profile }}</span></h2>
+<p class="lede">{{ term("pcterr", "Percent error") }} for every control category in every zone. Hover a bar for the absolute values.</p>
+<p class="note">
+  Bar: % error. Red: the error exceeds 1 {{ term("se") }} of the PUMS target. Whiskers: &plusmn;1 SE.
+  Grey bars are within the target's own sampling uncertainty, so the gap may be in the target rather than the weighting.
+</p>
+<div class="chart">{{ pane.fit_bars_html }}</div>
+</section>
+
+<section id="sec-sparsity-{{ pane.key }}" data-sec="sparsity">
+<h2>{{ nums.sparsity }} &mdash; {{ titles.sparsity }} &mdash; <span class="profile-name">{{ pane.profile }}</span></h2>
+<p class="lede">Unweighted sample counts per control category and zone, with the PUMS target in italic parentheses. Cells under 30 records are red.</p>
+<details class="more"><summary>How to read this</summary><div><ul>
+  <li>A zone with a low count overall is a candidate for merging with another. Merged zones need not be adjacent, but adjacency is easier to interpret and usually matches the wider geography.</li>
+  <li>A category low in every zone is a candidate for a global merge, such as 65+ in place of 65&ndash;74, 75&ndash;84 and 85+.</li>
+  <li>A low count in one zone and category can be merged for that zone alone, but category definitions that differ between zones are hard to track and interpret.</li>
+  <li>There is no fixed threshold for a low count. The warning here is at 30 records; 10 is a common minimum for reliable estimates.</li>
+  <li>A low count matters less when the category is also a small share of the population. If the PUMS target is low too, the category is a strong candidate for merging.</li>
+</ul></div></details>
+{{ pane.sparsity_html }}
+</section>
+
+</div>
+{% endfor %}
+</main>
+</div>
+
+<script>
+(function () {
+  var DATA = {{ comparison_json }};
+  if (!DATA || !DATA.pairs || !DATA.pairs.length) return;
+
+  var A_COLOR = '#2f6f9f', B_COLOR = '#b2622a', GREY = '#888', INK = '#333';
+  var LABEL = {}, LEVEL_LABEL = {};
+  DATA.sets.forEach(function (s) { LABEL[s.name] = s.label; });
+  DATA.levels.forEach(function (l) { LEVEL_LABEL[l.name] = l.label; });
+
+  var state = { level: DATA.pairs[0].level, a: DATA.pairs[0].a, b: DATA.pairs[0].b };
+
+  /* Stored points are [ln(row.a), ln(row.b)] in the order the row was stored.
+     The plot wants x = the chosen B and y = the chosen A, so which element is
+     which depends on whether the request matched that order. Written out both
+     ways: getting this backwards draws a plausible cloud on the wrong axes.
+     The fit reverses exactly: ln b = -c/m + (1/m) ln a. */
+  function resolve(row, forward) {
+    var x = [], y = [], i, pt;
+    for (i = 0; i < row.pts.length; i++) {
+      pt = row.pts[i];
+      if (forward) {
+        x.push(Math.exp(pt[1]));   // B is row.b, the second element
+        y.push(Math.exp(pt[0]));   // A is row.a, the first
+      } else {
+        x.push(Math.exp(pt[0]));   // B is row.a, the first element
+        y.push(Math.exp(pt[1]));   // A is row.b, the second
+      }
+    }
+    var m = row.slope, c = row.icept;
+    return {
+      level: row.level, n: row.n, med: row.med, p90: row.p90, max: row.max,
+      rho: row.rho, r2: row.r2,
+      a: forward ? row.a : row.b,
+      b: forward ? row.b : row.a,
+      slope: forward ? m : (m ? 1 / m : 0),
+      icept: forward ? c : (m ? -c / m : 0),
+      dec: forward ? row.decAB : row.decBA,
+      x: x, y: y
+    };
+  }
+
+  function findPair(level, a, b) {
+    for (var i = 0; i < DATA.pairs.length; i++) {
+      var r = DATA.pairs[i];
+      if (r.level !== level) continue;
+      if (r.a === a && r.b === b) return resolve(r, true);
+      if (r.a === b && r.b === a) return resolve(r, false);
+    }
+    return null;
+  }
+
+  function buildPicker() {
+    var rows = [
+      ['cmp-levels', DATA.levels.map(function (l) { return l.name; }), 'level', LEVEL_LABEL],
+      ['cmp-a', DATA.sets.map(function (s) { return s.name; }), 'a', LABEL],
+      ['cmp-b', DATA.sets.map(function (s) { return s.name; }), 'b', LABEL]
+    ];
+    rows.forEach(function (spec) {
+      var host = document.getElementById(spec[0]);
+      host.innerHTML = spec[1].map(function (v) {
+        return '<button class="pill" type="button" data-v="' + v + '">' + spec[3][v] + '</button>';
+      }).join(' ');
+      host.querySelectorAll('button').forEach(function (btn) {
+        btn.addEventListener('click', function () { state[spec[2]] = btn.dataset.v; render(); });
+      });
+    });
+  }
+
+  /* A combination with no pair is disabled, never substituted: choosing on one
+     side must leave the other side alone. */
+  function syncPicker() {
+    document.querySelectorAll('#cmp-levels button').forEach(function (btn) {
+      btn.setAttribute('aria-pressed', String(state.level === btn.dataset.v));
+      btn.disabled = !findPair(btn.dataset.v, state.a, state.b);
+    });
+    document.querySelectorAll('#cmp-a button').forEach(function (btn) {
+      btn.setAttribute('aria-pressed', String(state.a === btn.dataset.v));
+      btn.disabled = btn.dataset.v === state.b || !findPair(state.level, btn.dataset.v, state.b);
+    });
+    document.querySelectorAll('#cmp-b button').forEach(function (btn) {
+      btn.setAttribute('aria-pressed', String(state.b === btn.dataset.v));
+      btn.disabled = btn.dataset.v === state.a || !findPair(state.level, state.a, btn.dataset.v);
+    });
+  }
+
+  var LAYOUT = {
+    margin: { l: 58, r: 12, t: 10, b: 48 }, showlegend: true,
+    legend: { x: 0.02, y: 0.98, bgcolor: 'rgba(255,255,255,.8)', font: { size: 10 } },
+    font: { size: 11, color: INK }, hovermode: 'closest', plot_bgcolor: '#fff'
+  };
+  var CONFIG = { displayModeBar: false, responsive: false };
+
+  function scatter(d) {
+    var xlo = Math.min.apply(null, d.x), xhi = Math.max.apply(null, d.x);
+    var lo = Math.min(xlo, Math.min.apply(null, d.y));
+    var hi = Math.max(xhi, Math.max.apply(null, d.y));
+    var traces = [
+      { x: d.x, y: d.y, mode: 'markers', type: 'scattergl', name: 'records (sample)',
+        marker: { size: 4, color: A_COLOR, opacity: 0.32 },
+        hovertemplate: 'B %{x:,.0f}<br>A %{y:,.0f}<extra></extra>' },
+      { x: [lo, hi], y: [lo, hi], mode: 'lines', name: 'equal weight',
+        line: { color: GREY, width: 1.2, dash: 'dash' }, hoverinfo: 'skip' }
+    ];
+    if (d.slope) {
+      traces.push({
+        x: [xlo, xhi],
+        y: [Math.exp(d.icept + d.slope * Math.log(xlo)), Math.exp(d.icept + d.slope * Math.log(xhi))],
+        mode: 'lines', name: 'RMA fit, slope ' + d.slope.toFixed(2),
+        line: { color: B_COLOR, width: 2 }, hoverinfo: 'skip'
+      });
+    }
+    Plotly.react('cmp-scatter', traces, Object.assign({}, LAYOUT, {
+      xaxis: { type: 'log', title: { text: LABEL[d.b] + ' weight (B)' }, gridcolor: '#eee' },
+      yaxis: { type: 'log', title: { text: LABEL[d.a] + ' weight (A)' }, gridcolor: '#eee' }
+    }), CONFIG);
+  }
+
+  function strip(d) {
+    var idx = d.dec.map(function (_, i) { return i + 1; });
+    Plotly.react('cmp-stability', [
+      { x: idx, y: d.dec.map(function (k) { return k[1]; }),
+        customdata: d.dec.map(function (k) { return k[2]; }),
+        error_y: { type: 'data', array: d.dec.map(function (k) { return k[2] / 2; }),
+                   color: A_COLOR, thickness: 8, width: 0 },
+        mode: 'markers', type: 'scatter',
+        marker: { size: 12, color: INK, symbol: 'line-ew-open', line: { width: 2 } },
+        hovertemplate: 'decile %{x}<br>median ln(A/B) %{y:.2f}<br>IQR %{customdata:.2f}<extra></extra>' }
+    ], Object.assign({}, LAYOUT, {
+      showlegend: false, margin: { l: 48, r: 12, t: 10, b: 44 },
+      xaxis: { title: { text: 'decile of ' + LABEL[d.b] + ' weight (low to high)' },
+               tickvals: idx, gridcolor: '#eee' },
+      yaxis: { title: { text: 'ln(A/B)' }, zeroline: true, zerolinecolor: '#bbb', gridcolor: '#eee' }
+    }), CONFIG);
+  }
+
+  function fold(v) {
+    var digits = v < 10 ? 2 : (v < 100 ? 1 : 0);
+    return v.toLocaleString(undefined, { maximumFractionDigits: digits, minimumFractionDigits: digits }) + '×';
+  }
+
+  function render() {
+    syncPicker();
+    var d = findPair(state.level, state.a, state.b);
+    if (!d) return;
+    document.getElementById('cmp-title').textContent =
+      LABEL[d.a] + ' vs ' + LABEL[d.b] + ' — ' + LEVEL_LABEL[d.level];
+    document.getElementById('cmp-sub').textContent =
+      d.n.toLocaleString() + ' records carry a weight in both sets.';
+    document.getElementById('t-med').textContent = fold(d.med);
+    document.getElementById('t-p90').textContent = fold(d.p90);
+    document.getElementById('t-max').textContent = fold(d.max);
+    document.getElementById('t-rho').textContent = d.rho.toFixed(2);
+    document.getElementById('t-r2').textContent = d.r2.toFixed(2);
+    scatter(d);
+    strip(d);
+  }
+
+  buildPicker();
+  render();
+})();
+</script>
+
+<script>
+(function () {
+  var panes = document.querySelectorAll('.profile-pane');
+  var buttons = document.querySelectorAll('.toggle button');
+  var active = panes.length ? panes[0].dataset.profile : null;
+  var smooth = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+
+  function activePane() {
+    return document.querySelector('.profile-pane[data-profile="' + active + '"]');
+  }
+
+  /* Per-profile entries point at the pane on show; one it lacks is greyed out. */
+  function syncOutline() {
+    var pane = activePane();
+    document.querySelectorAll('.outline li.pp').forEach(function (li) {
+      var sec = li.querySelector('a').dataset.sec;
+      li.classList.toggle('absent', !(pane && pane.querySelector('[data-sec="' + sec + '"]')));
+    });
+  }
+
+  function show(key) {
+    active = key;
+    panes.forEach(function (p) {
+      p.style.display = p.dataset.profile === key ? '' : 'none';
+    });
+    buttons.forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.dataset.profile === key));
+    });
+    syncOutline();
+  }
+  buttons.forEach(function (b) {
+    b.addEventListener('click', function () { show(b.dataset.profile); });
+  });
+
+  document.querySelectorAll('.outline li.pp a').forEach(function (a) {
+    a.addEventListener('click', function (e) {
+      var pane = activePane();
+      var target = pane && pane.querySelector('[data-sec="' + a.dataset.sec + '"]');
+      if (!target) return;
+      e.preventDefault();
+      target.scrollIntoView({ behavior: smooth, block: 'start' });
+      history.replaceState(null, '', '#' + target.id);
+    });
+  });
+
+  /* Highlight the section being read. Sections in hidden panes never intersect. */
+  var links = {};
+  document.querySelectorAll('.outline a[data-sec]').forEach(function (a) { links[a.dataset.sec] = a; });
+  if ('IntersectionObserver' in window) {
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        Object.keys(links).forEach(function (k) { links[k].classList.remove('current'); });
+        var link = links[entry.target.dataset.sec];
+        if (link) link.classList.add('current');
+      });
+    }, { rootMargin: '0px 0px -75% 0px' });
+    document.querySelectorAll('section[data-sec]').forEach(function (s) { observer.observe(s); });
+  }
+
+  /* Open a definition's group before the browser follows the link to it. */
+  function openGroup(id) {
+    var target = id && document.getElementById(id);
+    var group = target && target.closest('details');
+    if (group) group.open = true;
+    return target;
+  }
+  document.querySelectorAll('a.term').forEach(function (a) {
+    a.addEventListener('click', function () { openGroup(a.getAttribute('href').slice(1)); });
+  });
+  if (location.hash.indexOf('#g-') === 0) {
+    var linked = openGroup(location.hash.slice(1));
+    if (linked) linked.scrollIntoView({ block: 'start' });
+  }
+
+  syncOutline();
+})();
+
+window.addEventListener('load', function() {
+  requestAnimationFrame(function() {
+    var o = document.getElementById('page-overlay');
+    if (o) o.remove();
+  });
+});
+</script>
+
+</body>
+</html>

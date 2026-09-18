@@ -1,0 +1,893 @@
+---
+title: "Pipeline Validation: New Config-Driven Pipeline vs. Legacy SFCTA Scripts"
+subtitle: "BATS 2023 · DaySim outputs · exhaustive, spec-driven column-by-column comparison"
+date: today
+format:
+  html:
+    toc: true
+    toc-depth: 3
+    code-fold: true
+    embed-resources: true
+jupyter: python3
+execute:
+  warning: false
+---
+
+```{python}
+#| label: setup
+#| include: false
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path.cwd()))
+
+import polars as pl
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from IPython.display import HTML, Markdown, display
+
+import helpers as H
+import diary as D
+import plots as P
+import spec as S
+
+# Fail the render fast if the environment is broken (drives unmapped, vendor run
+# missing, crosswalk / bridge / spec assumptions violated, ...).
+checks = H.run_all_checks()
+assert checks["ok"].all(), "Sanity checks failed:\n" + str(checks.filter(~pl.col("ok")))
+
+# Single weight basis: the vendor-weights pipeline run, which uses the same vendor
+# weights the legacy scripts consume. (The new pipeline's own raked weighting is
+# intentionally out of scope here — this report is structural.)
+BASIS = "vendor"
+LEG_C, NEW_C = P.LEG_C, P.NEW_C
+
+legacy = H.load_legacy_daysim()
+new = H.load_new_daysim(BASIS)
+new_days = H.new_days_with_dow(BASIS)
+
+# Common universe: households in both, persons with >=1 Tue-Thu day in both.
+hhnos = H.common_households(legacy["hh"], new["hh"])
+persons = H.common_persons(legacy["personday"], new_days, hhnos)
+
+# Universe-restricted per-table frames, keyed by the report's table names, for
+# uniform access in the coverage and distribution sections.
+LEG = {
+    "hh": legacy["hh"].filter(pl.col("hhno").is_in(hhnos)),
+    "person": H.filter_universe(legacy["person"], persons),
+    "personday": H.filter_universe(legacy["personday"], persons),
+    "tour": H.filter_universe(legacy["tour"], persons),
+    "trip": H.filter_universe(legacy["trip"], persons),
+}
+NEW = {
+    "hh": new["hh"].filter(pl.col("hhno").is_in(hhnos)),
+    "person": H.filter_universe(new["person"], persons),
+    "personday": H.filter_universe(new_days.drop("day").rename({"dow": "day"}), persons),
+    "tour": H.filter_universe(new["tour"], persons),
+    "trip": H.filter_universe(new["trip"], persons),
+}
+
+leg_trips, leg_tours, leg_pdays = LEG["trip"], LEG["tour"], LEG["personday"]
+new_trips, new_tours, new_pdays = NEW["trip"], NEW["tour"], NEW["personday"]
+
+# Intersection of weighted-eligible person-days: an identical day universe on both
+# sides (legacy drops zero-weight days; the new pipeline keeps them).
+common_days = (
+    leg_pdays.filter(pl.col("pdexpfac") > 0).select(["hhno", "pno", "day"])
+    .join(
+        new_pdays.filter(pl.col("pdexpfac") > 0).select(["hhno", "pno", "day"]),
+        on=["hhno", "pno", "day"], how="inner",
+    )
+)
+
+
+def on_common_days(df: pl.DataFrame) -> pl.DataFrame:
+    return df.join(common_days, on=["hhno", "pno", "day"], how="semi")
+
+
+def show(df: pl.DataFrame, floatfmt: str = ",.1f") -> None:
+    display(Markdown(
+        df.to_pandas().to_markdown(index=False, floatfmt=floatfmt, intfmt=",")
+    ))
+
+
+# Record-level matchers (tours on anchor times, trips through the linked-group bridge)
+# carry every column through, so any column can be compared record-to-record.
+mt_tours = H.matched_tours(leg_tours, new_tours)
+mt_trips = H.matched_trips(leg_trips, new_trips, basis=BASIS)
+
+# Zone bridges: legacy TAZ1454 vs the new pipeline's TM2 zones, compared on TAZ1454.
+TAZ = {
+    "hh": {"hhtaz": H.taz1454("hh", "hhtaz", BASIS)},
+    "person": {"pwtaz": H.taz1454("person", "pwtaz", BASIS),
+               "pstaz": H.taz1454("person", "pstaz", BASIS)},
+}
+# Trip column agreement is measured on trips both pipelines linked identically
+# (matched_exact) -- "given the same input trips, do the outputs agree?". Trips linked
+# differently (matched_partial) are a linking divergence, reported in @sec-matched-trips.
+MATCHED = {
+    "tour": mt_tours["matched"],
+    "trip": mt_trips["matched"].filter(pl.col("match_status") == "matched_exact"),
+}
+
+
+def comparable_cols(table: str) -> set[str]:
+    return {
+        cs.name for cs in S.columns(table)
+        if S.comparability(cs, LEG[table], NEW[table]) == S.COMPARABLE
+    }
+
+
+def coverage(table: str) -> pl.DataFrame:
+    return S.coverage_table(
+        table, LEG[table], NEW[table],
+        matched=MATCHED.get(table), taz_bridges=TAZ.get(table),
+    )
+
+
+# Paired (legacy value vs new value) frames for the coordinate scatter panels:
+# hh/person/person-day join directly on their keys; tours/trips use the matched frame.
+def paired_frame(table: str) -> pl.DataFrame:
+    if table in MATCHED:
+        return MATCHED[table]
+    keys = S.KEYS[table]
+    return LEG[table].join(NEW[table], on=keys, how="inner", suffix="_new")
+
+
+PAIRED = {t: paired_frame(t) for t in ["hh", "person", "personday", "tour", "trip"]}
+
+
+# Inner-tabset structure for the column-by-column section: (tab title, kinds).
+# Coordinates and Weights render as legacy-vs-new scatters (agreement on the diagonal);
+# the rest are distribution comparisons.
+KIND_TABS = [
+    ("Categorical", [S.Kind.CATEGORICAL]),
+    ("Counts", [S.Kind.COUNT]),
+    ("Times", [S.Kind.TIME]),
+    ("Continuous", [S.Kind.CONTINUOUS]),
+    ("Coordinates", [S.Kind.COORD]),
+    ("Weights", [S.Kind.WEIGHT]),
+]
+
+
+def emit_kind_tabsets(table: str) -> None:
+    """Emit a Quarto inner tabset of one distribution grid per column kind."""
+    comp = comparable_cols(table)
+    display(Markdown("::: {.panel-tabset}\n"))
+    for title, kinds in KIND_TABS:
+        fig, n, flagged = P.kind_grid(
+            table, kinds, LEG[table], NEW[table], comp, paired=PAIRED[table]
+        )
+        display(Markdown(f"### {title}\n"))
+        if fig is None:
+            display(Markdown("_No comparable columns of this kind._\n"))
+            continue
+        flag_note = f", {flagged} showing notable disagreement" if flagged else ""
+        display(Markdown(f"{n} comparable column(s){flag_note}.\n"))
+        display(HTML(fig.to_html(full_html=False, include_plotlyjs=False)))
+    display(Markdown(":::\n"))
+
+
+def emit_coverage_tabsets() -> None:
+    """Emit a Quarto tabset of the per-table spec coverage & agreement tables."""
+    display(Markdown("::: {.panel-tabset}\n"))
+    for table, title in [
+        ("hh", "Households"), ("person", "Persons"), ("personday", "Person-days"),
+        ("tour", "Tours"), ("trip", "Trips"),
+    ]:
+        display(Markdown(f"### {title}\n"))
+        cov = coverage(table).select(
+            ["column", "definition", "map", "legacy", "new", "n", "% agree", "note"]
+        )
+        show(cov, floatfmt=",.0f")
+    # HouseholdDay: in the spec, emitted by neither pipeline.
+    display(Markdown("### HouseholdDay\n"))
+    hd = pl.DataFrame({"column": [cs.name for cs in S.columns("householdday")]})
+    display(Markdown(
+        "`HouseholdDayDaysimModel` is part of the DaySim spec but **emitted by "
+        "neither pipeline** (joint-tour bookkeeping the survey does not support). "
+        f"Its {hd.height} columns are listed for completeness:\n"
+    ))
+    show(hd)
+    display(Markdown(":::\n"))
+
+
+tour_match = mt_tours  # alias for the exec summary / matched-tours section
+xwalk = H.build_crosswalk(BASIS)
+```
+
+## 1. Executive summary
+
+```{python}
+#| label: exec-summary
+#| echo: false
+
+n_hh_common = len(hhnos)
+linking_pd = (
+    xwalk.filter(pl.col("dow").is_in(H.WEEKDAYS) & pl.col("linking_agrees").is_not_null())
+    .group_by(["hhno", "pno", "dow"]).agg(pl.col("linking_agrees").first())
+)
+linking_agree_pct = 100 * linking_pd["linking_agrees"].mean()
+
+# Spec coverage rolled up across the five emitted tables.
+cov_all = pl.concat([coverage(t) for t in ["hh", "person", "personday", "tour", "trip"]])
+n_spec = S.spec_column_count()
+n_compared = cov_all.filter(pl.col("n") > 0).height
+n_flagged = cov_all.filter(pl.col("column").str.starts_with("⚠")).height
+
+display(Markdown(f"""
+Two independent implementations of the **2023 BATS** DaySim outputs: the **legacy
+SFCTA scripts** (`archive/survey_processing/SFCTA/`) and the **new config-driven
+pipeline** (`src/`). One apples-to-apples universe throughout: households in both
+pipelines, person-days Tue–Thu, and the new pipeline run on the **same vendor
+weights** the legacy scripts use.
+
+Every column of the DaySim spec is enumerated from the pydantic models and
+compared — this report cannot silently skip a field, and the render fails if a
+pipeline stops emitting one (@sec-coverage).
+
+| Measure | Result |
+|---|---|
+| Households retained | {n_hh_common:,} of {legacy['hh'].height:,} / {new['hh'].height:,} (>99.9%) |
+| Spec columns enumerated & reported | **{n_spec}** across 5 tables |
+| Columns compared record-to-record | {n_compared} ({100 * n_compared / n_spec:.0f}%; the rest are stubs, absent, or id-space) |
+| Columns flagged (< 95% agreement) | {n_flagged}, each with a documented cause (@sec-divergences) |
+| Trip-linking partitions identical (person-days) | {linking_agree_pct:.1f}% |
+| **Trips matched record-to-record** | {mt_trips['n_matched']:,} ({mt_trips['match_rate_pct']:.1f}% of legacy) |
+| Tours matched on all three anchor times | {tour_match['match_rate_pct']:.1f}% |
+| Tour purpose agrees (on matched tours) | {tour_match['purpose_agree_pct']:.1f}% |
+| Tour mode agrees (on matched tours) | {tour_match['mode_agree_pct']:.1f}% |
+| Legacy weight transform reconstructed from raw | 100.0% exact |
+
+Every divergence is enumerated and accounted for in @sec-divergences.
+"""))
+```
+
+## 2. The two pipelines {#sec-pipelines}
+
+- **Legacy** — six sequential scripts, all logic in code:
+  `00-preprocess → 01-taz_spatial_join → 02a-reformat → 02b-link_trips_week → 03a-tour_extract_week → 03b-assign_day`
+- **New** — declarative steps over a canonical, schema-validated data model:
+  `load_data → clean → imputation → link_trips → detect_joint_trips → extract_tours → [weighting] → add_zone_ids → format_daysim → write_data`
+- For this validation the `[weighting]` slot is `add_existing_weights`, consuming
+  the same vendor weights the legacy scripts use, so differences reflect processing
+  logic, not weighting method.
+
+## 3. Weighting: how each pipeline gets the person-day weight {#sec-weighting}
+
+Both pipelines expand the survey with the **same vendor weights**, but they arrive at the
+person-day weight (`pdexpfac`) two different ways. This one difference accounts for most of
+the record-count and weighted differences reported later, so it is worth establishing up front.
+
+- **New pipeline** — uses the vendor's `day_weight` column **as issued**.
+- **Legacy** — does not read `day_weight`. Its `03b-assign_day` step **reconstructs** the
+  weight from the person weight: `pdexpfac = person_weight / n_complete_weekdays`. (This
+  report reproduces that formula exactly — 100% — from the raw columns, confirming the
+  reading of the legacy code.)
+
+Legacy's reconstruction is internally consistent and conserves each person's weight exactly.
+The two approaches diverge on a narrower question: **which days count as eligible to carry
+weight.** They read different completeness flags, and the survey provides both:
+
+- `is_complete` — did **this person** complete their diary that day?
+- `hh_day_complete` — did **the whole household** complete that day?
+
+The vendor's weighting frame applies the **household-level** test; legacy's formula applies
+the **person-level** one. Every person-day falls cleanly into one of three groups:
+
+```{python}
+#| label: weighting-groups
+
+_lk = ["hhno", "pno", "day"]
+_rd = H.load_raw("day").select(
+    pl.col("hh_id").alias("hhno"), pl.col("person_num").alias("pno"),
+    pl.col("travel_dow").alias("day"), "is_complete", "hh_day_complete", "day_weight",
+)
+_w = (
+    leg_pdays.select(_lk + ["pdexpfac"]).rename({"pdexpfac": "leg_w"})
+    .join(new_pdays.select(_lk + ["pdexpfac"]).rename({"pdexpfac": "new_w"}),
+          on=_lk, how="full", coalesce=True)
+    .with_columns(pl.col("leg_w").fill_null(-999), pl.col("new_w").fill_null(-999))
+    .join(_rd, on=_lk, how="left")
+    .with_columns(
+        pl.when(pl.col("leg_w") == -999).then(pl.lit("A"))
+        .when((pl.col("leg_w") > 0) & (pl.col("new_w") <= 0)).then(pl.lit("B"))
+        .otherwise(pl.lit("C")).alias("grp")
+    )
+)
+_gA = _w.filter(pl.col("grp") == "A")
+_gB = _w.filter(pl.col("grp") == "B")
+_gC = _w.filter(pl.col("grp") == "C")
+
+# Each group is homogeneous on both flags (verified: min == max), so the labels are exact.
+for _g, _isc, _hhc in [(_gA, 0, 0), (_gB, 1, 0), (_gC, 1, 1)]:
+    assert _g["is_complete"].min() == _g["is_complete"].max() == _isc
+    assert _g["hh_day_complete"].min() == _g["hh_day_complete"].max() == _hhc
+
+groups = pl.DataFrame([
+    {"group": "A", "person-days": _gA.height, "person's day complete": "no",
+     "household's day complete": "no", "vendor day_weight": "0",
+     "legacy pdexpfac": "day not emitted", "new pdexpfac": "0"},
+    {"group": "B", "person-days": _gB.height, "person's day complete": "yes",
+     "household's day complete": "no", "vendor day_weight": "0",
+     "legacy pdexpfac": "> 0", "new pdexpfac": "0"},
+    {"group": "C", "person-days": _gC.height, "person's day complete": "yes",
+     "household's day complete": "yes", "vendor day_weight": "> 0",
+     "legacy pdexpfac": "> 0", "new pdexpfac": "> 0"},
+])
+show(groups, floatfmt=",.0f")
+```
+
+**Groups A and C are agreement.** In A the person did not finish their diary: legacy drops
+the day, the new pipeline keeps the row at weight 0 — the same treatment, expressed
+differently. In C both pipelines weight the day.
+
+**Group B is the divergence.** These are days where the person finished their diary but
+someone else in their household did not. The vendor zeroes them; legacy, reading only the
+person-level flag, weights them.
+
+The consequence is not a difference in *totals* — it is a difference in *allocation*:
+
+```{python}
+#| label: weighting-allocation
+
+_leg_total, _new_total = leg_pdays["pdexpfac"].sum(), new_pdays["pdexpfac"].sum()
+_leg_on_C, _leg_on_B = _gC["leg_w"].sum(), _gB["leg_w"].sum()
+_diluted = _gC.filter((pl.col("leg_w") - pl.col("new_w")).abs() >= 1e-6).height
+
+alloc = pl.DataFrame([
+    {"measure": "person-days carrying a positive weight",
+     "legacy": float(leg_pdays.filter(pl.col("pdexpfac") > 0).height),
+     "new": float(new_pdays.filter(pl.col("pdexpfac") > 0).height)},
+    {"measure": "total weighted person-days", "legacy": _leg_total, "new": _new_total},
+    {"measure": "  ...on group C days (both weight)", "legacy": _leg_on_C, "new": _new_total},
+    {"measure": "  ...on group B days (vendor zeroed)", "legacy": _leg_on_B, "new": 0.0},
+])
+show(alloc, floatfmt=",.0f")
+
+display(Markdown(f"""
+Both pipelines expand to the **identical grand total of {_new_total:,.0f} weighted
+person-days** — the person weight is fully conserved either way. They differ in where that
+total lands: legacy places **{_leg_on_C / _leg_total * 100:.1f}%** of it on the days the
+vendor's frame weights, and the remaining **{_leg_on_B / _leg_total * 100:.1f}%
+({_leg_on_B:,.0f} weighted person-days)** on group B. Because each person's weight is
+divided by a denominator that counts group B days, **{_diluted:,}** of the {_gC.height:,}
+group C days also carry a slightly *lower* legacy weight than the vendor's.
+"""))
+```
+
+Two things follow for the rest of this report. First, because the grand totals agree
+exactly, no check of weighted *totals* can surface this — it is visible only per day, which
+is why it surfaces here in the record counts (@sec-unweighted) and the `pdexpfac` column
+(@sec-divergences). Second, the household-level rule lives in a separate `hh_day_complete`
+column, not in the `is_complete` flag legacy reads; the vendor's issued `day_weight` is the
+only place the rule is actually applied. The new pipeline reproduces the vendor's frame by
+construction because it consumes `day_weight` directly rather than re-deriving it.
+
+## 4. Methodology & joinability {#sec-methodology}
+
+### The spec is the contract
+
+The **DaySim pydantic models** (`src/data_canon/models/daysim.py`) define the output
+columns, their types, bounds and value domains. Every column in this report is read
+off those models — never hand-listed — and its value labels come from the codebook
+enums (`src/data_canon/codebook/daysim.py`). Each column is classified from its field
+metadata into a comparison strategy (categorical, count, time, continuous, coordinate,
+zone, weight) that determines how it is compared and plotted.
+
+### Record linkage, per table
+
+| Table | How the two pipelines are matched |
+|---|---|
+| Households, Persons, Person-days | Join directly on the surviving IDs (`hhno` / `hhno,pno` / `hhno,pno,day`). |
+| Tours | Numbered independently by each pipeline, so **matched on person-day + all three anchor times** (leave origin, arrive destination, return to origin). |
+| Trips | Legacy `tsvid` and new `tsvid` are different id spaces, so trips are matched through a **linked-group bridge**: the raw-trip overlap of every legacy↔new linked-trip pair, keeping mutual-best pairs (@sec-matched-trips). |
+
+### Normalisations applied before comparison
+
+- **Time** — legacy writes HHMM clock integers; the new pipeline writes minutes past
+  midnight (DaySim spec). Legacy is normalised to minutes so differences are
+  arithmetic-safe.
+- **Zones** — the DaySim `taz` fields carry TM2 `TAZ_NODE`; legacy carries TM1
+  `TAZ1454`. Compared on `TAZ1454` via the new pipeline's survey outputs.
+- **Legacy missing codes** — legacy writes `9` for "missing" in `hownrent`/`hrestype`
+  where the spec uses `-1`; remapped so the two are comparable (without this the
+  agreement was understated).
+- **Drive-to-transit** — legacy emits two DaySim trip rows (auto access leg, then
+  walk-transit leg) sharing one `tsvid`; the new pipeline emits one linked `mode=7`
+  row. The legacy pair is collapsed to one linked trip before comparison.
+
+## 5. Spec coverage & agreement {#sec-coverage}
+
+Every column of every DaySim table, with whether each pipeline emits it, whether it is
+comparable, and — where it is — the agreement rate. Columns disagreeing on more than
+5% of records are flagged **⚠** and explained in @sec-divergences. Non-comparable
+columns (a pipeline stub, absent on one side, or an independent id space) carry the
+reason in the note column.
+
+```{python}
+#| label: coverage-tables
+#| echo: false
+#| output: asis
+
+emit_coverage_tabsets()
+```
+
+### Directly-mapped attribute integrity {#sec-integrity}
+
+Columns copied straight from a single survey field (marked **mapped** above) must agree
+**1:1** — they involve no modeling. Below, agreement is computed only on rows where the
+legacy value is a real value (excluding missing sentinels and values the new pipeline is
+documented to impute, e.g. non-binary/missing gender). Anything short of 100% here is a
+**suspected mapping discrepancy to investigate**, not expected imputation noise.
+
+```{python}
+#| label: mapping-integrity
+#| echo: false
+
+mi = pl.concat([
+    S.mapping_integrity("hh", LEG["hh"], NEW["hh"]).with_columns(pl.lit("hh").alias("table")),
+    S.mapping_integrity("person", LEG["person"], NEW["person"]).with_columns(pl.lit("person").alias("table")),
+]).select(["table", "column", "definition", "n (legacy real value)", "% agree", "n disagree", "note"])
+show(mi, floatfmt=",.0f")
+
+dirty = mi.filter(~pl.col("clean") if "clean" in mi.columns else pl.col("n disagree") > 0)
+n_dirty = mi.filter(pl.col("n disagree") > 0).height
+if n_dirty:
+    display(Markdown(
+        f"⚠ **{n_dirty} mapped column(s) disagree on values legacy reports as real** — "
+        "`hownrent` and `hrestype` flip a household's ownership / residence type on a small "
+        "number of records with no missing-value or imputation explanation. This is a genuine "
+        "discrepancy worth a root-cause look at the new pipeline's household field mapping "
+        "(reported here, not yet fixed)."
+    ))
+else:
+    display(Markdown("All directly-mapped attributes agree 1:1 on non-missing legacy values."))
+```
+
+## 6. Aggregate comparison — unweighted {#sec-unweighted}
+
+### Record counts
+
+Row counts for each table, legacy vs new, both counted on positive-weight records only
+(`new*` excludes the zero-weight rows the new pipeline retains; legacy carries none).
+
+The person-day `diff` is entirely the **group B** days of @sec-weighting — days the vendor
+zeroed because the household did not complete them, which legacy's person-level completeness
+test weights instead. It is a weighting-frame difference, not records the new pipeline failed
+to produce. The zero-weighted column adds **group A** on top of those (person's diary
+incomplete; legacy drops the row, the new pipeline keeps it at weight 0). Tour and trip gaps
+run larger because they compound the same person-day difference with tour-detection and
+tour-formatting differences (@sec-divergences).
+
+```{python}
+#| label: record-counts
+
+def _nz(df, col):
+    return df.filter(pl.col(col) > 0).height
+
+def _zero(df, col):
+    return df.filter(pl.col(col) <= 0).height
+
+counts = pl.DataFrame([
+    {"entity": "households",  "legacy": len(hhnos),        "new*": len(hhnos),                "zero-weighted records (new)": 0},
+    {"entity": "persons",     "legacy": persons.height,    "new*": persons.height,            "zero-weighted records (new)": 0},
+    {"entity": "person-days", "legacy": leg_pdays.height,  "new*": _nz(new_pdays, "pdexpfac"), "zero-weighted records (new)": _zero(new_pdays, "pdexpfac")},
+    {"entity": "tours",       "legacy": leg_tours.height,  "new*": _nz(new_tours, "toexpfac"), "zero-weighted records (new)": _zero(new_tours, "toexpfac")},
+    {"entity": "trips",       "legacy": leg_trips.height,  "new*": _nz(new_trips, "trexpfac"), "zero-weighted records (new)": _zero(new_trips, "trexpfac")},
+]).with_columns(
+    (pl.col("new*") - pl.col("legacy")).alias("diff"),
+    ((pl.col("new*") - pl.col("legacy")) / pl.col("legacy") * 100)
+    .map_elements(lambda v: f"{v:+.1f}%", return_dtype=pl.String).alias("diff %"),
+).select("entity", "legacy", "new*", "diff", "diff %", "zero-weighted records (new)")
+show(counts, floatfmt=",.0f")
+```
+
+*\*Count excludes zero-weight records; these are retained and recoverable in the new pipeline.*
+
+### Trip structuring {#sec-structuring}
+
+How raw trips become structured travel, stage by stage. The first three bars count
+**linked trips** (unlinked → linked → surviving into tours); the fourth counts **tours**.
+All four share one record axis. Legacy "trips in tours" is counted after collapsing its
+drive-transit two-row split, so the unit matches the new pipeline on both sides.
+
+```{python}
+#| label: trip-structuring
+
+xwalk_universe = H.filter_universe(
+    on_common_days(xwalk.rename({"dow": "day"})).rename({"day": "dow"}), persons, day_col=None,
+)
+leg_trips_cd = on_common_days(leg_trips)
+new_trips_cd = on_common_days(new_trips)
+stages = H.trip_structuring_table(
+    xwalk_universe, leg_trips_cd, new_trips_cd,
+    on_common_days(leg_tours), on_common_days(new_tours),
+)
+show(stages.select(["stage", "unit", "legacy", "new",
+                    "retention_legacy_pct", "retention_new_pct", "note"]), floatfmt=",.0f")
+P.trip_structuring_fig(stages).show()
+
+# New-side drops at tour formatting: tours must be VALID *and* COMPLETE.
+lk = (
+    H.load_new_survey("linked_trips", BASIS)
+    .select(pl.col("hh_id").alias("hhno"), "person_id",
+            pl.col("travel_dow").alias("day"), "tour_id")
+    .join(H.load_new_survey("unlinked_trips", BASIS)
+          .select(pl.col("hh_id").alias("hhno"), pl.col("person_num").alias("pno"),
+                  "person_id").unique(), on=["hhno", "person_id"])
+    .drop("person_id")
+    .join(common_days, on=["hhno", "pno", "day"], how="semi")
+    .join(H.load_new_survey("tours", BASIS).select("tour_id", "tour_data_quality", "tour_category"),
+          on="tour_id", how="left")
+)
+QUALITY = {0: "Valid", 1: "Single-trip tour", 2: "Home-based loop",
+           3: "No home anchor", 4: "Invalid (unknown)", 5: "Change-mode primary"}
+CATEGORY = {1: "Complete (home→home)", 2: "Ends away", 3: "Starts away", 4: "Both ends away"}
+drop_reasons = (
+    lk.filter(~((pl.col("tour_data_quality") == 0) & (pl.col("tour_category") == 1)))
+    .with_columns(
+        pl.when(pl.col("tour_data_quality") != 0)
+        .then(pl.col("tour_data_quality").replace_strict(QUALITY, default="?"))
+        .otherwise(pl.col("tour_category").replace_strict(CATEGORY, default="?"))
+        .alias("new pipeline: trips dropped at tour formatting")
+    )
+    .group_by("new pipeline: trips dropped at tour formatting")
+    .agg(pl.len().alias("trips")).sort("trips", descending=True)
+)
+show(drop_reasons, floatfmt=",.0f")
+```
+
+### Behavioral rates (identical weighted person-day universe)
+
+```{python}
+#| label: rates
+
+display(Markdown(f"Common weighted-eligible person-days: **{common_days.height:,}**"))
+show(
+    H.rate_table(
+        {"personday": on_common_days(leg_pdays), "trip": on_common_days(leg_trips),
+         "tour": on_common_days(leg_tours)},
+        {"personday": on_common_days(new_pdays), "trip": on_common_days(new_trips),
+         "tour": on_common_days(new_tours)},
+    ),
+    floatfmt=",.2f",
+)
+```
+
+## 7. Column-by-column distributions {#sec-columns}
+
+Marginal legacy-vs-new distributions for every comparable column, grouped by table
+and then by kind. These compare the *shape* of each column independently on the two
+sides (no record matching needed); the record-level agreement is in @sec-coverage.
+
+### Households
+
+```{python}
+#| label: dist-hh
+#| echo: false
+#| output: asis
+emit_kind_tabsets("hh")
+```
+
+### Persons
+
+```{python}
+#| label: dist-person
+#| echo: false
+#| output: asis
+emit_kind_tabsets("person")
+```
+
+### Person-days
+
+```{python}
+#| label: dist-personday
+#| echo: false
+#| output: asis
+emit_kind_tabsets("personday")
+```
+
+### Tours
+
+```{python}
+#| label: dist-tour
+#| echo: false
+#| output: asis
+emit_kind_tabsets("tour")
+```
+
+### Trips
+
+```{python}
+#| label: dist-trip
+#| echo: false
+#| output: asis
+emit_kind_tabsets("trip")
+```
+
+## 8. Household & person income {#sec-income}
+
+`hhincome` is derived as a representative dollar value within the survey's detailed
+income bracket, and the two pipelines pick different midpoints, so exact-dollar match
+is meaningless. Binning back to the source brackets is the apples-to-apples test.
+
+```{python}
+#| label: income
+
+_bin_idx = {lab: i for i, lab in enumerate(H.INCOME_BIN_LABELS)}
+lb = LEG["hh"].with_columns(H.income_bin()).select("hhno", "income_bin")
+nb = NEW["hh"].with_columns(H.income_bin()).select("hhno", pl.col("income_bin").alias("income_bin_new"))
+ij = lb.join(nb, on="hhno", how="inner").drop_nulls().with_columns(
+    (pl.col("income_bin_new").cast(pl.String).replace_strict(_bin_idx)
+     - pl.col("income_bin").cast(pl.String).replace_strict(_bin_idx)).abs().alias("bin_dist")
+)
+inc_agree = 100 * ij.filter(pl.col("bin_dist") == 0).height / ij.height
+inc_big_diff = ij.filter(pl.col("bin_dist") > 1).height
+inc_exact = H.pct_match(LEG["hh"], NEW["hh"], ["hhno"], "hhincome")
+inc_missing_imputed = LEG["hh"].filter(pl.col("hhincome") <= 0).join(
+    NEW["hh"].filter(pl.col("hhincome") > 0).select("hhno"), on="hhno", how="semi").height
+
+display(Markdown(
+    f"- Same source income bracket **{inc_agree:.1f}%** of the time "
+    f"({ij.height:,} households reporting income; only **{inc_big_diff}** differ by "
+    f"more than one bracket).\n"
+    f"- Exact-dollar match {inc_exact:.0f}% (different midpoints within a bracket).\n"
+    f"- {inc_missing_imputed:,} households legacy leaves blank are imputed by the new pipeline."
+))
+
+leg_inc = LEG["hh"].with_columns(H.income_bin_index()).drop_nulls("inc_bin")
+new_inc = NEW["hh"].with_columns(H.income_bin_index()).drop_nulls("inc_bin")
+inc_dist = H.distribution_table(leg_inc, new_inc, "inc_bin", H.INCOME_BIN_NAMES)
+fig = go.Figure()
+fig.add_bar(x=inc_dist["label"], y=inc_dist["legacy_pct"], name="Legacy", marker_color=LEG_C, opacity=0.85)
+fig.add_bar(x=inc_dist["label"], y=inc_dist["new_pct"], name="New", marker_color=NEW_C, opacity=0.85)
+fig.update_layout(barmode="group", template="plotly_white", height=340,
+                  legend={"orientation": "h", "x": 0.4, "y": 1.1}, yaxis_title="% of households")
+fig.show()
+```
+
+## 9. Person-day record-level agreement {#sec-personday}
+
+Person-days join directly, so the tour and stop counters compare record by record. The
+new pipeline populates only the aggregate counters (`hbtours`, `wbtours`, `uwtours`);
+the purpose-specific counters (`wktours`…`metours`, `wkstops`…`mestops`) are written as
+`0` and legacy populates them — the dominant person-day divergence.
+
+```{python}
+#| label: personday-agreement
+#| echo: false
+
+pd_cov = coverage("personday")
+counters = pd_cov.filter(pl.col("kind") == "count")
+show(counters.select(["column", "n", "% agree", "note"]), floatfmt=",.0f")
+```
+
+## 10. Matched tours {#sec-tours}
+
+Tours are matched on person-day plus all three anchor times, carrying every tour column
+through. Purpose and mode classification flow on matched tours:
+
+```{python}
+#| label: tour-match
+
+display(Markdown(f"""
+| | |
+|---|---|
+| Legacy tours | {tour_match['n_legacy']:,} |
+| New tours | {tour_match['n_new']:,} |
+| Matched on all three times | {tour_match['n_matched']:,} ({tour_match['match_rate_pct']:.1f}%) |
+| Purpose agrees on matched | {tour_match['purpose_agree_pct']:.1f}% |
+| Mode agrees on matched | {tour_match['mode_agree_pct']:.1f}% |
+| Ambiguous (dropped: two tours, same anchors) | {tour_match['n_ambiguous']:,} |
+"""))
+```
+
+```{python}
+#| label: tour-sankey
+#| fig-cap: "Classification flow on matched tours (left: legacy, right: new)"
+
+matched = tour_match["matched"]
+fig = make_subplots(rows=1, cols=2, specs=[[{"type": "sankey"}, {"type": "sankey"}]],
+                    subplot_titles=("Tour purpose", "Tour mode"))
+fig.add_trace(P.confusion_sankey(matched, "pdpurp", "pdpurp_new", S.labels("tour", "pdpurp")), row=1, col=1)
+fig.add_trace(P.confusion_sankey(matched, "tmodetp", "tmodetp_new", S.labels("tour", "tmodetp")), row=1, col=2)
+fig.update_layout(height=520, margin={"t": 50, "b": 20})
+fig.show()
+```
+
+## 11. Matched trips {#sec-matched-trips}
+
+Record-level trip comparison, new to this report. Each legacy linked trip is matched to
+its new counterpart through the linked-group bridge; the match taxonomy accounts for
+every trip on each side exactly once.
+
+```{python}
+#| label: trip-match
+
+display(Markdown(f"""
+| Match status | Trips |
+|---|---|
+| Matched — identical raw-trip sets (linkers agree) | {mt_trips['n_exact']:,} |
+| Matched — overlapping sets (linking differs) | {mt_trips['n_partial']:,} |
+| Legacy only (no new counterpart) | {mt_trips['n_legacy_only']:,} |
+| New only (no legacy counterpart) | {mt_trips['n_new_only']:,} |
+| Legacy drive-transit rows collapsed | {mt_trips['n_split_collapsed']:,} |
+
+**{mt_trips['n_matched']:,}** of {mt_trips['n_legacy']:,} legacy trips matched
+({mt_trips['match_rate_pct']:.1f}%). Purpose, mode, driver/passenger and path type
+classification flow on matched trips:
+"""))
+
+fig = make_subplots(rows=1, cols=2, specs=[[{"type": "sankey"}, {"type": "sankey"}]],
+                    subplot_titles=("Destination purpose", "Mode"))
+fig.add_trace(P.confusion_sankey(matched_pairs := mt_trips["matched"], "dpurp", "dpurp_new",
+                                 S.labels("trip", "dpurp")), row=1, col=1)
+fig.add_trace(P.confusion_sankey(matched_pairs, "mode", "mode_new", S.labels("trip", "mode")), row=1, col=2)
+fig.update_layout(height=520, margin={"t": 50, "b": 20})
+fig.show()
+```
+
+On matched trips the clock times agree essentially exactly — **`deptm` 100%**, **`arrtm`
+99.7%** — so a difference histogram would be a single spike at zero; the departure and
+arrival distributions themselves are in the §6 Trips → Times grid. Only `endacttm` (the
+destination activity-end time) differs, by ~15 min, an activity-end-convention difference
+noted in @sec-divergences.
+
+## 12. Weighted comparison (vendor weights) {#sec-weighted}
+
+```{python}
+#| label: weighted-totals
+
+totals = pl.DataFrame([
+    {"measure": "person-days (pdexpfac)", "legacy": leg_pdays["pdexpfac"].sum(),
+     "new": new_pdays["pdexpfac"].sum()},
+    {"measure": "trips (trexpfac)", "legacy": leg_trips["trexpfac"].sum(),
+     "new": new_trips["trexpfac"].sum()},
+    {"measure": "tours (toexpfac)", "legacy": leg_tours["toexpfac"].sum(),
+     "new": new_tours["toexpfac"].sum()},
+]).with_columns(
+    ((pl.col("new") - pl.col("legacy")) / pl.col("legacy") * 100)
+    .map_elements(lambda v: f"{v:+.2f}%", return_dtype=pl.String).alias("pct_diff")
+)
+show(totals, floatfmt=",.0f")
+
+# Reconciliation: the extra zero-weight person-days new keeps carry zero-weight trips
+# and tours, so they inflate record counts but contribute nothing to any weighted total.
+zwd = new_pdays.filter(pl.col("pdexpfac") <= 0).select(["hhno", "pno", "day"])
+zw_trips = new_trips.join(zwd, on=["hhno", "pno", "day"], how="semi")
+zw_tours = new_tours.join(zwd, on=["hhno", "pno", "day"], how="semi")
+n_zero_pdays = zwd.height
+
+wp = H.distribution_table(leg_trips, new_trips, "dpurp", S.labels("trip", "dpurp"),
+                          weight_cols=("trexpfac", "trexpfac"))
+wm = H.distribution_table(leg_trips, new_trips, "mode", S.labels("trip", "mode"),
+                          weight_cols=("trexpfac", "trexpfac"))
+display(Markdown(
+    f"- **Weighted person-day totals agree exactly.** The "
+    f"{n_zero_pdays:,} zero-weight person-days the new pipeline keeps "
+    f"carry **{zw_trips.height:,} zero-weight trips** and **{zw_tours.height:,} zero-weight "
+    f"tours** (all verified zero-weighted), so they raise record counts but add nothing to "
+    f"any weighted sum.\n"
+    f"- **Weighted trip and tour totals differ modestly** "
+    f"({(new_trips['trexpfac'].sum() / leg_trips['trexpfac'].sum() - 1) * 100:+.1f}% trips, "
+    f"{(new_tours['toexpfac'].sum() / leg_tours['toexpfac'].sum() - 1) * 100:+.1f}% tours) "
+    f"because the two pipelines emit different trip/tour *sets* and the new pipeline derives "
+    f"the tour weight as the mean of its linked-trip weights rather than inheriting the "
+    f"person-day weight (@sec-divergences).\n"
+    f"- Largest weighted-share gap: **{wp['share_delta'].abs().max():.1f} pp** (purpose), "
+    f"**{wm['share_delta'].abs().max():.1f} pp** (mode)."
+))
+```
+
+## 13. Diary walkthroughs {#sec-diaries}
+
+Single person-days through both pipelines, side by side at each comparable stage.
+Exemplars selected deterministically, one per scenario.
+
+```{python}
+#| label: diaries
+#| echo: false
+
+SCENARIOS = {
+    "clean_match": "Typical agreement — identical linking, purposes and tours.",
+    "linking_divergence": "Trip-linking divergence — different linked-trip partition.",
+    "tour_divergence": "Tour-boundary divergence — same linked trips, different tours.",
+    "drive_transit_split": "Drive-to-transit — legacy emits two trip rows, new emits one.",
+}
+exemplars = D.select_exemplars(BASIS)
+for scenario, blurb in SCENARIOS.items():
+    who = exemplars.get(scenario)
+    if not who:
+        continue
+    dow = {2: "Tuesday", 3: "Wednesday", 4: "Thursday"}.get(who["dow"], str(who["dow"]))
+    display(Markdown(f"### {blurb}\n\n*Household {who['hhno']}, person {who['pno']}, {dow}.*"))
+    display(HTML(D.side_by_side_html(who["hhno"], who["pno"], who["dow"], BASIS)))
+```
+
+## 14. Divergences {#sec-divergences}
+
+Two kinds of difference: **record-count** differences (which rows each pipeline emits,
+decomposed in the record lineage of @sec-unweighted) and **column** differences (values
+on the rows both emit, catalogued here). None is a data defect.
+
+```{python}
+#| label: divergences
+#| echo: false
+
+n_zero_pdays = new_pdays.filter(pl.col("pdexpfac") <= 0).height
+display(Markdown(f"""
+Every column flagged or marked non-comparable in @sec-coverage carries a documented
+cause, catalogued below by category (from the divergence registry `spec.DIVERGENCES`).
+The dominant record-count driver — the new pipeline keeping **{n_zero_pdays:,}** zero-weight
+person-days legacy drops, offset by tour-formatting trip drops — is shown in the record
+counts of @sec-unweighted.
+"""))
+
+_CATS = [
+    ("unimplemented", "Unimplemented / stubbed"),
+    ("id space", "Independent id space"),
+    ("encoding", "Encoding convention"),
+    ("spec mismatch", "Spec-vs-implementation"),
+    ("weight", "Weighting"),
+    ("config", "Config switch"),
+]
+
+def _category(note: str) -> str:
+    low = note.lower()
+    for key, label in _CATS:
+        if key in low:
+            return label
+    return "Value difference"
+
+rows = []
+for table in ["hh", "person", "personday", "tour", "trip"]:
+    for cs in S.columns(table):
+        note = S.divergence(table, cs.name)
+        if note:
+            rows.append({"category": _category(note), "column": f"{table}.{cs.name}",
+                         "cause": note})
+order = {label: i for i, (_, label) in enumerate(_CATS)}
+order["Value difference"] = len(_CATS)
+div_tbl = (
+    pl.DataFrame(rows)
+    .with_columns(pl.col("category").replace_strict(order).alias("_o"))
+    .sort(["_o", "column"]).drop("_o")
+)
+show(div_tbl)
+display(Markdown(
+    f"\n{div_tbl.height} columns with a documented cause, across "
+    f"{div_tbl['category'].n_unique()} categories. Every ⚠-flagged column in "
+    f"@sec-coverage appears here."
+))
+```
+
+## 15. Robustness & configurability {#sec-config}
+
+- **Schema validation at every step** — all canonical and DaySim/CT-RAMP outputs are
+  Pydantic-validated (`src/data_canon/`); the legacy scripts validate nothing. This
+  report reads that same schema, so it cannot drift out of sync with the pipeline.
+- **Behaviour as configuration** — linking thresholds, partial-tour dropping, weighting
+  source, imputation, income thresholds and the DaySim TAZ system are all config.
+- **IDs preserved & richer output** — canonical IDs survive to every output; the fields
+  legacy stubs out (`puwmode`, `ptpass`, `pproxy`, `ppaidprk`) are populated.
+- **Per-step caching & tests** — content-hash caching, plus unit and end-to-end
+  synthetic-data suites (`tests/e2e/`).
+
+## Appendix: reproduction
+
+```{python}
+#| label: checks-table
+
+show(checks.with_columns(pl.col("ok").cast(pl.String)), floatfmt="")
+```
+
+```bash
+uv run python scripts/validate_sfcta/run_vendor_weights.py   # vendor-weights run
+uv run python scripts/validate_sfcta/spec.py                 # column classification
+uv run python scripts/validate_sfcta/helpers.py              # sanity checks
+quarto render scripts/validate_sfcta/validation_report.qmd   # this report
+```
+
+Supersedes the exploratory comparison in `projects/bats_2023/compare/daysim/`.

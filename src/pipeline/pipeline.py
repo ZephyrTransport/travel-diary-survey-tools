@@ -1,0 +1,754 @@
+"""Pipeline execution module for running data processing steps."""
+
+import inspect
+import json
+import logging
+import os
+import re
+import shutil
+import subprocess
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+from data_canon.core.dataclass import CanonicalData
+from pipeline.cache import PipelineCache
+from pipeline.logger import setup_logging
+
+logger = logging.getLogger(__name__)
+
+# Enough passes to resolve any sane chain of shorthands referring to shorthands,
+# and few enough that a cycle is reported rather than spun on.
+MAX_TEMPLATE_PASSES = 10
+
+
+def _substitute(text: str, variables: dict[str, str]) -> str:
+    """Replace every ``{{ name }}`` in one string with its value."""
+    for name, value in variables.items():
+        text = text.replace(f"{{{{ {name} }}}}", str(value))
+    return text
+
+
+#: Config key holding committed root defaults. Anything declared here is a
+#: default the environment may replace, not a claim about this machine.
+ENVS_KEY = "ENVS"
+
+
+def _template_namespace(config: dict[str, Any]) -> dict[str, str]:
+    """Everything a ``{{ name }}`` may refer to, lowest precedence first.
+
+    Three sources feed one namespace, which is what keeps this from being a
+    second mechanism bolted beside the templating that already exists:
+
+    1. the config's own top-level strings -- ``output_dir`` and friends, so
+       ``log_file: "{{ output_dir }}/run.log"`` keeps working;
+    2. committed defaults under ``ENVS``, for a root that genuinely is the same
+       everywhere;
+    3. the environment, including a ``.env`` the runners load, which is where a
+       machine says where it mounts a shared location.
+
+    The environment wins, and that is not an override of anything stated as
+    fact: a config says ``{{ MTC_DATA }}/Data/...``, which is true wherever
+    MTC_DATA points. Only the root is machine-specific, and only the root comes
+    from outside. The structure beneath it is shared knowledge and stays in the
+    config where it can be reviewed.
+
+    Args:
+        config: The raw configuration, before substitution.
+
+    Returns:
+        Mapping of template name to value.
+    """
+    namespace = {key: value for key, value in config.items() if isinstance(value, str)}
+
+    declared = config.get(ENVS_KEY) or {}
+    if not isinstance(declared, dict):
+        msg = (
+            f"'{ENVS_KEY}' must be a mapping of root name to value, got {type(declared).__name__}."
+        )
+        raise TypeError(msg)
+    namespace.update({str(k): str(v) for k, v in declared.items()})
+
+    for name in list(namespace) + [str(k) for k in declared]:
+        value = os.environ.get(name)
+        if value:
+            namespace[name] = value
+
+    # A root referenced but declared nowhere still has to come from somewhere.
+    for name in _referenced_names(config):
+        if name not in namespace and os.environ.get(name):
+            namespace[name] = os.environ[name]
+
+    return namespace
+
+
+def _referenced_names(config: dict[str, Any]) -> set[str]:
+    """Every ``{{ name }}`` appearing anywhere in the config."""
+    return set(re.findall(r"\{\{\s*(\w+)\s*\}\}", yaml.safe_dump(config)))
+
+
+def _check_roots_resolved(config: dict[str, Any], namespace: dict[str, str]) -> None:
+    """Fail if a referenced root is declared nowhere, naming it.
+
+    Left unresolved, ``{{ MTC_DATA }}`` renders literally and surfaces later as
+    a baffling "no such file or directory" containing brace characters. The
+    root is missing, and saying so is more useful than anything downstream can
+    work out.
+
+    Raises:
+        ValueError: Naming every unresolved root and where to set it.
+    """
+    missing = sorted(name for name in _referenced_names(config) if name not in namespace)
+    if not missing:
+        return
+    listed = "\n  - ".join(missing)
+    msg = (
+        f"The config refers to root(s) that are not set anywhere:\n  - {listed}"
+        f"\n\nA root says where a shared location is mounted on this machine, so it "
+        f"cannot be committed. Set each one in a .env file beside the project (see "
+        f"example.env), or in your environment. Everything below the root stays in the "
+        f"config and is the same for everyone."
+    )
+    raise ValueError(msg)
+
+
+def _shorthands_used_by_steps(raw_config: dict[str, Any]) -> set[str]:
+    """Which shorthands the configured steps actually refer to.
+
+    Read off the *unsubstituted* steps, so a shorthand is only in scope when a
+    step names it as ``{{ key }}``. A commented-out parameter is not a
+    reference: YAML drops comments before this sees them, which is what makes
+    the distinction free. ``pums_dir`` in bats_2023 is exactly that -- declared,
+    and used only by two commented lines -- so requiring it to exist would
+    refuse to start a run that never reads it.
+    """
+    rendered = yaml.safe_dump(raw_config.get("steps", []))
+    return {key for key in raw_config if isinstance(key, str) and f"{{{{ {key} }}}}" in rendered}
+
+
+def _check_input_paths(config: dict[str, Any], used: set[str]) -> None:
+    """Fail before the first step if an input directory a step needs is missing.
+
+    Every one of these is read by some step, but never the first one, so a wrong
+    drive letter surfaces minutes into a run rather than at the start -- and one
+    path at a time: fix, re-run, wait, discover the next. A wrong
+    ``TM2_shapefile_dir`` was found this way, eight steps in, after the survey
+    had been read, trips linked, tours built and weights computed.
+
+    Only inputs a configured step refers to are checked. Output directories are
+    created on demand, and a path nothing reads is not this function's business.
+
+    Args:
+        config: The fully substituted configuration.
+        used: Shorthands the steps refer to, from
+            :func:`_shorthands_used_by_steps`.
+
+    Raises:
+        ValueError: Naming every missing path at once, and how to redirect them.
+    """
+    missing = [
+        f"{key}: {value}"
+        for key, value in sorted(config.items())
+        if key in used
+        and isinstance(value, str)
+        and key.endswith("_dir")
+        and not key.startswith("output")
+        and "{{" not in value  # unresolved: the template error covers it
+        and not Path(value).exists()
+    ]
+    if not missing:
+        return
+
+    plural = "ies do" if len(missing) > 1 else "y does"
+    listed = "\n  - ".join(missing)
+    msg = (
+        f"Configured input director{plural} not exist on this machine:\n  - {listed}"
+        f"\n\nChecked before the pipeline starts, so a wrong path costs a second "
+        "rather than a run. Point each one somewhere real by setting an environment "
+        "variable of the same name -- a .env file beside the project is read "
+        "automatically -- which keeps machine-specific paths out of the shared config."
+    )
+    raise ValueError(msg)
+
+
+def _resolve_variables(variables: dict[str, str]) -> dict[str, str]:
+    """Expand the shorthands against each other before anything else uses them.
+
+    Config shorthands routinely refer to other shorthands
+    (``output_dir: "{{ survey_dir }}/analysis"``). Substituting in a single pass
+    resolves such a reference only when its target happens to be declared later
+    in the file, because the pass has already moved past an earlier one -- so
+    the same config works or silently emits a literal ``{{ survey_dir }}`` path
+    depending on the order its keys were written in. Resolving the shorthands
+    to a fixed point first makes declaration order irrelevant.
+
+    Args:
+        variables: Top-level string values from the config, unexpanded.
+
+    Returns:
+        The same mapping with every nested reference expanded.
+
+    Raises:
+        ValueError: A reference could not be resolved within
+            ``MAX_TEMPLATE_PASSES``, which means the shorthands refer to each
+            other in a cycle.
+    """
+    resolved = dict(variables)
+    for _ in range(MAX_TEMPLATE_PASSES):
+        expanded = {key: _substitute(value, resolved) for key, value in resolved.items()}
+        if expanded == resolved:
+            return resolved
+        resolved = expanded
+
+    unresolved = sorted(key for key, value in resolved.items() if "{{" in value)
+    msg = (
+        f"Config variables still reference each other after {MAX_TEMPLATE_PASSES} "
+        f"passes: {unresolved}. They likely refer to each other in a cycle."
+    )
+    raise ValueError(msg)
+
+
+class Pipeline:
+    """Class to run a data processing pipeline based on a configuration file."""
+
+    data: CanonicalData
+    steps: dict[str, Callable]
+    cache: PipelineCache | None
+
+    def __init__(
+        self,
+        config_path: str | Path,
+        steps: list[Callable] | None = None,
+        caching: bool | Path | str = False,
+        data_models: dict[str, Any] | None = None,
+        log_file_mode: str = "a",
+    ) -> None:
+        """Initialize the Pipeline with configuration and custom steps.
+
+        Args:
+            config_path: Path to the YAML configuration.
+            steps: Optional list of processing step functions.
+            caching: If False, disable caching.
+                If True, use default cache directory ".cache".
+                If str or Path, use specified directory for caching.
+            data_models: Optional dictionary of extra data models for validation.
+                These will be added to the default data models in CanonicalData object.
+            log_file_mode: File open mode for the log file. Use "a" to append
+                (default) or "w" to overwrite at the start of each run.
+        """
+        self.config_path = config_path
+        self.config = self._load_config()
+        self.data = CanonicalData()
+        self.steps = {func.__name__: func for func in steps or []}
+
+        # Setup logging
+        log_filename = self.config.get("log_file", None)
+
+        # If not abs path, place log file in .cache dir
+        if log_filename and not Path(log_filename).is_absolute():
+            # Create cache if it doesn't exist
+            Path(".cache").mkdir(parents=True, exist_ok=True)
+            log_filename = Path(".cache") / log_filename
+
+        # filename for file+console, or None for console only
+        if log_filename:
+            setup_logging(log_file=log_filename, log_file_mode=log_file_mode)
+            logger.info("Log file: %s", log_filename)
+        else:
+            # Console-only logging
+            setup_logging(log_file=None)
+            logger.info("Console-only logging enabled")
+
+        # Initialize cache based on caching parameter
+        if caching is False:
+            self.cache = None
+            logger.info("Pipeline caching disabled")
+        elif caching is True:
+            self.cache = PipelineCache(cache_dir=Path(".cache"))
+        else:
+            self.cache = PipelineCache(cache_dir=Path(caching))
+
+        # Initialize step status tracking
+        self._step_status: dict[str, dict[str, Any]] = {}
+
+        # Scan cache and report status
+        self._scan_cache()
+        self.report_status()
+
+        # Add extra data models if provided
+        if data_models:
+            self.data.add_models(data_models)
+
+    def _load_config(self) -> dict[str, Any]:
+        """Load the pipeline configuration from a YAML file.
+
+        Replaces template variables in the format {{ variable_name }} with
+        their corresponding values defined in the config.
+
+        Returns:
+            The configuration dictionary.
+        """
+        with Path(self.config_path).open() as f:
+            config = yaml.safe_load(f)
+
+        # Extract top-level variables for substitution
+        _check_roots_resolved(config, _template_namespace(config))
+        variables = _resolve_variables(_template_namespace(config))
+
+        def replace_templates(obj: Any) -> Any:  # noqa: ANN401
+            if isinstance(obj, str):
+                return _substitute(obj, variables)
+
+            if isinstance(obj, dict):
+                return {k: replace_templates(v) for k, v in obj.items()}
+
+            if isinstance(obj, list):
+                return [replace_templates(item) for item in obj]
+
+            return obj
+
+        resolved = replace_templates(config)
+        _check_input_paths(resolved, _shorthands_used_by_steps(config))
+        return resolved
+
+    def _scan_cache(self) -> None:
+        """Scan cache directory to determine which steps have cached data.
+
+        For each step in the config, checks if cache exists and reads
+        metadata from the newest cache key directory.
+        """
+        for step_cfg in self.config.get("steps", []):
+            step_name = step_cfg["name"]
+            cache_enabled = step_cfg.get("cache", False)
+
+            # Default status
+            status = {
+                "has_cache": False,
+                "cache_key": None,
+                "tables": [],
+                "cache_enabled": cache_enabled,
+            }
+
+            if not self.cache:
+                self._step_status[step_name] = status
+                self._step_status[step_name].update({"cache_enabled": False})
+                continue
+
+            step_cache_dir = self.cache.cache_dir / step_name
+            if not step_cache_dir.exists() or not cache_enabled:
+                self._step_status[step_name] = status
+                continue
+
+            # Find newest cache key directory by modification time
+            cache_key_dirs = [d for d in step_cache_dir.iterdir() if d.is_dir()]
+            if not cache_key_dirs:
+                self._step_status[step_name] = status
+                continue
+
+            # Get newest cache directory
+            newest_cache_dir = max(cache_key_dirs, key=lambda p: p.stat().st_mtime)
+            cache_key = newest_cache_dir.name
+
+            # Read metadata
+            metadata_path = newest_cache_dir / "metadata.json"
+            tables = []
+            if metadata_path.exists():
+                try:
+                    with metadata_path.open() as f:
+                        metadata = json.load(f)
+                    tables = metadata.get("tables", [])
+                except Exception:
+                    logger.exception(
+                        "Failed to read metadata for %s/%s",
+                        step_name,
+                        cache_key,
+                    )
+
+            # Update status with cache information
+            status.update(
+                {
+                    "has_cache": True,
+                    "cache_key": cache_key,
+                    "tables": tables,
+                }
+            )
+
+            self._step_status[step_name] = status
+
+    def report_status(self) -> None:
+        """Report the current pipeline status with ASCII flow diagram.
+
+        Shows which steps have cached data available:
+        - ✓ CACHED: Step has valid cache
+        - ✗ NO CACHE: Step caching enabled but no cache exists
+        - ∅ NO CACHE (disabled): Step caching disabled
+        """
+        # Build entire status report as a single string
+        lines = []
+        lines.append("")
+        lines.append("=" * 70)
+        lines.append("Pipeline Status")
+        lines.append("=" * 70)
+
+        # Find max step name length for alignment
+        max_step_len = max(
+            (len(step_cfg["name"]) for step_cfg in self.config.get("steps", [])),
+            default=0,
+        )
+
+        # Build flow diagram with tables inline
+        for i, step_cfg in enumerate(self.config.get("steps", [])):
+            step_name = step_cfg["name"]
+            status_info = self._step_status.get(step_name, {})
+
+            has_cache = status_info.get("has_cache", False)
+            cache_enabled = status_info.get("cache_enabled", False)
+            tables = status_info.get("tables", [])
+
+            if has_cache:
+                symbol = "✓"
+                status = "CACHED"
+                tables_str = f" ({', '.join(tables)})" if tables else ""
+            elif cache_enabled:
+                symbol = "✗"
+                status = "NO CACHE"
+                tables_str = ""
+            else:
+                symbol = "∅"
+                status = "NO CACHE (disabled)"
+                tables_str = ""
+
+            # Pad step name for alignment
+            padded_step = step_name.ljust(max_step_len)
+            lines.append(f"[{padded_step}] {symbol} {status}{tables_str}")
+
+            # Add arrow if not last step
+            if i < len(self.config.get("steps", [])) - 1:
+                lines.append("     ↓")
+
+        lines.append("=" * 70)
+        lines.append("")
+
+        # Log as single message
+        logger.info("\n".join(lines))
+
+    def parse_step_args(self, step_name: str, step_obj: Callable) -> dict[str, Any]:
+        """Separate the canonical data and parameters.
+
+        If argument name matches a canonical table, it is passed from self.data.
+        Else, it is taken from the step configuration "parameters".
+
+        Args:
+            step_name: Name of the step.
+            step_obj: The step function or class.
+
+        """
+        step_args = inspect.signature(step_obj).parameters
+
+        # if the arg name is a canonical table, pass it from self.data
+        data_kwargs = {}
+        config_kwargs = {}
+
+        reserved = {
+            "canonical_data",
+            "validate_input",
+            "validate_output",
+            "cache",
+            "pipeline_cache",
+            "kwargs",
+        }
+        expected_kwargs = [x for x in step_args if x not in reserved]
+
+        for arg_name, param in step_args.items():
+            if arg_name == "canonical_data":
+                # Pass the entire CanonicalData instance if requested
+                data_kwargs[arg_name] = self.data
+            elif hasattr(self.data, arg_name):
+                data_kwargs[arg_name] = getattr(self.data, arg_name)
+            else:
+                step_cfg = self.config["steps"]
+                params = next(
+                    (s.get("params", {}) for s in step_cfg if s["name"] == step_name),
+                    {},
+                )
+                # Only add if parameter exists in config or has default
+                if arg_name in params:
+                    config_kwargs[arg_name] = params[arg_name]
+                elif param.default is not inspect.Parameter.empty or arg_name in reserved:
+                    # Has default value, don't need to provide it
+                    pass
+                else:
+                    # If no default and not in config, omit it
+                    # This will cause TypeError if it's required
+                    msg = (
+                        f"Missing required parameter '{arg_name}' "
+                        f"for step '{step_name}'. Function expects "
+                        f""""{'", "'.join(expected_kwargs)}"."""
+                    )
+                    raise ValueError(msg)
+
+        return {**data_kwargs, **config_kwargs}
+
+    def _log_git_version(self) -> None:
+        """Log the git version of the codebase, including diffs if dirty."""
+        git = shutil.which("git")
+        if git is None:
+            logger.warning("Could not determine git version (git not found on PATH)")
+            return
+        try:
+            version = subprocess.check_output(  # noqa: S603
+                [git, "describe", "--always", "--dirty", "--tags"],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+            logger.info("Code version: %s", version)
+
+            if version.endswith("-dirty"):
+                diff = subprocess.check_output(  # noqa: S603
+                    [git, "diff"],
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                ).strip()
+                if diff:
+                    logger.debug("Uncommitted changes (git diff):\n%s", diff)
+        except subprocess.CalledProcessError:
+            logger.warning("Could not determine git version (not a git repo)")
+
+    def _validate_steps(self) -> None:
+        """Check every configured step resolves to a registered function.
+
+        Runs before any step executes, so a config naming a step the runner never
+        registered fails immediately instead of part-way through a long pipeline.
+        All unresolved names are reported at once.
+
+        Raises:
+            ValueError: If any configured step has no registered function.
+        """
+        missing = [
+            step_cfg["name"]
+            for step_cfg in self.config.get("steps", [])
+            if step_cfg["name"] not in self.steps
+        ]
+        if not missing:
+            return
+
+        named = ", ".join(f"'{name}'" for name in missing)
+        registered = ", ".join(sorted(self.steps)) or "(none)"
+        label = "Step" if len(missing) == 1 else "Steps"
+        msg = (
+            f"{label} {named} not found in pipeline steps. Every step named in "
+            f"the config must be passed to Pipeline(steps=[...]); add the "
+            f"function to the runner's step list. Registered steps: {registered}."
+        )
+        raise ValueError(msg)
+
+    def run(self) -> CanonicalData:
+        """Run a data processing pipeline based on a configuration file."""
+        self._validate_steps()
+        self._log_git_version()
+        n_steps = len(self.config["steps"])
+        for i, step_cfg in enumerate(self.config["steps"], start=1):
+            step_name = step_cfg["name"]
+            step_obj = self.steps[step_name]
+
+            logger.info("")
+            logger.info("=" * 70)
+            logger.info("Step %d/%d: %s", i, n_steps, step_name)
+            logger.info("=" * 70)
+
+            kwargs = self.parse_step_args(step_name, step_obj)
+            kwargs["validate_input"] = step_cfg.get("validate_input", True)
+            kwargs["validate_output"] = step_cfg.get("validate_output", False)
+            kwargs["canonical_data"] = self.data
+
+            # Pass cache configuration
+            if self.cache:
+                kwargs["cache"] = step_cfg.get("cache", False)
+                kwargs["pipeline_cache"] = self.cache
+
+            # Execute step
+            try:
+                step_obj(**kwargs)
+            except BaseException:
+                logger.exception("Fatal error in step '%s' — pipeline aborted", step_name)
+                # Flush all handlers so the error is guaranteed on disk before propagating
+                for handler in logging.getLogger().handlers:
+                    handler.flush()
+                raise
+
+        # Log cache statistics if caching was enabled
+        self._log_cache_stats()
+
+        # Refresh cache status after run
+        self._scan_cache()
+
+        logger.info("Pipeline completed.")
+        return self.data
+
+    def _log_cache_stats(self) -> None:
+        """Log cache hit/miss statistics after a run."""
+        if not self.cache:
+            return
+        stats = self.cache.get_stats()
+        if stats["total"] == 0:
+            return
+        parts = []
+        if stats["loaded"] > 0:
+            parts.append(f"{stats['loaded']} loaded from cache")
+        if stats["missing"] > 0:
+            parts.append(f"{stats['missing']} re-run (no cache)")
+        if stats["stale"] > 0:
+            parts.append(f"{stats['stale']} re-run (stale/corrupted)")
+        summary = ", ".join(parts)
+        logger.info(
+            "Cache summary: %s (%.1f%% cache hit rate)",
+            summary,
+            stats["load_rate"] * 100,
+        )
+
+    def _get_available_tables(self) -> dict[str, list[str]]:
+        """Get all available tables across cached steps.
+
+        Returns:
+            Dictionary mapping table names to list of steps containing them.
+        """
+        table_locations = {}
+        for step_cfg in self.config.get("steps", []):
+            step_name = step_cfg["name"]
+            status_info = self._step_status.get(step_name, {})
+            if status_info.get("has_cache"):
+                for tbl in status_info.get("tables", []):
+                    if tbl not in table_locations:
+                        table_locations[tbl] = []
+                    table_locations[tbl].append(step_name)
+        return table_locations
+
+    def _find_step_with_table(self, table_name: str) -> str | None:
+        """Find the latest step that has cached data for a table.
+
+        Args:
+            table_name: Name of the table to find.
+
+        Returns:
+            Step name containing the table, or None if not found.
+        """
+        for step_cfg in reversed(self.config.get("steps", [])):
+            step_name = step_cfg["name"]
+            status_info = self._step_status.get(step_name, {})
+
+            if not status_info.get("has_cache"):
+                continue
+
+            if table_name in status_info.get("tables", []):
+                return step_name
+
+        return None
+
+    def _load_from_step(self, table_name: str, step_name: str) -> Any:  # noqa: ANN401
+        """Load a specific table from a specific step's cache.
+
+        Args:
+            table_name: Name of the table to load.
+            step_name: Name of the step to load from.
+
+        Returns:
+            The loaded table data.
+
+        Raises:
+            ValueError: If step has no cache or table not in step.
+        """
+        if not self.cache:
+            msg = "Caching is disabled. Cannot load data from cache."
+            raise ValueError(msg)
+
+        status_info = self._step_status.get(step_name)
+        if not status_info or not status_info.get("has_cache"):
+            msg = f"Step '{step_name}' has no cached data."
+            raise ValueError(msg)
+
+        cache_key = status_info["cache_key"]
+        tables = status_info["tables"]
+
+        if table_name not in tables:
+            msg = (
+                f"Table '{table_name}' not found in step '{step_name}'. "
+                f"Available tables: {', '.join(tables)}"
+            )
+            raise ValueError(msg)
+
+        # Load cached data
+        cached_data = self.cache.load(step_name, cache_key) if self.cache else None
+        if not cached_data or table_name not in cached_data:
+            msg = f"Failed to load '{table_name}' from cache for step '{step_name}'."
+            raise ValueError(msg)
+
+        # Update canonical data and return
+        table_data = cached_data[table_name]
+        setattr(self.data, table_name, table_data)
+        logger.info(
+            "Loaded '%s' from step '%s' (cache key: %s)",
+            table_name,
+            step_name,
+            cache_key[:8] + "...",
+        )
+        return table_data
+
+    def get_data(
+        self,
+        table_name: str,
+        step: str | None = None,
+    ) -> Any:  # noqa: ANN401
+        """Fetch a table from cached pipeline data. If no cache, just return latest.
+
+        Args:
+            table_name: Name of the table to fetch (e.g., 'households', 'trips')
+            step: Optional step name to fetch from. If None, uses the last
+                step that has a cache containing this table.
+
+        Returns:
+            The requested DataFrame or data object
+
+        Raises:
+            ValueError: If table not found in any cached steps, or if
+                specified step doesn't have cache or doesn't contain table.
+
+        Example:
+            >>> pipeline = Pipeline(config_path, steps, caching=True)
+            >>> # Fetch from latest cached step
+            >>> households = pipeline.get_data("households")
+            >>> # Fetch from specific step
+            >>> trips = pipeline.get_data("linked_trips", step="link_trips")
+        """
+        if not self.cache:
+            msg = "Caching is disabled. Just returning latest data."
+            data = getattr(self.data, table_name, None)
+            if data is None:
+                msg = f"Table '{table_name}' not found in canonical data."
+                raise ValueError(msg)
+            logger.info(msg)
+            return data
+
+        # If step specified, load from that specific step
+        if step:
+            return self._load_from_step(table_name, step)
+
+        # No step specified - find latest step with this table
+        step_name = self._find_step_with_table(table_name)
+        if step_name:
+            return self._load_from_step(table_name, step_name)
+
+        # Table not found - build helpful error message
+        table_locations = self._get_available_tables()
+
+        if not table_locations:
+            msg = "No cached data found. Run the pipeline first."
+            raise ValueError(msg)
+
+        available_tables = ", ".join(sorted(table_locations.keys()))
+        msg = (
+            f"Table '{table_name}' not found in any cached step. "
+            f"Available tables: {available_tables}"
+        )
+        raise ValueError(msg)
