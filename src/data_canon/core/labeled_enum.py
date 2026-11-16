@@ -56,7 +56,6 @@ class LabeledEnum(Enum, metaclass=LabeledEnumMeta):
     The enum provides:
     - value: The integer or string value
     - label: The human-readable label
-    - field_name: The canonical field name
     - description: The field description
 
     Class Methods:
@@ -76,7 +75,6 @@ class LabeledEnum(Enum, metaclass=LabeledEnumMeta):
         member = Gender.MALE
         print(member.value)  # 1
         print(member.label)  # "Male"
-        print(member.field_name)  # "gender"
         print(member.description)  # "Respondent's gender identity"
 
         found = Gender.from_value(1)  # Returns Gender.MALE
@@ -101,15 +99,6 @@ class LabeledEnum(Enum, metaclass=LabeledEnumMeta):
     def label(self) -> str:
         """Get the human-readable label for this enum member."""
         return self._label_
-
-    @property
-    def field_name(self) -> str | None:
-        """Get the canonical field name for this enum.
-
-        Returns the canonical_field_name class attribute if defined,
-        otherwise returns None.
-        """
-        return getattr(self.__class__, "canonical_field_name", None)
 
     @property
     def description(self) -> str | None:

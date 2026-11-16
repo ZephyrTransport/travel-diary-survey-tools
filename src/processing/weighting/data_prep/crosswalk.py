@@ -1,13 +1,13 @@
 """PUMA-specific crosswalk wrapper.
 
-``PumaCrosswalk`` fetches Census PUMA and block geographies and
+``PumaCrosswalk`` reads Census PUMA and block geographies and
 delegates the heavy lifting to [`build_crosswalk`][utils.crosswalk.build_crosswalk].
 
 See ``docs/pipeline_steps/weighting/crosswalk.md`` for the detailed
 crosswalk explanation, diagrams, and worked example.
 
 1. Load target zone polygons; auto-discover overlapping PUMAs.
-2. Download/cache TIGER PUMA and block shapefiles (via ``census_geo``).
+2. Read the TIGER PUMA and block boundaries (via ``census_geo``).
 3. Rasterize block population into a density grid.
 4. Rasterize PUMA IDs into a categorical label grid.
 5. ``exactextract``: compute ``sum(population)`` per target zone, grouped by
@@ -20,27 +20,25 @@ analytical sub-cell coverage.
 
 Outputs:
 
-* ``crosswalk_df``: ``puma_id``, ``study_geoid``, ``population``,
+* ``crosswalk_df``: ``puma_id``, ``target_zone_id``, ``population``,
   ``allocation_weight``.
 * ``puma_ids``: list of PUMAs overlapping the study area.
 
 Example:
     ```python
 
-    xw = PumaCrosswalk(geo_cfg, state_fips="06", pums_year=2023)
+    xw = PumaCrosswalk(geo_cfg, state_fips="06", pums_year=2023, census_dir=census_dir)
     households = xw.assign_households(households)
     pums_hh, pums_per = xw.allocate_pums_weights(pums_hh, pums_per)
     ```
 """
 
-import hashlib
-import json
 import logging
 from pathlib import Path
 
 import geopandas as gpd
 import polars as pl
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from shapely.ops import unary_union
 
 from processing.weighting.data_prep.census_geo import get_block_gdf, get_puma_gdf
@@ -48,8 +46,11 @@ from utils.crosswalk import build_crosswalk
 
 logger = logging.getLogger(__name__)
 
+# Counties under this share of a zone's population are left out of its name.
+_MIN_COUNTY_SHARE = 0.01
 
-def _build_zone_remap(zone_groups: dict[str, list[str]]) -> dict[str, str]:
+
+def zone_to_group(zone_groups: dict[str, list[str]]) -> dict[str, str]:
     """Invert ``{group: [zone, ...]}`` → ``{zone: group}``."""
     remap: dict[str, str] = {}
     for group, zones in zone_groups.items():
@@ -67,8 +68,10 @@ def _build_zone_remap(zone_groups: dict[str, list[str]]) -> dict[str, str]:
 class TargetZoneConfig(BaseModel):
     """Target zone polygon source."""
 
+    model_config = ConfigDict(extra="forbid")
+
     file: str
-    id_field: str | None = None
+    id_field: str | None = Field(description="Zone-ID column; null for one study-area boundary.")
 
 
 class GeographyConfig(BaseModel):
@@ -76,12 +79,17 @@ class GeographyConfig(BaseModel):
 
     Attributes:
         target_zones: Polygon file and optional zone-ID column.
-        resolution: Raster cell size in metres (default 250).
+        resolution: Raster cell size in metres.
+        min_allocation: PUMA slivers allocated less than this share are dropped.
+        zone_groups: Named groups of target zones balanced as one; null for none.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     target_zones: TargetZoneConfig
-    resolution: int = 100
-    min_allocation: float = 0.0
+    resolution: int
+    min_allocation: float
+    zone_groups: dict[str, list[str]] | None
 
     @field_validator("resolution")
     @classmethod
@@ -100,34 +108,6 @@ class GeographyConfig(BaseModel):
         return v
 
 
-def _crosswalk_cache_key(
-    config: "GeographyConfig",
-    state_fips: str,
-    pums_year: int,
-    zone_groups: dict[str, list[str]] | None,
-) -> str:
-    """Compute a deterministic hash from all crosswalk inputs."""
-    h = hashlib.sha256()
-    # Target zones: hash file contents so edits invalidate the cache
-    target_path = Path(config.target_zones.file)
-    if target_path.exists():
-        h.update(target_path.read_bytes())
-    h.update(
-        json.dumps(
-            {
-                "id_field": config.target_zones.id_field,
-                "resolution": config.resolution,
-                "min_allocation": config.min_allocation,
-                "state_fips": state_fips,
-                "pums_year": pums_year,
-                "zone_groups": zone_groups or {},
-            },
-            sort_keys=True,
-        ).encode()
-    )
-    return h.hexdigest()[:12]
-
-
 # ---------------------------------------------------------------------------
 # PumaCrosswalk
 # ---------------------------------------------------------------------------
@@ -137,10 +117,10 @@ class PumaCrosswalk:
     Loads target zones and Census geographies on construction, rasterizes
     block population, and cross-tabulates to produce allocation weights.
     Exposes ``crosswalk_df``, ``puma_ids``, and ``target_gdf`` for
-    downstream use.  The crosswalk produces both ``study_geoid`` (raw
-    target zone from the shapefile) and ``ctrl_geoid`` (balancing
-    geography — equal to ``study_geoid`` unless zone groups are
-    configured).
+    downstream use.  The crosswalk produces both ``target_zone_id`` (raw
+    target zone from the shapefile) and ``zone_group_id`` (the
+    zone group the balancer fits — equal to ``target_zone_id`` unless zone
+    groups are configured).
     """
 
     def __init__(
@@ -148,15 +128,14 @@ class PumaCrosswalk:
         config: GeographyConfig,
         state_fips: str,
         pums_year: int,
-        cache_dir: Path | None = None,
-        zone_groups: dict[str, list[str]] | None = None,
+        census_dir: Path,
     ) -> None:
-        """Build crosswalk from *config* and Census geographies."""
+        """Build crosswalk from *config* and the Census geographies in *census_dir*."""
         logger.info("Initializing PumaCrosswalk with config: %s", config)
 
         # -- zone groups --------------------------------------------------
-        self.zone_groups = zone_groups or {}
-        self._zone_remap = _build_zone_remap(self.zone_groups) if self.zone_groups else {}
+        self.zone_groups = config.zone_groups or {}
+        self._zone_remap = zone_to_group(self.zone_groups)
 
         # -- target zones (always needed downstream) ----------------------
         self.target_gdf = _load_target_zones(
@@ -164,111 +143,62 @@ class PumaCrosswalk:
             config.target_zones.id_field,
         )
 
-        # -- cache check --------------------------------------------------
-        cache_key = _crosswalk_cache_key(config, state_fips, pums_year, zone_groups)
-        cache_dir_xw = (cache_dir / "crosswalk" / cache_key) if cache_dir else None
+        # -- Census geographies ---------------------------------------
+        puma_gdf = get_puma_gdf(state_fips, pums_year, census_dir)
+        block_gdf = get_block_gdf(state_fips, pums_year, census_dir)
 
-        if cache_dir_xw and (cache_dir_xw / "crosswalk.parquet").exists():
-            logger.info("Loading cached crosswalk from %s", cache_dir_xw)
-            self.crosswalk_df = pl.read_parquet(cache_dir_xw / "crosswalk.parquet")
-            self.puma_gdf = gpd.read_parquet(cache_dir_xw / "puma_clipped.parquet")
-            self.block_gdf = gpd.read_parquet(cache_dir_xw / "block_clipped.parquet")
-            self.puma_ids = sorted(self.puma_gdf["puma_id"].unique().tolist())
-        else:
-            # -- Census geographies ---------------------------------------
-            puma_gdf = get_puma_gdf(state_fips, pums_year, cache_dir=cache_dir)
-            block_gdf = get_block_gdf(state_fips, pums_year, cache_dir=cache_dir)
+        # -- clip to study area ---------------------------------------
+        logger.info("Clipping Census geographies to target zone extent")
+        study_crs = puma_gdf.crs or "EPSG:4326"
+        study_area = unary_union(self.target_gdf.to_crs(study_crs).geometry)
 
-            # -- clip to study area ---------------------------------------
-            logger.info("Clipping Census geographies to target zone extent")
-            study_crs = puma_gdf.crs or "EPSG:4326"
-            study_area = unary_union(self.target_gdf.to_crs(study_crs).geometry)
+        self.block_gdf = block_gdf[block_gdf.intersects(study_area)].copy()
+        self.puma_gdf = puma_gdf[puma_gdf.intersects(study_area)].copy()
+        self.puma_ids = sorted(self.puma_gdf["puma_id"].unique().tolist())
 
-            self.block_gdf = block_gdf[block_gdf.intersects(study_area)].copy()
-            self.puma_gdf = puma_gdf[puma_gdf.intersects(study_area)].copy()
-            self.puma_ids = sorted(self.puma_gdf["puma_id"].unique().tolist())
+        if not self.puma_ids:
+            msg = "No PUMAs overlap the target zone geometry."
+            raise ValueError(msg)
+        logger.info(
+            "Overlapping PUMAs: %d (number may be high due to some may just be touching)",
+            len(self.puma_ids),
+        )
 
-            if not self.puma_ids:
-                msg = "No PUMAs overlap the target zone geometry."
-                raise ValueError(msg)
-            logger.info(
-                "Overlapping PUMAs: %d (number may be high due to some may just be touching)",
-                len(self.puma_ids),
-            )
+        # -- rasterize & cross-tabulate -------------------------------
+        self.crosswalk_df = build_crosswalk(
+            source_gdf=self.puma_gdf,
+            target_gdf=self.target_gdf,
+            weight_gdf=self.block_gdf,
+            source_id_col="puma_id",
+            target_id_col="target_zone_id",
+            weight_col="block_pop",
+            resolution=config.resolution,
+            min_allocation=config.min_allocation,
+        ).rename({"source_id": "puma_id", "target_id": "target_zone_id"})
 
-            # -- rasterize & cross-tabulate -------------------------------
-            self.crosswalk_df = build_crosswalk(
-                source_gdf=self.puma_gdf,
-                target_gdf=self.target_gdf,
-                weight_gdf=self.block_gdf,
-                source_id_col="puma_id",
-                target_id_col="study_geoid",
-                weight_col="block_pop",
-                resolution=config.resolution,
-                min_allocation=config.min_allocation,
-            ).rename({"source_id": "puma_id", "target_id": "study_geoid"})
-
-            self.crosswalk_df = self.crosswalk_df.with_columns(
-                pl.col("study_geoid").replace(self._zone_remap).alias("ctrl_geoid")
-            )
-
-            # -- write cache ----------------------------------------------
-            if cache_dir_xw:
-                cache_dir_xw.mkdir(parents=True, exist_ok=True)
-                self.crosswalk_df.write_parquet(cache_dir_xw / "crosswalk.parquet")
-                self.puma_gdf.to_parquet(cache_dir_xw / "puma_clipped.parquet")
-                self.block_gdf.to_parquet(cache_dir_xw / "block_clipped.parquet")
-                logger.info("Cached crosswalk → %s", cache_dir_xw)
+        self.crosswalk_df = self.crosswalk_df.with_columns(
+            pl.col("target_zone_id").replace(self._zone_remap).alias("zone_group_id")
+        )
 
         if self.zone_groups:
             logger.info(
-                "Zone groups applied: %d study zones → %d ctrl zones",
-                self.crosswalk_df["study_geoid"].n_unique(),
-                self.crosswalk_df["ctrl_geoid"].n_unique(),
+                "Zone groups applied: %d target zones → %d zone groups",
+                self.crosswalk_df["target_zone_id"].n_unique(),
+                self.crosswalk_df["zone_group_id"].n_unique(),
             )
 
     # -- public methods ---------------------------------------------------
 
     @property
-    def zone_populations(self) -> pl.DataFrame:
-        """Census block population totals per balancing zone.
+    def allocated_puma_ids(self) -> list[str]:
+        """PUMAs that allocate PUMS households to some zone.
 
-        Returns a DataFrame with columns ``[geo_id, target_population]``
-        where ``target_population`` is the sum of Census block population
-        allocated to each ``ctrl_geoid``.
+        Fewer than ``puma_ids``: a PUMA that only touches the study area, or whose
+        share falls below ``min_allocation``, is in ``puma_ids`` but allocates nothing.
         """
-        return (
-            self.crosswalk_df.group_by("ctrl_geoid")
-            .agg(pl.col("population").sum().alias("target_population"))
-            .rename({"ctrl_geoid": "geo_id"})
-            .with_columns(pl.col("geo_id").cast(pl.Utf8))
-            .sort("geo_id")
-        )
+        return self.crosswalk_df["puma_id"].unique().sort().to_list()
 
-    @property
-    def block_group_populations(self) -> pl.DataFrame:
-        """Census block population summed to block-group level.
-
-        Block group GEOID = first 12 characters of the 15-character
-        Census block GEOID (FIPS state + county + tract + block group).
-
-        Returns a DataFrame with columns ``[bg_geo_id, bg_population]``.
-        """
-        bg_df = pl.from_pandas(self.block_gdf[["block_id", "block_pop"]].copy()).with_columns(
-            pl.col("block_id").str.slice(0, 12).alias("bg_geo_id"),
-        )
-        return (
-            bg_df.group_by("bg_geo_id")
-            .agg(pl.col("block_pop").sum().alias("bg_population"))
-            .sort("bg_geo_id")
-        )
-
-    def assign_block_groups(
-        self,
-        households: pl.DataFrame,
-        lon_col: str = "home_lon",
-        lat_col: str = "home_lat",
-    ) -> pl.DataFrame:
+    def assign_block_groups(self, households: pl.DataFrame) -> pl.DataFrame:
         """Point-in-polygon assignment of households to Census block groups.
 
         Returns *households* with a ``bg_geo_id`` column added (null for
@@ -285,8 +215,8 @@ class PumaCrosswalk:
         points = gpd.GeoDataFrame(
             {"hh_id": households["hh_id"].to_numpy()},
             geometry=gpd.points_from_xy(
-                households[lon_col].to_numpy(),
-                households[lat_col].to_numpy(),
+                households["home_lon"].to_numpy(),
+                households["home_lat"].to_numpy(),
             ),
             crs="EPSG:4326",
         )
@@ -317,83 +247,143 @@ class PumaCrosswalk:
         result_pl = pl.concat([within, edge_bg]).unique(subset=["hh_id"], keep="first")
         return households.join(result_pl, on="hh_id", how="left")
 
-    def assign_households(
-        self,
-        households: pl.DataFrame,
-        lon_col: str = "home_lon",
-        lat_col: str = "home_lat",
-    ) -> pl.DataFrame:
-        """Point-in-polygon assignment of households to target zones.
+    def assign_households(self, households: pl.DataFrame) -> pl.DataFrame:
+        """Point-in-polygon assignment of households to target zones and PUMAs.
 
-        Returns *households* with ``study_geoid`` and ``ctrl_geoid``
-        columns added (null for points outside all zones).
+        Returns *households* with ``target_zone_id``, ``zone_group_id`` and
+        ``home_puma`` columns added (each null for points outside all polygons).
+        The PUMAs are the ones the PUMS is allocated from, so both sides of the
+        ``h_puma`` target share one set of boundaries.
         """
         points = gpd.GeoDataFrame(
             {"hh_id": households["hh_id"].to_list()},
             geometry=gpd.points_from_xy(
-                households[lon_col].to_list(),
-                households[lat_col].to_list(),
+                households["home_lon"].to_list(),
+                households["home_lat"].to_list(),
             ),
             crs="EPSG:4326",
         )
-        target = self.target_gdf.to_crs("EPSG:4326")[["study_geoid", "geometry"]]
-        joined = gpd.sjoin(points, target, how="left", predicate="within")
-        joined = joined.drop(columns=["geometry", "index_right"])
 
-        result_pl = (
-            pl.from_pandas(joined[["hh_id", "study_geoid"]])
-            .unique(subset=["hh_id"], keep="first")
-            .with_columns(pl.col("study_geoid").replace(self._zone_remap).alias("ctrl_geoid"))
+        def within(polygons: gpd.GeoDataFrame, id_col: str) -> pl.DataFrame:
+            shapes = polygons.to_crs("EPSG:4326")[[id_col, "geometry"]]
+            joined = gpd.sjoin(points, shapes, how="left", predicate="within")
+            return pl.from_pandas(joined[["hh_id", id_col]]).unique(subset=["hh_id"], keep="first")
+
+        zones = within(self.target_gdf, "target_zone_id").with_columns(
+            pl.col("target_zone_id").replace(self._zone_remap).alias("zone_group_id")
         )
-        return households.join(result_pl, on="hh_id", how="left")
+        pumas = within(self.puma_gdf, "puma_id").rename({"puma_id": "home_puma"})
+        return households.join(zones, on="hh_id", how="left").join(pumas, on="hh_id", how="left")
+
+    def assign_blocks(self, blocks: gpd.GeoDataFrame) -> pl.DataFrame:
+        """Assign Census blocks to the study's PUMAs and zone groups.
+
+        Each block is placed by a point inside it, so it gets exactly one PUMA
+        and at most one zone. Pass every block in the state, not just the ones
+        in the study area: a PUMA's Census total must count all of its blocks.
+
+        Returns ``[block_id, puma_id, target_zone_id, zone_group_id]`` for blocks
+        inside the study's PUMAs, with both zone columns null outside the zones.
+        """
+        pumas = self.puma_gdf[["puma_id", "geometry"]]
+        minx, miny, maxx, maxy = pumas.to_crs(blocks.crs).total_bounds
+        nearby = blocks.cx[minx:maxx, miny:maxy]
+        points = gpd.GeoDataFrame(
+            {"block_id": nearby["block_id"].to_numpy()},
+            geometry=nearby.geometry.representative_point().to_numpy(),
+            crs=blocks.crs,
+        )
+
+        def within(polygons: gpd.GeoDataFrame, id_col: str) -> pl.DataFrame:
+            shapes = polygons.to_crs(blocks.crs)[[id_col, "geometry"]]
+            joined = gpd.sjoin(points, shapes, how="inner", predicate="within")
+            return pl.from_pandas(joined[["block_id", id_col]]).unique(
+                subset=["block_id"], keep="first"
+            )
+
+        zones = within(self.target_gdf, "target_zone_id").with_columns(
+            pl.col("target_zone_id").replace(self._zone_remap).alias("zone_group_id")
+        )
+        return within(pumas, "puma_id").join(zones, on="block_id", how="left")
+
+    def zone_counties(self, county_names: pl.DataFrame) -> dict[str, str]:
+        """Name the Census counties each target zone covers, by population share.
+
+        The names come from the Census, not from the zone IDs in the config, so a
+        zone ID put in the wrong group shows up as a county that doesn't belong.
+        A zone inside one county reads "Alameda County"; one spanning several
+        reads "Alameda County 92%, Contra Costa County 8%". Counties under 1% of
+        a zone's population are left out.
+
+        Args:
+            county_names: ``[county_fips, county_name]``, from
+                [`get_county_names`][processing.weighting.data_prep.census_geo.get_county_names].
+
+        Raises:
+            ValueError: A county the zones cover has no Census name.
+        """
+        blocks = self.assign_blocks(self.block_gdf).join(
+            pl.from_pandas(self.block_gdf[["block_id", "block_pop"]]), on="block_id"
+        )
+        shares = (
+            blocks.filter(pl.col("target_zone_id").is_not_null())
+            .group_by("target_zone_id", pl.col("block_id").str.slice(0, 5).alias("county_fips"))
+            .agg(pl.col("block_pop").sum())
+            .with_columns(
+                (pl.col("block_pop") / pl.col("block_pop").sum().over("target_zone_id")).alias(
+                    "share"
+                )
+            )
+            .filter(pl.col("share") >= _MIN_COUNTY_SHARE)
+            .join(county_names, on="county_fips", how="left")
+            .sort("target_zone_id", "share", descending=[False, True])
+        )
+        unnamed = shares.filter(pl.col("county_name").is_null())["county_fips"].unique().to_list()
+        if unnamed:
+            msg = f"The Census has no name for counties {sorted(unnamed)}"
+            raise ValueError(msg)
+
+        labels: dict[str, str] = {}
+        for (zone,), rows in shares.group_by("target_zone_id", maintain_order=True):
+            names = rows["county_name"].to_list()
+            if rows.height == 1:
+                labels[str(zone)] = names[0]
+            else:
+                parts = zip(names, rows["share"].to_list(), strict=True)
+                labels[str(zone)] = ", ".join(f"{n} {s:.0%}" for n, s in parts)
+        return labels
 
     def allocate_pums_weights(
         self,
         hh_df: pl.DataFrame,
         person_df: pl.DataFrame,
-        geo_col: str = "PUMA",
     ) -> tuple[pl.DataFrame, pl.DataFrame]:
         """Join crosswalk to PUMS and scale weights by allocation factor.
 
         Produces ``_xw_WGTP`` / ``_xw_PWGTP`` columns (original weight
-        times ``allocation_weight``) and adds ``study_geoid`` and
-        ``ctrl_geoid`` to both frames.
+        times ``allocation_weight``), and the same for each replicate weight,
+        and adds ``target_zone_id`` and ``zone_group_id`` to both frames.
         """
-        xw = self.crosswalk_df.select("puma_id", "study_geoid", "ctrl_geoid", "allocation_weight")
-
-        hh_xw = hh_df.join(
-            xw, left_on=pl.col(geo_col).cast(pl.Utf8), right_on="puma_id", how="inner"
-        ).with_columns(
-            (pl.col("WGTP").cast(pl.Float64) * pl.col("allocation_weight")).alias("_xw_WGTP"),
+        xw = self.crosswalk_df.select(
+            "puma_id", "target_zone_id", "zone_group_id", "allocation_weight"
         )
+        puma = pl.col("PUMA").cast(pl.Utf8)
 
-        # Scale household replicate weights if present
-        hh_rep_cols = [c for c in hh_xw.columns if c.startswith("WGTP") and c[4:].isdigit()]
-        if hh_rep_cols:
-            hh_xw = hh_xw.with_columns(
-                [
-                    (pl.col(c).cast(pl.Float64) * pl.col("allocation_weight")).alias(f"_xw_{c}")
-                    for c in hh_rep_cols
-                ]
+        def scaled(df: pl.DataFrame, weight: str) -> pl.DataFrame:
+            # The weight, then its replicates (WGTP1, ...), times the allocation weight
+            reps = [c for c in df.columns if c.startswith(weight) and c[len(weight) :].isdigit()]
+            return df.with_columns(
+                (pl.col(c).cast(pl.Float64) * pl.col("allocation_weight")).alias(f"_xw_{c}")
+                for c in [weight, *reps]
             )
 
-        person_xw = (
-            person_df.join(hh_df.select("SERIALNO", geo_col), on="SERIALNO", how="left")
-            .join(xw, left_on=pl.col(geo_col).cast(pl.Utf8), right_on="puma_id", how="inner")
-            .with_columns(
-                (pl.col("PWGTP").cast(pl.Float64) * pl.col("allocation_weight")).alias("_xw_PWGTP"),
-            )
+        hh_xw = scaled(hh_df.join(xw, left_on=puma, right_on="puma_id", how="inner"), "WGTP")
+        person_xw = scaled(
+            person_df.join(hh_df.select("SERIALNO", "PUMA"), on="SERIALNO", how="left").join(
+                xw, left_on=puma, right_on="puma_id", how="inner"
+            ),
+            "PWGTP",
         )
-
-        # Scale person replicate weights if present
-        per_rep_cols = [c for c in person_xw.columns if c.startswith("PWGTP") and c[5:].isdigit()]
-        if per_rep_cols:
-            person_xw = person_xw.with_columns(
-                [
-                    (pl.col(c).cast(pl.Float64) * pl.col("allocation_weight")).alias(f"_xw_{c}")
-                    for c in per_rep_cols
-                ]
-            )
         logger.info(
             "Crosswalk join: %d HH -> %d, %d persons -> %d",
             len(hh_df),
@@ -407,7 +397,6 @@ class PumaCrosswalk:
         self,
         pums_incidence: pl.DataFrame,
         *,
-        puma_col: str = "PUMA",
         weight_col: str = "WGTP",
     ) -> pl.DataFrame:
         """Assign target-zone IDs and scale PUMS weights via the crosswalk.
@@ -416,27 +405,26 @@ class PumaCrosswalk:
         its weight is scaled by the zone's ``allocation_weight``.
 
         Args:
-            pums_incidence: Pivoted PUMS incidence table.  Must contain *puma_col* and
+            pums_incidence: Pivoted PUMS incidence table.  Must contain ``PUMA`` and
                 *weight_col*.
-            puma_col: Column identifying the PUMA (default ``"PUMA"``).
             weight_col: Original PUMS weight column to scale (default ``"WGTP"``).
 
         Returns:
-            Incidence table with ``study_geoid`` and ``ctrl_geoid`` added,
+            Incidence table with ``target_zone_id`` and ``zone_group_id`` added,
             *weight_col* scaled by ``allocation_weight``, and rows
             multiplied per zone overlap.
         """
         xw = self.crosswalk_df.select(
             "puma_id",
-            "study_geoid",
-            "ctrl_geoid",
+            "target_zone_id",
+            "zone_group_id",
             "allocation_weight",
         )
 
         result = (
             pums_incidence.join(
                 xw,
-                left_on=pl.col(puma_col).cast(pl.Utf8),
+                left_on=pl.col("PUMA").cast(pl.Utf8),
                 right_on="puma_id",
                 how="inner",
             )
@@ -448,25 +436,25 @@ class PumaCrosswalk:
             .drop("allocation_weight")
         )
 
-        # Guard: every crosswalk ctrl_geoid must appear in the result.
+        # Guard: every crosswalk zone_group_id must appear in the result.
         # A missing zone means the balancer will have no seed data for it.
-        expected_geos = set(xw["ctrl_geoid"].unique().to_list())
-        actual_geos = set(result["ctrl_geoid"].unique().to_list())
+        expected_geos = set(xw["zone_group_id"].unique().to_list())
+        actual_geos = set(result["zone_group_id"].unique().to_list())
         missing_geos = expected_geos - actual_geos
 
         if missing_geos:
-            pums_puma_ids = pums_incidence[puma_col].cast(pl.Utf8).unique()
+            pums_puma_ids = pums_incidence["PUMA"].cast(pl.Utf8).unique()
             xw_puma_ids = xw["puma_id"].unique()
             if actual_geos:
                 msg = (
-                    f"{len(missing_geos)} control zone(s) from the crosswalk received "
+                    f"{len(missing_geos)} zone group(s) from the crosswalk received "
                     f"zero PUMS allocation: {sorted(missing_geos)}"
                 )
             else:
                 pums_samples = pums_puma_ids.sort().head(5).to_list()
                 xw_samples = xw_puma_ids.sort().head(5).to_list()
                 msg = (
-                    f"ALL {len(missing_geos)} control zone(s) missing after PUMA join \u2014 "
+                    f"ALL {len(missing_geos)} zone group(s) missing after PUMA join \u2014 "
                     f"no PUMS records matched the crosswalk.  This is almost certainly "
                     f"a PUMA ID type mismatch (e.g. integer vs. zero-padded string).  "
                     f"PUMS PUMAs (first 5): {pums_samples}.  "
@@ -478,7 +466,7 @@ class PumaCrosswalk:
             "PUMS zone allocation: %d HHs \u2192 %d rows (%d zones)",
             len(pums_incidence),
             len(result),
-            result["study_geoid"].n_unique(),
+            result["target_zone_id"].n_unique(),
         )
         return result
 
@@ -497,18 +485,18 @@ def _load_target_zones(
     For example, counties or target districts.
 
     The file must contain a column with unique identifiers for each zone,
-    which will be used as the ``study_geoid`` in the crosswalk.
+    which will be used as the ``target_zone_id`` in the crosswalk.
     If *id_field* is not provided, the zones will be dissolved into a
-    single geometry with a dummy ``study_geoid`` of "1".
+    single geometry with a dummy ``target_zone_id`` of "1".
     """
     gdf = source.copy() if isinstance(source, gpd.GeoDataFrame) else gpd.read_file(source)
     if id_field is None:
         gdf = gdf.dissolve()
-        gdf["study_geoid"] = "1"
+        gdf["target_zone_id"] = "1"
     else:
         if id_field not in gdf.columns:
             msg = f"id_field {id_field!r} not found. Available: {list(gdf.columns)}"
             raise ValueError(msg)
-        gdf = gdf.rename(columns={id_field: "study_geoid"})
-        gdf["study_geoid"] = gdf["study_geoid"].astype(str)
-    return gdf[["study_geoid", "geometry"]].reset_index(drop=True)
+        gdf = gdf.rename(columns={id_field: "target_zone_id"})
+        gdf["target_zone_id"] = gdf["target_zone_id"].astype(str)
+    return gdf[["target_zone_id", "geometry"]].reset_index(drop=True)

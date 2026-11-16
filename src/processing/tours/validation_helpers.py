@@ -10,7 +10,6 @@ import logging
 
 import polars as pl
 
-from data_canon.codebook.generic import LocationType
 from data_canon.codebook.tours import TourCategory, TourDataQuality
 from utils.helpers import expr_haversine
 
@@ -76,9 +75,7 @@ def _spatial_gap_flags(
 
 def _open_end_facts(
     linked_trips: pl.DataFrame,
-    habitual_locations: pl.DataFrame | None,
     boundary_gap_threshold_meters: float,
-    home_threshold_meters: float,
 ) -> pl.DataFrame:
     """Describe each tour's two ends against the person's surrounding travel.
 
@@ -86,8 +83,9 @@ def _open_end_facts(
     after it, so this walks each person's whole trip sequence -- across diary
     days, which is exactly where tours are cut -- and reports, per tour:
 
-    * ``_start_other_home`` / ``_end_other_home`` -- that end sits on another
-      home this person is known to have, which tours are not built around.
+    * ``_start_other_home`` / ``_end_other_home`` -- that end is at a home this
+      person is known to have that is not their primary one.
+    * ``_moved_home`` -- the tour ends at a different home from the one it left.
     * ``_start_resumes`` / ``_end_resumes`` -- the adjacent trip picks up at the
       same place, so the journey continues and was merely split.
     * ``_start_edge`` / ``_end_edge`` -- there is no adjacent trip at all; the
@@ -96,16 +94,16 @@ def _open_end_facts(
       a connecting leg is missing. Same defect as an internal spatial gap, just
       at the tour boundary rather than inside it.
 
-    Returns one row per tour_id. Missing coordinate columns yield all-false
-    facts so schema-only frames and coordinate-free unit tests still grade.
+    Returns one row per tour_id. Without coordinate columns (schema-only
+    frames, coordinate-free unit tests) nothing can be said about what
+    surrounds a tour, which is precisely the diary-edge case: no observed trip
+    either side. So both edges are true and every other fact false; defaulting
+    the edges to false would silently grade a partial tour VALID.
     """
     facts = linked_trips.select("tour_id").unique()
     required = (*_GAP_COORD_COLS, "arrive_time", "person_id")
     if any(c not in linked_trips.columns for c in required):
-        # Without coordinates nothing can be said about what surrounds a tour,
-        # which is precisely the diary-edge case: no observed trip either side.
-        # Defaulting the edges to true keeps a partial tour partial, where
-        # defaulting them to false would silently grade it VALID.
+        # Edges true keeps a partial tour partial (see docstring)
         return facts.with_columns(
             [
                 pl.lit(value=True).alias("_start_edge"),
@@ -115,6 +113,7 @@ def _open_end_facts(
                     for c in (
                         "_start_other_home",
                         "_end_other_home",
+                        "_moved_home",
                         "_start_resumes",
                         "_end_resumes",
                         "_boundary_gap",
@@ -123,7 +122,7 @@ def _open_end_facts(
             ]
         )
 
-    # Neighbouring trips in person order, deliberately ignoring day_id: the
+    # Neighbouring trips in person order, deliberately ignoring person_day_id: the
     # diary day boundary is the thing being measured, not a barrier to it.
     seq = linked_trips.sort(["person_id", "depart_time", "arrive_time"]).with_columns(
         [
@@ -147,6 +146,11 @@ def _open_end_facts(
                 pl.col("_pv_lon").first(),
                 pl.col("_nx_lat").last(),
                 pl.col("_nx_lon").last(),
+                pl.col("_o_at_other_home").first().alias("_start_other_home"),
+                pl.col("_d_at_other_home").last().alias("_end_other_home"),
+                (pl.col("_o_home_id").first() != pl.col("_d_home_id").last())
+                .fill_null(value=False)
+                .alias("_moved_home"),
             ]
         )
     )
@@ -184,68 +188,7 @@ def _open_end_facts(
         ).alias("_boundary_gap")
     )
 
-    other_home = _other_home_flags(ends, habitual_locations, home_threshold_meters)
-    return ends.join(other_home, on="tour_id", how="left").with_columns(
-        [
-            pl.col("_start_other_home").fill_null(value=False),
-            pl.col("_end_other_home").fill_null(value=False),
-        ]
-    )
-
-
-def _other_home_flags(
-    ends: pl.DataFrame,
-    habitual_locations: pl.DataFrame | None,
-    home_threshold_meters: float,
-) -> pl.DataFrame:
-    """Flag tour ends sitting on another home of the same person.
-
-    Any non-primary home in ``habitual_locations`` counts, whether the
-    respondent reported it or the pipeline derived it from their travel --
-    a second residence is a second residence either way. Tours are simply not
-    built around them, so one that begins or ends at one reads as truncated
-    when it is not. Saying so outright beats reporting a truncation that did
-    not happen.
-    """
-    blank = ends.select("tour_id").with_columns(
-        pl.lit(value=False).alias("_start_other_home"),
-        pl.lit(value=False).alias("_end_other_home"),
-    )
-    if habitual_locations is None or habitual_locations.is_empty():
-        return blank
-    needed = {"person_id", "location_type", "is_primary", "lat", "lon"}
-    if not needed <= set(habitual_locations.columns):
-        return blank
-
-    secondary = habitual_locations.filter(
-        (pl.col("location_type") == LocationType.HOME.value) & (~pl.col("is_primary"))
-    ).select("person_id", pl.col("lat").alias("_h_lat"), pl.col("lon").alias("_h_lon"))
-    if secondary.is_empty():
-        return blank
-
-    paired = ends.select("tour_id", "person_id", "_s_lat", "_s_lon", "_e_lat", "_e_lon").join(
-        secondary, on="person_id", how="inner"
-    )
-    near = paired.with_columns(
-        [
-            (
-                expr_haversine(
-                    pl.col("_s_lat"), pl.col("_s_lon"), pl.col("_h_lat"), pl.col("_h_lon")
-                )
-                <= home_threshold_meters
-            ).alias("_s_near"),
-            (
-                expr_haversine(
-                    pl.col("_e_lat"), pl.col("_e_lon"), pl.col("_h_lat"), pl.col("_h_lon")
-                )
-                <= home_threshold_meters
-            ).alias("_e_near"),
-        ]
-    )
-    return near.group_by("tour_id").agg(
-        pl.col("_s_near").any().alias("_start_other_home"),
-        pl.col("_e_near").any().alias("_end_other_home"),
-    )
+    return ends
 
 
 def _assert_tours_assigned(linked_trips: pl.DataFrame) -> None:
@@ -275,9 +218,7 @@ def _assert_tours_assigned(linked_trips: pl.DataFrame) -> None:
 def validate_and_correct_tours(
     tours: pl.DataFrame,
     linked_trips: pl.DataFrame,
-    habitual_locations: pl.DataFrame | None = None,
     spatial_gap_threshold_meters: float = 1000.0,
-    home_threshold_meters: float = 100.0,
 ) -> pl.DataFrame:
     """Stamp ``tour_data_quality``: why each tour is not a valid round trip.
 
@@ -288,11 +229,15 @@ def validate_and_correct_tours(
     1. ``NO_DESTINATION`` -- a closed tour with nothing to anchor on. Subsumes
        the old loop-trip code and the change-mode-only case alike. Restricted to
        closed tours on purpose: a partial tour lacks an activity because half of
-       it went unobserved, which its open-end code already says.
-    2. ``PARTIAL_OTHER_HOME`` -- an open end is a home this person is already
-       known to stay at. Ranked above the gap checks because the tour is not
-       really truncated; the anchor is.
-    3. ``SPATIAL_GAP`` -- a leg is missing, inside the tour or at its boundary.
+       it went unobserved, which its open-end code already says. The one
+       exception is a move between two homes (next).
+    2. ``SPATIAL_GAP`` -- a leg is missing, inside the tour or at its boundary.
+    3. ``OTHER_HOME`` -- a closed home-based tour that leaves from or returns to
+       a home of the person's other than their primary one. Only closed tours:
+       one also open at its other end is reported by that open end instead.
+       Subtours are graded on their own anchor, whatever home sits beside it. A
+       trip straight from one home to another has no destination, but the move
+       is the reason, so it is this code rather than ``NO_DESTINATION``.
     4. ``PARTIAL_DAY_SPLIT`` -- the journey continues from the same place on the
        next diary day. Recoverable by stitching.
     5. ``PARTIAL_DIARY_EDGE`` -- the diary begins or ends at that open end.
@@ -304,12 +249,8 @@ def validate_and_correct_tours(
     Args:
         tours: Aggregated tours with tour_category and tour_purpose.
         linked_trips: Linked trips with tour_id, coordinates and times.
-        habitual_locations: Observed habitual locations, used to recognise a
-            person's other homes. Omitted, no tour is graded OTHER_HOME.
         spatial_gap_threshold_meters: Distance above which a junction between
             consecutive trips counts as a missing leg.
-        home_threshold_meters: Distance within which a tour end is treated as
-            being at a known home.
 
     Returns:
         Tours with a ``tour_data_quality`` column added.
@@ -319,12 +260,7 @@ def validate_and_correct_tours(
     _assert_tours_assigned(linked_trips)
 
     gap_check = _spatial_gap_flags(linked_trips, spatial_gap_threshold_meters)
-    open_ends = _open_end_facts(
-        linked_trips,
-        habitual_locations,
-        spatial_gap_threshold_meters,
-        home_threshold_meters,
-    )
+    open_ends = _open_end_facts(linked_trips, spatial_gap_threshold_meters)
     facts = [c for c in open_ends.columns if c.startswith("_")]
     tours = tours.join(gap_check, on="tour_id", how="left").join(
         open_ends.select("tour_id", *facts), on="tour_id", how="left"
@@ -344,23 +280,30 @@ def validate_and_correct_tours(
             end_open & pl.col(f"_end_{flag}").fill_null(value=False)
         )
 
-    tours = tours.with_columns(
-        # Only a *closed* tour can be faulted for having no destination: it went
-        # out and came back with nothing in between. A partial tour has no
-        # activity because half of it was never observed, so its open end is the
-        # fact worth reporting, not the missing stop.
-        pl.when(
-            pl.col("tour_purpose").is_null()
-            & (pl.col("tour_category") == TourCategory.COMPLETE.value)
+    closed = pl.col("tour_category") == TourCategory.COMPLETE.value
+    other_home_tour = (
+        closed
+        & (pl.col("subtour_num") == 0)
+        & (
+            pl.col("_start_other_home").fill_null(value=False)
+            | pl.col("_end_other_home").fill_null(value=False)
         )
+    )
+    no_destination = pl.col("tour_purpose").is_null() & closed
+
+    tours = tours.with_columns(
+        pl.when(other_home_tour & no_destination & pl.col("_moved_home").fill_null(value=False))
+        .then(pl.lit(TourDataQuality.OTHER_HOME))
+        # Only a closed tour can lack a destination (docstring, item 1)
+        .when(no_destination)
         .then(pl.lit(TourDataQuality.NO_DESTINATION))
-        .when(at_open_end("other_home"))
-        .then(pl.lit(TourDataQuality.PARTIAL_OTHER_HOME))
         .when(
             pl.col("_has_spatial_gap").fill_null(value=False)
             | (pl.col("_boundary_gap").fill_null(value=False) & (start_open | end_open))
         )
         .then(pl.lit(TourDataQuality.SPATIAL_GAP))
+        .when(other_home_tour)
+        .then(pl.lit(TourDataQuality.OTHER_HOME))
         .when(at_open_end("resumes"))
         .then(pl.lit(TourDataQuality.PARTIAL_DAY_SPLIT))
         .when(at_open_end("edge"))

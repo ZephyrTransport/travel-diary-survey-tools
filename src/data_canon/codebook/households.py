@@ -81,30 +81,15 @@ class ParticipationGroup(LabeledEnum):
     canonical_field_name = "participation_group"
     field_description = "Indicates the survey mode used for signup and diary completion"
 
-    SIGNUP_BMOVE_DIARY_BMOVE = (
-        1,
-        "Signup via browserMove, Diary via browserMove",
-    )
-    SIGNUP_BMOVE_DIARY_CALL_CENTER = (
-        2,
-        "Signup via browserMove, Diary via call center",
-    )
-    SIGNUP_BMOVE_DIARY_RMOVE = (3, "Signup via browserMove, Diary via rMove")
-    SIGNUP_CALL_DIARY_BMOVE = (
-        4,
-        "Signup via call center, Diary via browserMove",
-    )
-    SIGNUP_CALL_DIARY_CALL_CENTER = (
-        5,
-        "Signup via call center, Diary via call center",
-    )
-    SIGNUP_CALL_DIARY_RMOVE = (6, "Signup via call center, Diary via rMove")
-    SIGNUP_RMOVE_DIARY_BMOVE = (7, "Signup via rMove, Diary via browserMove")
-    SIGNUP_RMOVE_DIARY_CALL_CENTER = (
-        8,
-        "Signup via rMove, Diary via call center",
-    )
-    SIGNUP_RMOVE_DIARY_RMOVE = (9, "Signup via rMove, Diary via rMove")
+    SIGNUP_BROWSER_DIARY_BROWSER = (1, "Signup via browser, diary via browser")
+    SIGNUP_BROWSER_DIARY_CALL_CENTER = (2, "Signup via browser, diary via call center")
+    SIGNUP_BROWSER_DIARY_GPS = (3, "Signup via browser, diary via GPS")
+    SIGNUP_CALL_CENTER_DIARY_BROWSER = (4, "Signup via call center, diary via browser")
+    SIGNUP_CALL_CENTER_DIARY_CALL_CENTER = (5, "Signup via call center, diary via call center")
+    SIGNUP_CALL_CENTER_DIARY_GPS = (6, "Signup via call center, diary via GPS")
+    SIGNUP_GPS_DIARY_BROWSER = (7, "Signup via GPS, diary via browser")
+    SIGNUP_GPS_DIARY_CALL_CENTER = (8, "Signup via GPS, diary via call center")
+    SIGNUP_GPS_DIARY_GPS = (9, "Signup via GPS, diary via GPS")
 
 
 class ResidenceRentOwn(LabeledEnum):

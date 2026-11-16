@@ -3,9 +3,6 @@
 This module provides step-aware row validation using Pydantic models.
 Step-aware validation allows fields to be required only in specific pipeline
 steps, enabling progressive data refinement throughout the pipeline.
-
-Note: ValidationError class is defined in data_canon.core.dataclass to avoid
-circular imports.
 """
 
 import logging
@@ -18,12 +15,9 @@ from pydantic import ValidationError as PydanticValidationError
 
 from data_canon.core.exceptions import DataValidationError
 from pipeline.step_registry import get_required_fields as get_required_fields_for_step
+from pipeline.step_registry import is_config_named
 
 logger = logging.getLogger(__name__)
-
-
-# DataFrame-Level Validation -----------------------------------------------
-# Note: Row-level validation functions imported from data_canon.core.validators
 
 
 def validate_row_for_step(
@@ -36,7 +30,11 @@ def validate_row_for_step(
 
     This function validates that all fields required for the given step
     are present and valid. Fields not required for this step are still
-    type-checked if present, but are not required.
+    type-checked if present, but are not required: a null in one is dropped
+    before validation, so the model does not demand it.
+
+    A model-level validator reports an empty ``loc``; it is about the row as a
+    whole, so its errors are always kept.
 
     Args:
         row_dict: Dictionary representing a single row
@@ -53,8 +51,10 @@ def validate_row_for_step(
         model(**row_dict)
         return
 
-    # Get fields required for this step
-    required_fields = get_required_fields_for_step(table_name, step_name)
+    # Get fields required for this step; config-named patterns are the step's to check
+    required_fields = {
+        f for f in get_required_fields_for_step(table_name, step_name) if not is_config_named(f)
+    }
 
     # Check for missing required fields
     missing_fields = [field_name for field_name in required_fields if field_name not in row_dict]
@@ -63,19 +63,14 @@ def validate_row_for_step(
         msg = f"Missing required fields for step '{step_name}': {', '.join(missing_fields)}"
         raise ValueError(msg)
 
-    # Build dict with only non-None values to avoid Pydantic's
-    # required field enforcement for step-conditional fields
-    # Include all required fields (even if None) + all non-None fields
+    # Required fields stay even when null; other nulls are dropped
     filtered_row = {k: v for k, v in row_dict.items() if v is not None or k in required_fields}
 
     # Validate all present fields in a single pass using model_validate
     try:
         model.model_validate(filtered_row, strict=False)
     except PydanticValidationError as e:
-        # Only re-raise errors for fields that are actually present or required
-        # for this step. A model-level validator reports an empty ``loc`` -- it
-        # is about the row as a whole rather than one field -- so it is always
-        # relevant and must not be indexed into.
+        # Keep errors on present or required fields, and row-level ones
         def _is_relevant(err: dict) -> bool:
             loc = err.get("loc") or ()
             if not loc:
@@ -114,52 +109,29 @@ def validate_dataframe_rows(
     total_rows = len(df)
     start_time = time.time()
     update_interval = 2  # seconds
-
-    # Convert entire DataFrame to list of dicts once (faster than iter_rows)
-    rows = df.to_dicts()
-
-    # Batch validate with progress reporting
-    batch_size = 100_000
-    error_groups: dict[str, list[int]] = {}
+    progress_every = 100_000  # rows
     max_unique_errors = 10
+    error_groups: dict[str, list[int]] = {}
 
-    for batch_start in range(0, total_rows, batch_size):
-        batch_end = min(batch_start + batch_size, total_rows)
-        batch = rows[batch_start:batch_end]
-        current_time = time.time()
+    # One to_dicts() is faster than iter_rows
+    for row_idx, row in enumerate(df.to_dicts()):
+        try:
+            validate_row_for_step(row, model, table_name, step)
+        except (PydanticValidationError, ValueError) as e:
+            error_groups.setdefault(str(e), []).append(row_idx)
+            if len(error_groups) >= max_unique_errors:
+                break
 
-        # Validate each row in batch
-        for i, row in enumerate(batch):
-            row_idx = batch_start + i
-            try:
-                validate_row_for_step(row, model, table_name, step)
-            except (PydanticValidationError, ValueError) as e:
-                # Group errors by message
-                msg = str(e)
-                if msg not in error_groups:
-                    error_groups[msg] = []
-                error_groups[msg].append(row_idx)
-
-                # Stop if we've collected enough unique error types
-                if len(error_groups) >= max_unique_errors:
-                    break
-
-        # Progress updates for large datasets (time-based)
-        if (total_rows > batch_size) and (current_time - start_time >= update_interval):
-            percent_done = (batch_end / total_rows) * 100
+        done = row_idx + 1
+        if done % progress_every == 0 and time.time() - start_time >= update_interval:
             logger.info(
                 "Row validation progress for '%s': %.1f%% (%s/%s rows)",
                 table_name,
-                percent_done,
-                batch_end,
+                done / total_rows * 100,
+                done,
                 total_rows,
             )
 
-        # Stop early if we've collected enough unique errors
-        if len(error_groups) >= max_unique_errors:
-            break
-
-    # Raise with error details (after all batches are processed)
     _report_errors(error_groups, table_name)
 
 

@@ -61,7 +61,7 @@ def write_summary_report(  # noqa: C901, PLR0912, PLR0915 ignore since its a scr
     input_files = {
         "households": input_dir / "hh.csv",
         "persons": input_dir / "person.csv",
-        "days": input_dir / "day.csv",
+        "person_days": input_dir / "day.csv",
         "trips": input_dir / "trip.csv",
     }
 
@@ -91,7 +91,7 @@ def write_summary_report(  # noqa: C901, PLR0912, PLR0915 ignore since its a scr
     standard_files = {
         "households": output_dir / "households.csv",
         "persons": output_dir / "persons.csv",
-        "days": output_dir / "days.csv",
+        "person_days": output_dir / "person_days.csv",
         "unlinked_trips": output_dir / "unlinked_trips.csv",
         "linked_trips": output_dir / "linked_trips.csv",
         "tours": output_dir / "tours.csv",
@@ -169,9 +169,9 @@ def write_summary_report(  # noqa: C901, PLR0912, PLR0915 ignore since its a scr
             f"Persons:    {format_number(per_in)} → {format_number(per_out)} ({per_diff:+,})"
         )
 
-    if "days" in input_summaries and "days" in standard_summaries:
-        day_in = input_summaries["days"]["rows"]
-        day_out = standard_summaries["days"]["rows"]
+    if "person_days" in input_summaries and "person_days" in standard_summaries:
+        day_in = input_summaries["person_days"]["rows"]
+        day_out = standard_summaries["person_days"]["rows"]
         day_diff = day_out - day_in
         report_lines.append(
             f"Days:       {format_number(day_in)} → {format_number(day_out)} ({day_diff:+,})"

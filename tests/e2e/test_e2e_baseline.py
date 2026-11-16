@@ -1,19 +1,10 @@
 """Fail when the pipeline's numbers move, and say which ones.
 
-The rest of the e2e suite asks whether the pipeline runs and whether particular
-behaviours hold. This asks the question those cannot: did anything change? A
-green suite is not evidence that output is unchanged, and treating it as such is
-how a batch of PRs altered production results without a single test noticing.
-
-The check is bit-exact by design. Any drift fails, including drift that is
-correct and wanted -- that is the point. A wanted change is *promoted* by
-regenerating the baseline (see the failure message), which puts the movement in
-the PR diff where a reviewer can weigh it.
-
-See [`baseline`][tests.e2e.baseline] for what is stored: hashes and aggregates,
-never record-level values.
+Bit-exact by design: any drift fails, including a wanted change, which is promoted by
+regenerating the baseline (see the failure message) so the movement shows in the PR diff.
 """
 
+import copy
 from pathlib import Path
 
 import polars as pl
@@ -21,26 +12,15 @@ import pytest
 
 from . import baseline
 
-PROFILE = "full"
-
 
 @pytest.fixture(scope="module")
-def current(full_result, full_output_dir) -> dict:
-    """Fingerprint of this run's canonical tables and its formatted output.
+def current(full_tables, full_output_dir) -> dict:
+    """Fingerprint of this run's canonical tables and the formatted csvs it wrote.
 
-    The formatted tables are read back from disk rather than taken from the
-    pipeline result, which carries only canonical tables. They are the deliverable
-    -- what a model actually consumes -- and they were the one thing this baseline
-    never looked at, so a formatter could change every number it writes without
-    failing anything here.
+    The formatted tables are read back from disk: they are the deliverable, and the
+    pipeline result does not carry them.
     """
-    tables = (
-        full_result.as_dict_non_null()
-        if hasattr(full_result, "as_dict_non_null")
-        else dict(full_result)
-    )
-    tables.update(_written_formatter_tables(full_output_dir))
-    return baseline.fingerprint(tables)
+    return baseline.fingerprint({**full_tables, **_written_formatter_tables(full_output_dir)})
 
 
 def _written_formatter_tables(output_dir) -> dict[str, pl.DataFrame]:
@@ -58,59 +38,55 @@ class TestOutputIsUnchanged:
     def test_matches_the_committed_baseline(self, current):
         """Any difference in any column of any table fails, and is named."""
         if baseline.update_requested():
-            path = baseline.save(PROFILE, current)
+            path = baseline.save(current)
             pytest.skip(f"baseline rewritten: {path}")
 
-        committed = baseline.load(PROFILE)
+        committed = baseline.load()
         if committed is None:
-            path = baseline.save(PROFILE, current)
-            pytest.skip(f"no baseline yet; wrote {path}. Commit it and re-run.")
+            # Fail, not skip, so deleting the committed file cannot turn this green.
+            path = baseline.save(current)
+            pytest.fail(
+                f"no committed baseline. Wrote {path} from this run. "
+                f"Inspect it, and if it is right, commit it. To rewrite an existing "
+                f"baseline deliberately, re-run with {baseline.UPDATE_ENV}=1."
+            )
 
         differences = baseline.diff(committed, current)
-        assert not differences, baseline.report(PROFILE, differences)
+        assert not differences, baseline.report(differences)
 
 
 class TestTheBaselineWouldCatchAChange:
-    """A guard that cannot fail is worse than none -- it reads as coverage.
-
-    These perturb a fingerprint rather than the pipeline, so they stay fast and
-    do not depend on any particular defect being reachable.
-    """
+    """The comparison reports each kind of change to a fingerprint, and none on a copy."""
 
     def test_a_changed_value_is_caught(self, current):
         """The case the hash exists for: same shape, different numbers."""
-        tampered = _deepish_copy(current)
+        tampered = copy.deepcopy(current)
         table, col = _any_column(tampered)
         tampered[table]["columns"][col]["hash"] = "0" * 16
 
         assert any(f"{table}.{col}" in line for line in baseline.diff(current, tampered))
 
     def test_a_changed_row_count_is_caught(self, current):
-        tampered = _deepish_copy(current)
+        tampered = copy.deepcopy(current)
         table = next(iter(tampered))
         tampered[table]["rows"] += 1
 
         assert any("rows" in line for line in baseline.diff(current, tampered))
 
     def test_a_dropped_column_is_caught(self, current):
-        tampered = _deepish_copy(current)
+        tampered = copy.deepcopy(current)
         table, col = _any_column(tampered)
         del tampered[table]["columns"][col]
 
         assert any("columns dropped" in line for line in baseline.diff(current, tampered))
 
     def test_an_identical_fingerprint_reports_nothing(self, current):
-        """No false positives, or the gate gets disabled within a week."""
-        assert baseline.diff(current, _deepish_copy(current)) == []
+        """No false positives."""
+        assert baseline.diff(current, copy.deepcopy(current)) == []
 
 
 class TestTheFingerprintStoresNoRecords:
-    """The repository must not gain data, even synthetic data.
-
-    A fingerprint travels into git, so it carries hashes and aggregates only.
-    Identifier and coordinate columns contribute no histogram at all, and no
-    column contributes its values.
-    """
+    """A fingerprint is committed, so it carries hashes and aggregates, never values."""
 
     def test_identifier_columns_have_no_histogram(self, current):
         offenders = [
@@ -147,17 +123,6 @@ class TestTheFingerprintStoresNoRecords:
         unsorted = [t for t, spec in current.items() if not spec["sorted_by"]]
 
         assert unsorted == [], f"no primary key registered for: {unsorted}"
-
-
-def _deepish_copy(fp: dict) -> dict:
-    return {
-        t: {
-            "rows": s["rows"],
-            "sorted_by": s["sorted_by"],
-            "columns": {c: dict(col) for c, col in s["columns"].items()},
-        }
-        for t, s in fp.items()
-    }
 
 
 def _any_column(fp: dict) -> tuple[str, str]:

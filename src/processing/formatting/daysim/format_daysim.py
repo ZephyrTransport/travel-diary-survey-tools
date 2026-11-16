@@ -2,7 +2,7 @@
 
 Transforms canonical survey data (persons, households, trips, tours, days) into
 DaySim activity-based travel demand model format, applying model-specific coding
-schemes and data structures. See [DaySim Data Models](../../models/daysim.md).
+schemes and data structures. See [DaySim Data Models][daysim-output-models].
 
 This module orchestrates specialized formatting for each table type, applying
 DaySim-specific integer codes for categorical variables while maintaining
@@ -23,12 +23,11 @@ referential integrity across tables.
 * [`format_days`][processing.formatting.daysim.format_days]: Produces days_daysim table
   consistent with [`PersonDayDaysimModel`][data_canon.models.daysim.PersonDayDaysimModel].
 
-# Data Quality Filters
+# Record Selection
 
-- **Partial Tours**: Optionally drop tours without return home
-- **Missing TAZ**: Remove records without spatial assignment (required for model)
-- **Invalid Tours**: Filter out tours failing validation rules (zero distance,
-  negative duration, data quality flags)
+The step keeps the records its ``usability_profile`` admits (``usable_<profile>``),
+so partial tours, invalid tours and records without a TAZ are left out by the
+profile (its ``tour_closes_at`` and ``zone_coverage``), not by this step.
 
 # Implementation Notes
 
@@ -45,8 +44,9 @@ import logging
 
 import polars as pl
 
-from pipeline.decoration import step
+from pipeline.decoration import Tables, step
 from processing.formatting.usable_records import keep_usable
+from processing.formatting.usual_workplace import fill_usual_workplace
 
 from .format_days import format_days
 from .format_households import format_households
@@ -61,7 +61,7 @@ logger = logging.getLogger(__name__)
     requires={
         "households": {"residence_rent_own", "residence_type"},
         "persons": {"person_num", "work_park", "work_mode", "is_proxy"},
-        "days": {"travel_dow"},
+        "person_days": {"travel_dow"},
         "unlinked_trips": {"tour_id"},
         "linked_trips": {
             "tour_id",
@@ -71,15 +71,20 @@ logger = logging.getLogger(__name__)
             "egress_mode",
         },
         "tours": {"origin_linked_trip_id", "dest_linked_trip_id"},
+        "habitual_locations": {
+            "habitual_location_id",
+            "person_id",
+            "location_type",
+            "location_num",
+            "source",
+            "lat",
+            "lon",
+        },
+        "habitual_location_days": {"habitual_location_id", "dwell_minutes"},
     },
 )
 def format_daysim(
-    persons: pl.DataFrame,
-    households: pl.DataFrame,
-    unlinked_trips: pl.DataFrame,
-    linked_trips: pl.DataFrame,
-    tours: pl.DataFrame,
-    days: pl.DataFrame,
+    tables: Tables,
     usability_profile: str,
 ) -> dict[str, pl.DataFrame]:
     """Format canonical survey data to DaySim model specification.
@@ -88,14 +93,11 @@ def format_daysim(
     format. See module docstring for complete component descriptions.
 
     Args:
-        persons: Person attributes in canonical format. Required columns:
-            person_id, hh_id, age, employment, student, etc.
-        households: Household attributes in canonical format. Required columns:
-            hh_id, home_taz, income, etc.
-        unlinked_trips: Individual trip segments with mode, purpose, and timing.
-        linked_trips: Journey records with coordinates, mode, purpose, and timing.
-        tours: Tour records with purpose, timing, and location fields.
-        days: Person-day records for completeness calculation.
+        tables: The canonical tables in ``requires``. An employed person who
+            reported no workplace takes their most-visited observed workplace,
+            from ``habitual_locations`` and ``habitual_location_days``, as
+            ``pwtaz``/``pwpcl`` (see
+            [`usual_workplace`][processing.formatting.usual_workplace]).
         usability_profile: Which usability profile decides the record universe.
             Required: with several profiles stamped there is no defensible
             default, and naming a different one from the CT-RAMP formatter or
@@ -116,17 +118,19 @@ def format_daysim(
     !!! Example
 
         ```python
+        from processing.formatting.daysim.format_daysim import format_daysim
 
+        # A step takes its tables by name; the decorator gathers them into `tables`.
         result = format_daysim(
             persons=canonical_persons,
             households=canonical_households,
             unlinked_trips=canonical_unlinked_trips,
             linked_trips=canonical_linked_trips,
             tours=canonical_tours,
-            days=canonical_days,
-            drop_partial_tours=True,
-            drop_missing_taz=True,
-            drop_invalid_tours=True
+            person_days=canonical_person_days,
+            habitual_locations=canonical_habitual_locations,
+            habitual_location_days=canonical_habitual_location_days,
+            usability_profile="daysim",
         )
         households_daysim = result["households_daysim"]
         persons_daysim = result["persons_daysim"]
@@ -139,38 +143,50 @@ def format_daysim(
     # so the three describe one universe rather than three implementations of it.
     gated = keep_usable(
         {
-            "households": households,
-            "persons": persons,
-            "days": days,
-            "tours": tours,
-            "linked_trips": linked_trips,
-            "unlinked_trips": unlinked_trips,
+            name: tables[name]
+            for name in (
+                "households",
+                "persons",
+                "person_days",
+                "tours",
+                "linked_trips",
+                "unlinked_trips",
+            )
         },
         usability_profile,
     )
     households = gated["households"]
     persons = gated["persons"]
-    days = gated["days"]
+    person_days = gated["person_days"]
     tours = gated["tours"]
     linked_trips = gated["linked_trips"]
     unlinked_trips = gated["unlinked_trips"]
 
+    # The survey asks for a workplace only when the job has one fixed location;
+    # for anyone else employed, their trips may show one.
+    persons = fill_usual_workplace(
+        persons,
+        tables["habitual_locations"],
+        tables["habitual_location_days"],
+        zone_names=[z for z in ("taz", "maz") if f"work_{z}" in persons.columns],
+    )
+
     # Format each table
 
     # Format persons, includes day for completeness computation
-    persons_daysim = format_persons(persons, days)
+    persons_daysim = format_persons(persons, person_days)
 
     # Format households, requires the daysim formatted person types
     households_daysim = format_households(households, persons_daysim)
 
     # Format days
-    days_daysim = format_days(persons, days, tours)
+    days_daysim = format_days(persons, person_days, tours)
 
     # Format linked trips
     linked_trips_daysim = format_linked_trips(persons, unlinked_trips, linked_trips)
 
     # Format tours
-    tours_daysim = format_tours(persons, days, linked_trips, tours)
+    tours_daysim = format_tours(persons, person_days, linked_trips, tours)
 
     logger.info("DaySim formatting complete")
 

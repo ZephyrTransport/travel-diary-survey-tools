@@ -10,8 +10,6 @@ Local change: ``nogil=True``. Without it the function holds the GIL, and the
 threads that balance zones in parallel run one at a time.
 """
 
-import logging
-
 import numpy as np
 from numba import njit
 
@@ -26,9 +24,6 @@ MIN_IMPORTANCE = 1.0
 MAX_RELAXATION_FACTOR = 1000000
 MIN_CONTROL_VALUE = 0.1
 ALT_MAX_DELTA = 1.0e-14
-
-
-logger = logging.getLogger(__name__)
 
 
 @njit(fastmath=True, cache=True, nogil=True)

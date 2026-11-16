@@ -1,6 +1,6 @@
 r"""Maximum-entropy list balancer.
 
-Thin Polars→numpy bridge around PopulationSim's ``np_balancer_numba``.
+Thin Polars→numpy bridge around ``np_balancer_numba``, vendored from PopulationSim.
 Runs independently per geography zone.
 
 # Algorithm
@@ -18,18 +18,27 @@ vector.
 
 # Implementation
 
-Calls ``populationsim.balancing.balancers_numba.np_balancer_numba``
-directly — a pure ``@njit`` function (~120 lines) taking numpy arrays.
-No PopulationSim pipeline infrastructure involved.  Zones are
-independent and parallelisable via ``ThreadPoolExecutor``.
+Calls ``np_balancer_numba`` from ``_np_balancer``, vendored from PopulationSim
+v0.10.0 -- a pure ``@njit`` function taking numpy arrays, so PopulationSim is
+not a dependency.  Zones are independent and run in parallel via
+``ThreadPoolExecutor``.
 
 # Configuration (YAML)
 
+The ``balancing:`` block of ``compute_weights`` (see ``BalancingConfig``):
+
 ```yaml
-max_iterations: 1000
-convergence_threshold: 0.001
-max_expansion_factor: 10    # upper bound = initial_weight x factor
-min_expansion_factor: 0.1   # lower bound = initial_weight x factor
+balancing:
+  max_expansion_factor: 5.0     # upper bound = base_weight x factor
+  min_expansion_factor: 0.01    # lower bound = base_weight x factor
+  max_base_weight_gap: 0.005    # stop if a zone's base weights miss its target by more
+  min_weight: 1                 # absolute floor
+  # max_weight: null            # absolute ceiling (optional)
+  max_iterations: 10000
+  n_workers: 8                  # zones balanced in parallel
+  default_importance: 100
+  moe_based_importance: true
+  min_survey_share_ratio: 0.25  # stop if a group is too small a share of its area's survey
 ```
 """
 
@@ -45,7 +54,6 @@ from processing.weighting.core.specs import (
     BalancingConfig,
     ControlTotals,
     GridPoint,
-    ImportanceConfig,
     ZoneInput,
     ZoneResult,
     ZoneStatus,
@@ -62,64 +70,58 @@ def balance_weights(
     seed: pl.DataFrame,
     control_totals: ControlTotals,
     targets: list[str],
-    balancing: BalancingConfig | None = None,
-    importance: ImportanceConfig | None = None,
+    balancing: BalancingConfig,
+    importance: dict[str, float],
     *,
     verbose: bool = True,
 ) -> tuple[pl.DataFrame, list[ZoneStatus]]:
     """Balance household weights to match control totals per zone.
 
     Args:
-        seed: Incidence table with ``hh_id``, ``ctrl_geoid``,
+        seed: Incidence table with ``hh_id``, ``zone_group_id``,
             ``base_weight``, and pivoted control columns
             (``{ctrl}__{member}`` or structural).  All merges (global
             and zone-specific) must already be applied.
         control_totals: Per-zone targets (with merges already applied).
         targets: Control registry names.
-        balancing: Solver bounds, iteration limits, and parallelism
-            (defaults apply).
-        importance: Per-control importance weights (defaults apply).
+        balancing: Solver bounds, iteration limits, and parallelism.
+        importance: Importance of each control in *targets*, by name.
         verbose: Log per-zone convergence (default ``True``).
 
     Returns:
         Tuple of ``(weights, statuses)`` where *weights* is a DataFrame
-        with columns ``hh_id``, ``hh_weight``, ``geo_id``, and
+        with columns ``hh_id``, ``hh_weight``, ``zone_group_id``, and
         *statuses* is one [`ZoneStatus`][processing.weighting.core.specs.ZoneStatus]
         entry per zone with convergence info.
     """
-    bal = balancing or BalancingConfig()
-    imp = importance or ImportanceConfig()
-    geo_col = "ctrl_geoid"
-
-    # Build per-zone inputs
     zone_inputs: list[ZoneInput] = []
-    for geo_id in control_totals.geo_ids:
-        zone_seed = seed.filter(pl.col(geo_col).cast(pl.Utf8) == geo_id)
+    for zone_group_id in control_totals.zone_group_ids:
+        zone_seed = seed.filter(pl.col("zone_group_id").cast(pl.Utf8) == zone_group_id)
         if len(zone_seed) == 0:
-            logger.warning("Zone %s: no seed records, skipping", geo_id)
+            logger.warning("Zone %s: no seed records, skipping", zone_group_id)
             continue
 
-        zone_totals = control_totals.totals.filter(pl.col("geo_id") == geo_id)
+        zone_totals = control_totals.totals.filter(pl.col("zone_group_id") == zone_group_id)
         zone_inputs.append(
             _prepare_zone(
                 zone_seed,
                 zone_totals,
                 targets,
-                geo_id,
-                importance=imp.explicit or None,
-                default_importance=imp.default,
-                min_expansion_factor=bal.min_expansion_factor,
-                max_expansion_factor=bal.max_expansion_factor,
-                min_weight=bal.min_weight,
-                max_weight=bal.max_weight,
-                max_iterations=bal.max_iterations,
+                zone_group_id,
+                importance=importance,
+                min_expansion_factor=balancing.min_expansion_factor,
+                max_expansion_factor=balancing.max_expansion_factor,
+                max_base_weight_gap=balancing.max_base_weight_gap,
+                min_weight=balancing.min_weight,
+                max_weight=balancing.max_weight,
+                max_iterations=balancing.max_iterations,
                 verbose=verbose,
             )
         )
 
     # Run balancer — numba @njit releases the GIL so threads parallelize
-    if bal.n_workers > 1 and len(zone_inputs) > 1:
-        with ThreadPoolExecutor(max_workers=bal.n_workers) as pool:
+    if balancing.n_workers > 1 and len(zone_inputs) > 1:
+        with ThreadPoolExecutor(max_workers=balancing.n_workers) as pool:
             results = list(pool.map(_balance_zone, zone_inputs))
     else:
         results = [_balance_zone(z) for z in zone_inputs]
@@ -131,7 +133,9 @@ def balance_weights(
     weights = (
         pl.concat(weight_frames)
         if weight_frames
-        else pl.DataFrame(schema={"hh_id": pl.Int64, "hh_weight": pl.Float64, "geo_id": pl.Utf8})
+        else pl.DataFrame(
+            schema={"hh_id": pl.Int64, "hh_weight": pl.Float64, "zone_group_id": pl.Utf8}
+        )
     )
 
     n_fail = sum(not s.converged for s in statuses)
@@ -146,8 +150,8 @@ def grid_search_expansion_factor(
     targets: list[str],
     ef_grid: list[float],
     selected_ef: float,
-    balancing: BalancingConfig | None = None,
-    importance: ImportanceConfig | None = None,
+    balancing: BalancingConfig,
+    importance: dict[str, float],
 ) -> list[GridPoint]:
     """Re-run the balancer across a grid of ``max_expansion_factor`` values.
 
@@ -163,21 +167,11 @@ def grid_search_expansion_factor(
     at ``n_workers`` while using it fully: a run has few zones, and zone-level
     parallelism alone left most workers idle.
     """
-    bal = balancing or BalancingConfig()
     grid = sorted(set(ef_grid) | {selected_ef})
-    if not grid:
-        return []
 
     def run(ef: float) -> GridPoint:
         # Zones run one at a time here; the grid points share the worker pool
-        ef_bal = BalancingConfig(
-            max_expansion_factor=ef,
-            min_expansion_factor=bal.min_expansion_factor,
-            min_weight=bal.min_weight,
-            max_weight=bal.max_weight,
-            max_iterations=bal.max_iterations,
-            n_workers=1,
-        )
+        ef_bal = balancing.model_copy(update={"max_expansion_factor": ef, "n_workers": 1})
         weights, statuses = balance_weights(
             seed,
             control_totals,
@@ -191,9 +185,9 @@ def grid_search_expansion_factor(
         wt = compute_weighted_totals(seed, weights, targets)
         ft = fit_table(control_totals, wt)
         abs_pct = ft["diff_pct"].abs()
-        mape = float(abs_pct.mean() or 0) if len(abs_pct) > 0 else 0.0  # pyright: ignore[reportArgumentType]
-        p90 = float(abs_pct.quantile(0.9) or 0) if len(abs_pct) > 0 else 0.0
-        max_error = float(abs_pct.max() or 0) if len(abs_pct) > 0 else 0.0  # pyright: ignore[reportArgumentType]
+        mape = float(abs_pct.mean() or 0)  # pyright: ignore[reportArgumentType]
+        p90 = float(abs_pct.quantile(0.9) or 0)
+        max_error = float(abs_pct.max() or 0)  # pyright: ignore[reportArgumentType]
 
         # -- Weight quality (CV, ESS%) ---------------------------------
         w = weights["hh_weight"]
@@ -219,9 +213,9 @@ def grid_search_expansion_factor(
             ess_pct=ess_pct,
         )
 
-    logger.info("Grid search: EF %s on %d worker(s)", grid, bal.n_workers)
-    if bal.n_workers > 1 and len(grid) > 1:
-        with ThreadPoolExecutor(max_workers=bal.n_workers) as pool:
+    logger.info("Grid search: EF %s on %d worker(s)", grid, balancing.n_workers)
+    if balancing.n_workers > 1 and len(grid) > 1:
+        with ThreadPoolExecutor(max_workers=balancing.n_workers) as pool:
             return list(pool.map(run, grid))
     return [run(ef) for ef in grid]
 
@@ -233,30 +227,30 @@ def _prepare_zone(
     zone_seed: pl.DataFrame,
     zone_totals: pl.DataFrame,
     targets: list[str],
-    geo_id: str,
+    zone_group_id: str,
     *,
-    importance: dict[str, float] | None,
-    default_importance: float,
+    importance: dict[str, float],
     min_expansion_factor: float,
     max_expansion_factor: float,
+    max_base_weight_gap: float,
     min_weight: float | None,
     max_weight: float | None,
     max_iterations: int,
     verbose: bool,
 ) -> ZoneInput:
-    """Build ``ZoneInput`` arrays for a single geography zone."""
+    """Build ``ZoneInput`` arrays for a single geography zone.
+
+    Raises:
+        ValueError: The zone's base weights miss its household target by more
+            than *max_base_weight_gap*.
+    """
     incidence, ctrl_targets, master_idx, row_labels = _build_incidence(
         zone_seed,
         zone_totals,
         targets,
     )
 
-    # Importance: default for every row, then apply overrides
-    overrides = importance or {}
-    imp_vec = np.full(len(row_labels), default_importance, dtype=np.float64)
-    for i, (ctrl_name, _member) in enumerate(row_labels):
-        if ctrl_name in overrides:
-            imp_vec[i] = overrides[ctrl_name]
+    imp_vec = np.array([importance[name] for name, _member in row_labels], dtype=np.float64)
 
     if "base_weight" not in zone_seed.columns:
         msg = (
@@ -266,11 +260,21 @@ def _prepare_zone(
         raise ValueError(msg)
     initial = zone_seed["base_weight"].to_numpy().astype(np.float64)
 
-    # Bounds: expansion-factor scaling, then optional absolute clipping
-    total = initial.sum()
-    ratio = float(ctrl_targets[master_idx]) / total if total > 0 else 1.0
-    lb = np.maximum(initial * min_expansion_factor * ratio, 0.0)
-    ub = np.maximum(initial * max_expansion_factor * ratio, 1.0)
+    # The limits are multiples of the base weights, so those must add up to the target
+    total = float(initial.sum())
+    target = float(ctrl_targets[master_idx])
+    gap = abs(total / target - 1) if target > 0 else float("inf")
+    if gap > max_base_weight_gap:
+        msg = (
+            f"Zone {zone_group_id}: base weights add up to {total:,.0f} against a household "
+            f"target of {target:,.0f}, {gap:.2%} off, more than max_base_weight_gap "
+            f"({max_base_weight_gap:.2%}). Check the base weights for this zone."
+        )
+        raise ValueError(msg)
+
+    # Bounds: expansion factors of the base weight, then optional absolute clipping
+    lb = np.maximum(initial * min_expansion_factor, 0.0)
+    ub = np.maximum(initial * max_expansion_factor, 1.0)
     if min_weight is not None:
         lb = np.maximum(lb, min_weight)
     if max_weight is not None:
@@ -286,7 +290,7 @@ def _prepare_zone(
         importance=imp_vec,
         master_idx=master_idx,
         max_iterations=max_iterations,
-        geo_id=geo_id,
+        zone_group_id=zone_group_id,
         verbose=verbose,
     )
 
@@ -312,14 +316,14 @@ def _balance_zone(zone: ZoneInput) -> ZoneResult:
     )
 
     converged, iters, delta, gamma = status
-    zs = ZoneStatus(zone.geo_id, bool(converged), int(iters), float(delta), float(gamma))
+    zs = ZoneStatus(zone.zone_group_id, bool(converged), int(iters), float(delta), float(gamma))
 
     if zone.verbose:
         level = logging.INFO if converged else logging.WARNING
         logger.log(
             level,
             "Zone %s: %s in %d iters (delta=%.2e)",
-            zone.geo_id,
+            zone.zone_group_id,
             "converged" if converged else "NOT CONVERGED",
             iters,
             delta,
@@ -329,7 +333,7 @@ def _balance_zone(zone: ZoneInput) -> ZoneResult:
         {
             "hh_id": zone.hh_ids,
             "hh_weight": w_final,
-            "geo_id": [zone.geo_id] * n,
+            "zone_group_id": [zone.zone_group_id] * n,
         }
     )
     return ZoneResult(frame, zs)

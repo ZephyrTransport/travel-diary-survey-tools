@@ -4,9 +4,16 @@ import polars as pl
 
 from data_canon.core.dataclass import CanonicalData
 
-# ---------------------------------------------------------------------------
-# Table presence
-# ---------------------------------------------------------------------------
+_FK_CHAINS = [
+    ("persons", "hh_id", "households", "hh_id"),
+    ("person_days", "person_id", "persons", "person_id"),
+    ("unlinked_trips", "person_day_id", "person_days", "person_day_id"),
+    ("linked_trips", "person_day_id", "person_days", "person_day_id"),
+    ("linked_trips", "person_id", "persons", "person_id"),
+    ("tours", "person_id", "persons", "person_id"),
+    ("tours", "hh_id", "households", "hh_id"),
+    ("tours", "person_day_id", "person_days", "person_day_id"),
+]
 
 
 def assert_tables_non_empty(data: CanonicalData, table_names: list[str]):
@@ -16,22 +23,6 @@ def assert_tables_non_empty(data: CanonicalData, table_names: list[str]):
         assert df is not None, f"Table '{name}' is None"
         assert isinstance(df, pl.DataFrame), f"Table '{name}' is not a DataFrame"
         assert df.height > 0, f"Table '{name}' is empty"
-
-
-# ---------------------------------------------------------------------------
-# Referential integrity
-# ---------------------------------------------------------------------------
-
-_FK_CHAINS = [
-    ("persons", "hh_id", "households", "hh_id"),
-    ("days", "person_id", "persons", "person_id"),
-    ("unlinked_trips", "day_id", "days", "day_id"),
-    ("linked_trips", "day_id", "days", "day_id"),
-    ("linked_trips", "person_id", "persons", "person_id"),
-    ("tours", "person_id", "persons", "person_id"),
-    ("tours", "hh_id", "households", "hh_id"),
-    ("tours", "day_id", "days", "day_id"),
-]
 
 
 def assert_referential_integrity(data: CanonicalData):

@@ -31,11 +31,11 @@ flowchart TD
     S0(["Survey HH + Person"]) --> S1("Recode + pivot") --> SI[["Survey incidence"]]
   end
 
-  NI("Null imputation on survey only\nRF trained on PUMS incidence")
+  NI("Fractional imputation on survey only\nRF trained on PUMS by zone and household")
 
   subgraph shared_stage ["**Shared incidence transforms**"]
     direction TD
-    G1("Zone assignment\n• assign survey HHs\n• allocate PUMAs to control zones")
+    G1("Zone assignment\n• assign survey HHs\n• allocate PUMAs to zone groups")
     G2("Create cross-tab targets")
     G3("Apply merges\ncollapse merged categories")
     G1 --> G2
@@ -90,21 +90,16 @@ flowchart TD
 
 The important split is not that PUMS and survey run as fully parallel pipelines. It is that they are both transformed into the same incidence format. From there, **PUMS incidence** is used to produce **control totals** and MOE-based importance, while the **survey incidence** becomes the **seed** to be reweighted. Null imputation is applied only to the survey side; PUMS is used as the training source for that step.
 
-::: processing.weighting.compute_weights
+## The step
+
+::: processing.weighting.compute_weights.compute_weights
     options:
-      show_root_heading: true
-      members:
-        - compute_weights
-
-## WeightingPipeline
-
-`WeightingPipeline` is the orchestration class that `compute_weights` constructs and drives. It holds the state every fit shares (crosswalk, incidence, control totals) and exposes each stage as an explicit method.
-
-::: processing.weighting.core.pipeline
-    options:
-      show_root_heading: true
-      members:
-        - WeightingPipeline
+      show_root_heading: false
+      show_root_toc_entry: false
+      show_signature: false
+      show_docstring_parameters: false
+      show_docstring_returns: false
+      show_docstring_raises: false
 
 ## One fit per profile
 
@@ -114,13 +109,55 @@ profile's name. Each fit's products are held on its own `ProfileFit` rather than
 on the pipeline, so several fits over one survey cannot overwrite each other's
 seed, weights or diagnostics.
 
-::: processing.weighting.core.specs
-    options:
-      show_root_heading: true
-      members:
-        - ProfileFit
-        - GeographyCoverage
-        - resolve_fitted_profiles
+## Example
+
+```yaml title="Example"
+- name: compute_weights
+  params:
+    weight_profiles: [ctramp, daysim]
+    sample_plan: data/sample_plan.csv
+    max_unplaceable_share: 0.01
+    use_imputed_values: false
+    census:
+      state_fips: "06"
+      pums_year: 2023
+      pums_weights: independent
+      household_income: related_members
+      census_dir: data/census
+    geography:
+      target_zones:
+        file: zones/counties.shp
+        id_field: fipco
+      resolution: 50        # meters
+      min_allocation: 0.01  # drop PUMA slivers below 1%
+      zone_groups:
+        "San Francisco": ["075"]
+        "Alameda": ["001"]
+    balancing:
+      max_expansion_factor: 5.0
+      min_expansion_factor: 0.01
+      max_base_weight_gap: 0.005
+      min_weight: 1
+      max_iterations: 10000
+      n_workers: 8
+      moe_based_importance: true
+      default_importance: 100
+      min_survey_share_ratio: 0.25
+    controls:
+      - name: h_total
+        importance: 200
+      - name: h_size
+        merge:
+          size_4_plus: [size_4, size_5, size_6, size_7, size_8, size_9, size_10_plus]
+      - name: p_gender
+    diagnostics:
+      output_path: output/weighting_diagnostics.html
+      expansion_factor_grid: [2, 3, 5, 10]
+```
+
+## Settings
+
+<!-- step-settings: compute_weights -->
 
 ## Related Topics
 
@@ -130,3 +167,5 @@ seed, weights or diagnostics.
 - [Controls](controls.md)
 - [Validation](validation.md)
 - [Diagnostics](diagnostics.md)
+
+Code: [processing.weighting](../../reference/processing/weighting/index.md)

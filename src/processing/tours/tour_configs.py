@@ -7,24 +7,25 @@ This module implements a flexible tour extraction algorithm with configurable
 behavior for different use cases. Key design decisions:
 
 1. LOCATION CLASSIFICATION:
-   Uses hybrid strategy: matches location if EITHER purpose code OR distance
-   indicates the location. This handles both precise GPS and imprecise cases.
+   A trip end is at a habitual location when it is within one buffer of it AND
+   its purpose agrees (see processing.habitual_locations).
 
 2. TOUR COMPLETENESS:
    Incomplete tours are allowed (e.g., missing return home), but are flagged
    and categorized accordingly in output so they can be handled downstream.
 
-3. PURPOSE PRIORITY:
-   Configurable hierarchies by person type. By default, work_related has same
-   priority as work. Duration tie-breaking can be enabled via config.
+3. TOUR PURPOSE:
+   Chosen by tour_purpose_method: a duration-weighted score (the default) or
+   a priority hierarchy by person type with activity duration breaking ties.
+   By default, work_related ranks with work.
 
 4. MODE HIERARCHY:
-   Ordered list where later = higher priority. Single tour mode by default,
-   half-tour modes can be enabled via config.
+   Ordered list where later = higher priority. Gives the tour mode and the
+   outbound and inbound half-tour modes.
 
-5. WORK-BASED SUBTOURS:
-   By default detects all work departures/returns. Can restrict to usual
-   workplace only via config.detect_usual_workplace.
+5. SUBTOURS:
+   Detected within the period a tour spends at a workplace or school: a
+   subtour leaves that anchor and returns to the same one.
 
 OUTPUT FORMAT:
 --------------
@@ -36,41 +37,58 @@ HHMM times, tour reordering, etc.) as needed.
 from typing import Literal
 
 import polars as pl
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from data_canon.codebook.generic import LocationType
-from data_canon.codebook.persons import AgeCategory, Employment, SchoolType, Student
+from data_canon.codebook.persons import AgeCategory, Employment, Student
 from data_canon.codebook.tours import PersonCategory
 from data_canon.codebook.trips import ModeType, PurposeCategory
-from processing.tours.habitual_locations import HabitualLocationConfig
 
 
 class TourConfig(BaseModel):
     """Configuration model for tour building parameters.
 
     This config uses Pydantic for validation and provides type-safe access
-    to tour building parameters including distance thresholds, mode
-    hierarchies, and purpose priorities.
+    to tour building parameters including mode hierarchies and purpose
+    priorities. The one distance that decides whether a trip end is at a place
+    is not here: ``extract_tours`` takes it as its own ``MatchConfig``.
+
+    Tour purpose selection (``tour_purpose_method``):
+
+    - ``"score"``: duration-weighted. Each candidate activity scores
+      ``W * duration / (duration + h)``; the highest score wins, so a long
+      discretionary activity can outweigh a brief mandatory one. ``W`` is a
+      per-person-category priority ceiling (``purpose_score_weights``); ``h``
+      is a per-purpose shape read from data (``purpose_score_halfmax``).
+    - ``"hierarchy"``: lexicographic. The highest-priority purpose wins and
+      duration only breaks ties within a priority band
+      (``purpose_priority_by_personcat``).
+
+    The ceiling weights ``W`` mirror the intent of
+    ``purpose_priority_by_personcat``: mandatory purposes (work/school) sit
+    well above discretionary ones. ESCORT is in the bottom tier so it only wins
+    a pure escort tour (drop-off then home, no other activity), never when a
+    real activity follows. OVERNIGHT is 0 (never wins).
+
+    The half-saturation duration ``h`` (minutes) is where an activity reaches
+    half its ceiling: the duration at which a purpose is "established" as the
+    day's anchor, which depends on its role:
+
+    - Discretionary (shop/meal/social/errand): each purpose's typical activity
+      duration (BATS-2023 weighted median, cross-checked against 2019), so
+      ``x/(x+h)`` reads as "how long relative to typical" and duration
+      decides which discretionary activity is primary.
+    - Mandatory (work/school): a low establishment threshold (~20 min), not
+      the long typical duration, so any genuine visit reaches the high
+      ceiling and wins; only sub-threshold drive-bys (GPS jitter, brief
+      pass-bys) fall out.
+    - Escort: deliberately large so escort saturates slowly; with its bottom
+      weight it is selected only for a pure escort tour.
     """
 
-    # Distance thresholds for location matching (in meters)
-    distance_thresholds: dict[LocationType, float] = Field(
-        default={
-            LocationType.HOME: 100.0,
-            LocationType.WORK: 100.0,
-            LocationType.SCHOOL: 100.0,
-        },
-        description=(
-            "Distance thresholds in meters for matching trip ends "
-            "to known locations (also used to identify multiple visits "
-            "to primary destination)"
-        ),
-    )
+    model_config = ConfigDict(extra="forbid")
 
-    # Mode hierarchy: position in list determines priority
-    # (later in list = higher priority for tour mode assignment)
-    # NOTE: This eventually should be replaced to support more complex
-    # multi-modal tours (e.g., drive-transit-walk, etc.)
+    # Later in list = higher priority. NOTE: a single ranking cannot describe
+    # multi-modal tours (e.g. drive-transit-walk)
     mode_hierarchy: list[ModeType] = Field(
         default=[
             ModeType.WALK,
@@ -154,14 +172,7 @@ class TourConfig(BaseModel):
         ),
     )
 
-    # Tour purpose selection method:
-    # - "score": duration-weighted. Each candidate activity scores
-    #   W * duration / (duration + h); the highest score wins, so a long
-    #   discretionary activity can outweigh a brief mandatory one. W is a
-    #   per-person-category priority ceiling (purpose_score_weights); h is a
-    #   per-purpose shape read from data (purpose_score_halfmax).
-    # - "hierarchy": lexicographic. Highest-priority purpose wins, duration only
-    #   breaks ties within a priority band (purpose_priority_by_personcat).
+    # See the class docstring for the two methods
     tour_purpose_method: Literal["score", "hierarchy"] = Field(
         default="score",
         description=(
@@ -171,12 +182,7 @@ class TourConfig(BaseModel):
         ),
     )
 
-    # Purpose ceiling weight W by person category, for the scoring method. Higher
-    # = more likely to be the tour purpose; this sets the ranking, mirroring the
-    # intent of purpose_priority_by_personcat. Mandatory purposes (work/school)
-    # sit well above discretionary ones. ESCORT is demoted to the bottom tier so
-    # it only wins for a pure escort tour (drop-off then home, no other
-    # activity), never when a real activity follows. OVERNIGHT is 0 (never wins).
+    # Ceiling weight W per person category (see class docstring)
     purpose_score_weights: dict[str, dict[PurposeCategory, float]] = Field(
         default={
             PersonCategory.WORKER: {
@@ -238,18 +244,7 @@ class TourConfig(BaseModel):
         ),
     )
 
-    # Purpose half-saturation duration h (minutes), for the scoring method. At a
-    # duration of h the activity reaches half its ceiling W. h is the duration at
-    # which a purpose is "established" as the day's anchor, which is role-based:
-    # - Discretionary (shop/meal/social/errand): each purpose's typical activity
-    #   duration (BATS-2023 weighted median, cross-checked against 2019), so
-    #   x/(x+h) reads as "how long relative to typical" and duration disambiguates
-    #   which discretionary activity is primary.
-    # - Mandatory (work/school): a low establishment threshold (~20 min), not the
-    #   (long) typical duration, so any genuine visit reaches the high ceiling and
-    #   wins; only sub-threshold drive-bys (GPS jitter, brief pass-bys) fall out.
-    # - Escort: deliberately large so escort saturates slowly; with its bottom
-    #   weight it is selected only for a pure escort tour.
+    # Half-saturation duration h in minutes per purpose (see class docstring)
     purpose_score_halfmax: dict[PurposeCategory, float] = Field(
         default={
             PurposeCategory.WORK: 20.0,
@@ -286,59 +281,32 @@ class TourConfig(BaseModel):
         description=("If True, reset tour boundaries when day_gap > 1 between trips."),
     )
 
-    detect_usual_workplace: bool = Field(
-        default=False,
-        description=(
-            "If True, only detect work-based subtours from 'usual workplace' "
-            "(coordinate match to work_lat/work_lon)."
-        ),
-    )
-
     spatial_gap_threshold_meters: float = Field(
-        default=1000.0,
         description=(
             "A tour is flagged SPATIAL_GAP when any internal junction has a "
             "gap greater than this (meters) between one trip's destination and "
             "the next trip's origin - i.e. a missing leg the tour extractor "
-            "would otherwise silently weld into one 'survey_complete' tour. Default "
-            "1 km catches genuine teleports while ignoring same-place geocoding "
+            "would otherwise silently weld into one 'survey_complete' tour. "
+            "BATS uses 1 km, which catches genuine teleports while ignoring same-place geocoding "
             "jitter."
-        ),
-    )
-
-    habitual_locations: HabitualLocationConfig = Field(
-        default_factory=HabitualLocationConfig,
-        description=(
-            "Rules for promoting observed places into habitual locations, and "
-            "the radius within which two points are treated as the same place."
         ),
     )
 
     default_activity_duration_minutes: float = Field(
         default=240.0,
         description=(
-            "Default activity duration in minutes for last trip of day "
-            "when calculating duration tie-breaker (legacy: 4 hours)."
+            "Activity duration in minutes the tour-purpose scoring assumes for a "
+            "trip with no next departure that day (d_activity_duration is null)."
         ),
     )
 
-    def person_category_expression(
-        self,
-        age_col: str = "age",
-        employment_col: str = "employment",
-        student_col: str = "student",
-        school_type_col: str = "school_type",
-    ) -> pl.Expr:
+    def person_category_expression(self) -> pl.Expr:
         """Create expression to derive person category from person attributes.
 
         This replicates the pptyp logic from the old pipeline's 02a-reformat
         step, converting employment/student/age data into person type categories.
 
-        Args:
-            age_col: Name of age column (categorical AgeCategory)
-            employment_col: Name of employment column
-            student_col: Name of student column
-            school_type_col: Name of school_type column
+        Reads ``age``, ``employment`` and ``student``.
 
         Returns:
             Polars expression that evaluates to PersonCategory enum value
@@ -356,22 +324,21 @@ class TourConfig(BaseModel):
         ]
 
         # Employment status indicators
-        is_full_time = pl.col(employment_col).is_in(
+        is_full_time = pl.col("employment").is_in(
             [
                 Employment.EMPLOYED_FULLTIME.value,
                 Employment.EMPLOYED_SELF.value,
                 Employment.EMPLOYED_UNPAID.value,
             ]
         )
-        is_part_time = pl.col(employment_col).is_in(
+        is_part_time = pl.col("employment").is_in(
             [
                 Employment.EMPLOYED_PARTTIME.value,
                 Employment.EMPLOYED_SELF.value,
             ]
         )
 
-        # Student and school status indicators
-        is_student = pl.col(student_col).is_in(
+        is_student = pl.col("student").is_in(
             [
                 Student.FULLTIME_INPERSON.value,
                 Student.PARTTIME_INPERSON.value,
@@ -379,15 +346,9 @@ class TourConfig(BaseModel):
                 Student.FULLTIME_ONLINE.value,
             ]
         )
-        is_high_school = pl.col(school_type_col).is_in(
-            [
-                SchoolType.HOME_SCHOOL.value,
-                SchoolType.HIGH_SCHOOL.value,
-            ]
-        )
 
         # Age indicators
-        age = pl.col(age_col)
+        age = pl.col("age")
         is_under_5 = age == AgeCategory.AGE_UNDER_5.value
         is_5_to_15 = age == AgeCategory.AGE_5_TO_15.value
         is_16_to_17 = age == AgeCategory.AGE_16_TO_17.value
@@ -395,7 +356,7 @@ class TourConfig(BaseModel):
         is_working_age = age.is_in(working_age)
 
         # Build classification expression
-        _expr = (
+        return (
             pl.when(is_under_5)
             .then(pl.lit(PersonCategory.OTHER))
             .when(is_5_to_15)
@@ -406,8 +367,6 @@ class TourConfig(BaseModel):
             .then(pl.lit(PersonCategory.STUDENT))
             .when(is_18_to_24 & is_full_time)
             .then(pl.lit(PersonCategory.WORKER))
-            .when(is_18_to_24 & is_high_school & is_student)
-            .then(pl.lit(PersonCategory.STUDENT))
             .when(is_18_to_24 & is_student)
             .then(pl.lit(PersonCategory.STUDENT))
             .when(is_18_to_24 & is_part_time)
@@ -418,15 +377,6 @@ class TourConfig(BaseModel):
             .then(pl.lit(PersonCategory.STUDENT))
             .when(is_working_age & is_part_time)
             .then(pl.lit(PersonCategory.WORKER))
-            .when(is_working_age)
-            .then(pl.lit(PersonCategory.OTHER))
             .otherwise(pl.lit(PersonCategory.OTHER))
             .alias("person_category")
         )
-
-        return _expr
-
-    class ConfigDict:
-        """Pydantic model configuration."""
-
-        arbitrary_types_allowed = True  # Allow enum types

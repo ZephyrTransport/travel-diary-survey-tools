@@ -1,14 +1,14 @@
 """Walk the weight hierarchy, moving weights between canonical tables.
 
-Used by both the ``weighting`` (computed) and ``existing_weights`` (supplied)
+Used by both the ``compute_weights`` (computed) and ``add_existing_weights`` (supplied)
 steps. The shape being walked is declared in [`processing.weighting.core.hierarchy`]
 [processing.weighting.core.hierarchy]; this module only moves weights along it.
 
 # The distribution rule
 
 A record is admitted by a *usability flag* -- one of the usability profiles
-stamped by the ``cascade_completeness`` step (see [`processing.completeness`]
-[processing.completeness]), so the weighted sample matches the records that
+stamped by the ``cascade_usability`` step (see [`processing.usability`]
+[processing.usability]), so the weighted sample matches the records that
 profile's consumer actually keeps.  Pass ``survey_complete`` instead to weight the whole
 valid survey, including partial and overnight tours.
 
@@ -30,8 +30,8 @@ by construction:
 Days use a different DOWN rule (``split=True``): a person's usable days jointly
 represent that person *once*, not once each --
 
-    day_weight = person_weight / n_usable_days        (usable days; 0 otherwise)
-    sum(day_weight over a person's days) == person_weight
+    person_day_weight = person_weight / n_usable_days        (usable days; 0 otherwise)
+    sum(person_day_weight over a person's days) == person_weight
 
 the vendor's own convention (their weighted days are exactly ``person_weight /
 n``), with our usability flag deciding which days count.  Summing day weights
@@ -66,24 +66,14 @@ from processing.weighting.core.hierarchy import (
 logger = logging.getLogger(__name__)
 
 
-def drop_unsuffixed_weights(
-    tables: dict[str, pl.DataFrame | None],
-    profiles: tuple[str | None, ...],
-) -> None:
-    """Remove each level's bare weight column, in place, when profiles were used.
+def drop_unsuffixed_weights(tables: dict[str, pl.DataFrame | None]) -> None:
+    """Remove each level's bare weight column, in place.
 
     A table must not offer both ``hh_weight`` and ``hh_weight_<profile>``: a
     reader has no way to tell which is authoritative, and the bare one is stale
     by construction -- either a placeholder from the loader or a previous run's
-    output that this run did not rewrite. Whoever wants an un-suffixed set weights
-    a single profile, which is what leaves these columns in place.
-
-    Does nothing when no profile was named, since then the bare columns *are* the
-    output.
+    output that this run did not rewrite.
     """
-    if profiles == (None,):
-        return
-
     for level in HIERARCHY:
         df = tables.get(level.table)
         if df is None or level.weight_col not in df.columns:
@@ -132,6 +122,16 @@ def is_usable(usability_flag_col: str) -> pl.Expr:
     return pl.col(usability_flag_col).fill_null(value=False)
 
 
+def zero_unusable(weight_col: str, usability_flag_col: str) -> pl.Expr:
+    """*weight_col* where the record is usable, 0 where it is not."""
+    return (
+        pl.when(is_usable(usability_flag_col))
+        .then(pl.col(weight_col))
+        .otherwise(0.0)
+        .alias(weight_col)
+    )
+
+
 def seed_admits(usability_flag_col: str) -> pl.Expr:
     """True when a household belongs in the balancer's seed for this profile.
 
@@ -144,7 +144,7 @@ def seed_admits(usability_flag_col: str) -> pl.Expr:
     two to differ, a household the seed rejected could keep a null where the
     output promises a zero.
     """
-    admits = pl.col(usability_flag_col).fill_null(value=False)
+    admits = is_usable(usability_flag_col)
     if usability_flag_col == "survey_complete":
         return admits
     return admits & pl.col("survey_complete").fill_null(value=False)
@@ -240,7 +240,7 @@ def split_among_usable(
         w = parent_weight / n_usable_children    (usable children; 0 otherwise)
 
     so the usable children of every parent sum exactly to the parent's weight.
-    This is the vendor's own day-weight convention (``day_weight =
+    This is the vendor's own day-weight convention (``person_day_weight =
     person_weight / n_weighted_days``), with our usability flag deciding which
     children count. There is **no cross-parent pooling**: a parent whose
     children are all unusable is a reported shortfall, never re-homed onto
@@ -270,13 +270,14 @@ def split_among_usable(
     stranded = counts.filter((pl.col("_n_usable") == 0) & (pl.col("_parent_weight") > 0))
     if stranded.height:
         logger.info(
-            "%s: %d %s(s) kept no usable child; %.1f of %s stays unrepresented "
-            "(reported by the checksum, never pooled across parents)",
+            "%s: %d %s(s) have no usable record here; %.1f of %s stays unrepresented "
+            "(reported by the checksum, never moved to another %s)",
             table,
             stranded.height,
             key,
             float(stranded["_parent_weight"].sum()),
             weight_col,
+            key,
         )
 
     df = (
@@ -289,7 +290,7 @@ def split_among_usable(
         )
         .drop("_n_usable")
     )
-    logger.info("%s: %s split equally among each %s's usable children", table, weight_col, key)
+    logger.info("%s: %s split equally among each %s's usable records", table, weight_col, key)
     return df
 
 
@@ -310,11 +311,14 @@ def _carry_down(
     if level.parent not in has_weight:
         msg = (
             f"Cannot derive {weight_col} for {level.table}: "
-            f"parent table {level.parent} has no weight column"
+            f"it comes from {level.parent}, which has no weight column"
         )
         raise ValueError(msg)
     if parent_df is None:
-        msg = f"Cannot derive {weight_col} for {level.table}: parent table {level.parent} is None"
+        msg = (
+            f"Cannot derive {weight_col} for {level.table}: "
+            f"it comes from {level.parent}, which is not loaded"
+        )
         raise ValueError(msg)
     if level.key not in child_df.columns:
         msg = f"Cannot derive weight: {level.table} missing join key {level.key}"
@@ -377,7 +381,16 @@ def _aggregate_up(
         raise ValueError(msg)
 
     src_weight = has_weight[level.parent]  # type: ignore[index]
-    logger.info("Deriving %s from %s of %s", weight_col, level.agg.name.lower(), src_weight)
+    # The profile's own copy of the grouping id, where there is one: a tour that
+    # left its joint tour for this profile is null there and so not summed.
+    member_key = level.member_key_for(usability_flag_col, source_df.columns)
+    logger.info(
+        "Deriving %s from %s of %s by %s",
+        weight_col,
+        level.agg.name.lower(),
+        src_weight,
+        member_key,
+    )
 
     # Members that carried weight in. A zero-weight member was already re-homed
     # onto its own scope's usable records, so it is neither averaged nor counted.
@@ -386,18 +399,18 @@ def _aggregate_up(
     )
     combine = carried.sum() if level.agg is Agg.SUM else carried.mean()
 
-    agg = source_df.group_by(level.key).agg(combine.fill_null(0).alias(weight_col))
+    agg = (
+        source_df.filter(pl.col(member_key).is_not_null())
+        .group_by(member_key)
+        .agg(combine.fill_null(0).alias(weight_col))
+        .rename({member_key: level.key})  # type: ignore[dict-item]
+    )
     target_df = safe_join_weight(target_df, agg, level.key)  # type: ignore[arg-type]
 
     # A grouping is never more usable than its members: an unusable record
     # carries no weight even where the combination came out positive.
     if usability_flag_col and usability_flag_col in target_df.columns:
-        target_df = target_df.with_columns(
-            pl.when(is_usable(usability_flag_col))
-            .then(pl.col(weight_col))
-            .otherwise(0.0)
-            .alias(weight_col)
-        )
+        target_df = target_df.with_columns(zero_unusable(weight_col, usability_flag_col))
 
     tables[level.table] = target_df
     has_weight[level.table] = weight_col

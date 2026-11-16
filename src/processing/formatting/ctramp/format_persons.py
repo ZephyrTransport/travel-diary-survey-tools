@@ -11,13 +11,13 @@ Transforms canonical person data into CT-RAMP model format, including:
   inmf_choice (non-mandatory tour frequency), and activity_pattern from
   tour data when available
 - **Work-from-Home**: Sets wfh_choice based on work tours vs work days
-- **Value of Time**: Calculates based on employment type and household income
-  bracket
-- **Placeholders**: Uses sensible defaults when tour data is unavailable
+- **Value of Time**: Left null. It is a model output, not survey data, and is
+  kept only if the input already carries it
+- **Defaults**: A person with no tours gets activity_pattern 'H' and zero tour
+  frequencies
 
-Note: Some fields like activity_pattern, imf_choice, and inmf_choice require
-tour data and are set to placeholder values. These would be populated from
-actual tour extraction results in a full pipeline.
+activity_pattern, imf_choice and inmf_choice are derived from the person's
+formatted tours.
 """
 
 import logging
@@ -34,6 +34,7 @@ from data_canon.codebook.persons import AgeCategory, Employment, JobType
 from utils.helpers import get_age_midpoint
 
 from .ctramp_config import CTRAMPConfig
+from .output_columns import order_columns, sample_rate
 from .person_mappings import (
     EMPLOYMENT_TO_CTRAMP,
     GENDER_MAP,
@@ -46,12 +47,15 @@ from .student_mappings import (
     ctramp_student_category_expression,
     log_student_category_warnings,
 )
-from .tour_frequency_mappings import aggregate_tour_statistics
+from .tour_frequency_mappings import aggregate_tour_statistics, log_patterns_not_offered
 
 logger = logging.getLogger(__name__)
 
-
-# Individual Mandatory/Non-Mandatory Frequency Mapping ------------------------
+# Persons under 16 by person type; their employment category is UNDER_16.
+_UNDER_16_TYPES = [
+    CTRAMPPersonType.CHILD_UNDER_5.value,
+    CTRAMPPersonType.STUDENT_NON_DRIVING_AGE.value,
+]
 
 
 def enrich_persons_with_person_type(
@@ -59,12 +63,15 @@ def enrich_persons_with_person_type(
 ) -> pl.DataFrame:
     """Enrich persons DataFrame with person_type and type fields.
 
-    Derives person_type (integer code) and type (string label) based on age,
-    employment, and student status using the ctramp_person_type_expression.
+    Derives person_type (integer code) and type (string label) from age,
+    ``employment_category`` and ``student_category`` using
+    ``ctramp_person_type_expression``. Both categories must already be present
+    (see ``add_person_type``): a caller that has not derived them is a
+    programming error, not a case to guess at. An existing person_type column
+    holding values outside ``CTRAMPPersonType`` is dropped and re-derived.
 
-    If student_category and employment_category columns are present, they will
-    be used as inputs to person_type classification for consistency. Otherwise,
-    classification falls back to raw employment/student/school_type columns.
+    The age check is not exhaustive (a young age code could match by accident),
+    but it catches codes outside ``AgeCategory``.
 
     Args:
         persons_canonical: Canonical persons DataFrame
@@ -72,9 +79,6 @@ def enrich_persons_with_person_type(
     Returns:
         DataFrame with added person_type and type fields
     """
-    # Validate age column using AgeCategory enum from canonical model
-    # This is not a perfect validation since it's young ages could erroneously match an enum,
-    # but it provides a reasonable check that age codes are within expected categories.
     invalid_ages = set(persons_canonical["age"]) - {x.value for x in AgeCategory}
     if invalid_ages:
         msg = (
@@ -83,58 +87,83 @@ def enrich_persons_with_person_type(
         )
         raise ValueError(msg)
 
-    # Check if person_type and type columns already exist and are valid
-    # If they are invalid, drop them to be re-derived
-    # in case some other person_type vestige was present in the data.
     if "person_type" in persons_canonical.columns and "type" in persons_canonical.columns:
         valid_person_types = set(CTRAMPPersonType.to_dict().keys())
         existing_person_types = set(persons_canonical["person_type"].drop_nulls().unique())
-        if not existing_person_types.issubset(valid_person_types):
-            logger.warning(
-                "Existing person_type column contains invalid values: %s. "
-                "Dropping person_type and type columns to re-derive from attributes.",
-                existing_person_types - valid_person_types,
-            )
-            persons_canonical = persons_canonical.drop(["person_type", "type"])
-
-    # If person_type or type is missing, or does not match expected values, re-derive it
-    if "person_type" not in persons_canonical.columns or "type" not in persons_canonical.columns:
-        logger.info("person_type or type column missing, deriving person type from attributes")
-
-        # Determine whether pre-derived categories are available for consistency
-        has_employment_category = "employment_category" in persons_canonical.columns
-        has_student_category = "student_category" in persons_canonical.columns
-
-        expr_kwargs = {}
-        if has_employment_category:
-            expr_kwargs["employment_category_col"] = "employment_category"
-        if has_student_category:
-            expr_kwargs["student_category_col"] = "student_category"
-
-        persons_with_type = persons_canonical.with_columns(
-            # Integer person_type code
-            ctramp_person_type_expression(**expr_kwargs).alias("person_type"),
-            # String type (e.g. "full_time_worker"), derived from person_type code
-            ctramp_person_type_expression(**expr_kwargs)
-            .replace_strict(CTRAMPPersonType.to_dict())
-            .alias("type"),
+        if existing_person_types.issubset(valid_person_types):
+            return persons_canonical
+        logger.warning(
+            "Existing person_type column contains invalid values: %s. "
+            "Dropping person_type and type columns to re-derive from attributes.",
+            existing_person_types - valid_person_types,
         )
+        persons_canonical = persons_canonical.drop(["person_type", "type"])
 
-        # Check for impossible input combinations and log warnings
-        warnings = log_person_type_warnings(persons_with_type)
-        total_warnings = sum(warnings.values())
-        if total_warnings > 0:
-            msg = (
-                f"Found {total_warnings} problematic person attribute combinations. "
-                "Will rely on age-based defaults."
-            )
-            for category, count in warnings.items():
-                msg += f"\n  {category}: {count}"
-            logger.warning(msg)
-    else:
-        persons_with_type = persons_canonical
+    logger.info("person_type or type column missing, deriving person type from attributes")
+    missing = [
+        col
+        for col in ("employment_category", "student_category")
+        if col not in persons_canonical.columns
+    ]
+    if missing:
+        msg = (
+            f"persons is missing {missing}, which person type is derived from. "
+            "Derive them first: student_category via "
+            "ctramp_student_category_expression, employment_category via "
+            "EMPLOYMENT_TO_CTRAMP."
+        )
+        raise ValueError(msg)
 
+    persons_with_type = persons_canonical.with_columns(
+        ctramp_person_type_expression().alias("person_type")
+    ).with_columns(pl.col("person_type").replace_strict(CTRAMPPersonType.to_dict()).alias("type"))
+
+    warnings = log_person_type_warnings(persons_with_type)
+    total_warnings = sum(warnings.values())
+    if total_warnings > 0:
+        msg = (
+            f"Found {total_warnings} problematic person attribute combinations. "
+            "Will rely on age-based defaults."
+        )
+        for category, count in warnings.items():
+            msg += f"\n  {category}: {count}"
+        logger.warning(msg)
     return persons_with_type
+
+
+def add_person_type(persons: pl.DataFrame, config: CTRAMPConfig) -> pl.DataFrame:
+    """Add the CT-RAMP student category, employment category and person type.
+
+    ``student_category`` is derived while age is still an ``AgeCategory`` code,
+    and ``employment_category`` from ``employment`` via ``EMPLOYMENT_TO_CTRAMP``
+    (unpaid work counts as part-time); person type then reads both, so the
+    rules live in one place. Anyone typed as under 16 then gets the
+    ``UNDER_16`` employment category, whatever employment they reported.
+
+    Args:
+        persons: Canonical persons with age, employment, student, school_type
+            and ``school_<taz_field>``.
+        config: CT-RAMP settings; ``taz_field`` names the school zone column.
+
+    Returns:
+        *persons* with ``student_category``, ``employment_category``,
+        ``person_type`` and ``type``.
+    """
+    persons = persons.with_columns(
+        ctramp_student_category_expression(school_taz_col=f"school_{config.taz_field}").alias(
+            "student_category"
+        )
+    ).with_columns(
+        pl.col("employment")
+        .replace_strict(EMPLOYMENT_TO_CTRAMP, default=CTRAMPEmploymentCategory.NOT_EMPLOYED.value)
+        .alias("employment_category")
+    )
+    return enrich_persons_with_person_type(persons).with_columns(
+        pl.when(pl.col("person_type").is_in(_UNDER_16_TYPES))
+        .then(pl.lit(CTRAMPEmploymentCategory.UNDER_16.value))
+        .otherwise(pl.col("employment_category"))
+        .alias("employment_category")
+    )
 
 
 def format_persons(
@@ -153,7 +182,8 @@ def format_persons(
     - Aggregate activity patterns and tour frequencies from tour data
 
     Args:
-        persons_canonical: Canonical persons DataFrame with derived person_type field
+        persons_canonical: Canonical persons DataFrame (person type is added here,
+            see ``add_person_type``) with
             commute_subsidy_provide_free_parking (employer provides free parking),
             commute_subsidy_provide_discounted_parking (employer provides discounted parking),
             commute_subsidy_use_free_parking (respondent uses free parking),
@@ -161,7 +191,7 @@ def format_persons(
             value_of_time
         tours_ctramp: Formatted CT-RAMP tours DataFrame with person_id and tour_purpose
             (CTRAMP-formatted purpose strings like 'work_low', 'school_grade', etc.)
-        config: CT-RAMP configuration with age thresholds
+        config: CT-RAMP configuration (TAZ field, gender for missing values)
 
     Returns:
         DataFrame with CT-RAMP person fields:
@@ -171,8 +201,8 @@ def format_persons(
             - person_num: Person number
             - age: Person age
             - gender: Gender (m/f)
-            - type: Person type (1-8)
-            - value_of_time: Value of time ($/hour)
+            - type: Person type label (person_type holds the code, 1-8)
+            - value_of_time: Value of time ($/hour); null unless supplied
             - fp_choice: Free parking choice (1/2)
             - activity_pattern: Daily activity pattern (M/N/H)
             - imf_choice: Individual mandatory tour frequency
@@ -183,8 +213,10 @@ def format_persons(
         - activity_pattern: M=mandatory tours, N=non-mandatory only, H=no tours
         - imf_choice: Count of mandatory tours (work/school)
         - inmf_choice: Count of non-mandatory tours
-        - wfh_choice: 1 if employed, job_type=WFH, and no work tours
-            (binary: WFH or commute, not both)
+        - wfh_choice: 1 if employed (full-time, part-time or self-employed), made
+            no work tour, and reported telecommute time that day -- or, when
+            telecommute_time is absent, has job_type WFH or HYBRID. Binary, as in
+            the model: a person either works from home or commutes on a day.
         - employment_category: derived from the BATS `employment` field via
           [`EMPLOYMENT_TO_CTRAMP`][processing.formatting.ctramp.person_mappings.EMPLOYMENT_TO_CTRAMP]:
 
@@ -201,29 +233,10 @@ def format_persons(
     """
     logger.info("Formatting person data for CT-RAMP")
 
-    # Compute student_category BEFORE person_type derivation
-    # This allows person_type_expression to use the pre-derived category for consistency.
-    # Must be computed before age midpoint conversion (uses AgeCategory bins directly).
-    persons_with_cats = persons_canonical.with_columns(
-        ctramp_student_category_expression(school_taz_col=f"school_{config.taz_field}").alias(
-            "student_category"
-        )
-    )
+    # Must run before the age midpoint conversion below: it reads AgeCategory codes.
+    persons_with_type = add_person_type(persons_canonical, config)
 
-    # Compute employment_category from employment for mandatory locations
-    # Computed early so person_type can use the derived category for consistency
-    # (EMPLOYED_UNPAID -> Part-time in EMPLOYMENT_TO_CTRAMP, matching person_type logic)
-    persons_with_cats = persons_with_cats.with_columns(
-        pl.col("employment")
-        .replace_strict(
-            EMPLOYMENT_TO_CTRAMP,
-            default=CTRAMPEmploymentCategory.NOT_EMPLOYED.value,
-        )
-        .alias("employment_category")
-    )
-
-    # Check for problematic student/school type combinations
-    student_warnings = log_student_category_warnings(persons_with_cats, config)
+    student_warnings = log_student_category_warnings(persons_with_type, config)
     total_student_warnings = sum(student_warnings.values())
     if total_student_warnings > 0:
         msg = (
@@ -233,25 +246,6 @@ def format_persons(
         for category, count in student_warnings.items():
             msg += f"\n  {category}: {count}"
         logger.warning(msg)
-
-    # Derive/validate person_type and type fields
-    # Uses pre-derived student_category and employment_category for consistency
-    persons_with_type = enrich_persons_with_person_type(persons_with_cats)
-
-    # Children under 16 get UNDER_16 employment category regardless of reported employment
-    persons_with_type = persons_with_type.with_columns(
-        pl.when(
-            pl.col("person_type").is_in(
-                [
-                    CTRAMPPersonType.CHILD_UNDER_5.value,
-                    CTRAMPPersonType.STUDENT_NON_DRIVING_AGE.value,
-                ]
-            )
-        )
-        .then(pl.lit(CTRAMPEmploymentCategory.UNDER_16.value))
-        .otherwise(pl.col("employment_category"))
-        .alias("employment_category")
-    )
 
     # Convert age category to continuous midpoint
     persons_ctramp = persons_with_type.with_columns(
@@ -296,18 +290,12 @@ def format_persons(
             pl.col("imf_choice").fill_null(0),  # 0 mandatory tours
             pl.col("inmf_choice").fill_null(0),  # 0 non-mandatory tours
             pl.col("work_count").fill_null(0),  # 0 work tours
+            pl.col("school_count").fill_null(0),  # 0 school tours
         ]
     )
+    log_patterns_not_offered(persons_ctramp)
 
-    # Derive wfh_choice from employment status, observed telecommute time, and work tours.
-    # This reflects the travel model's binary treatment: a person either WFH or commutes on a day.
-    #
-    # When telecommute_time is available (carried from the days table during expansion):
-    #   wfh = 1 if employed AND telecommute_time > 0 AND no work tours that day.
-    #   job_type is intentionally NOT used: any job type counts as long as the person
-    #   actually reported telecommuting and did not make a work tour.
-    #
-    # Fallback when telecommute_time is absent: use job_type ∈ {WFH, HYBRID} as proxy.
+    # wfh_choice: see the docstring. telecommute_time comes from the days table.
     employed_cond = pl.col("employment").is_in(
         [
             Employment.EMPLOYED_FULLTIME.value,
@@ -343,38 +331,30 @@ def format_persons(
             pl.lit(None).cast(pl.Float64).alias("value_of_time")
         )
 
-    # Add weight and sampleRate if person_weight exists
     if "person_weight" in persons_ctramp.columns:
-        persons_ctramp = persons_ctramp.with_columns(
-            pl.when(pl.col("person_weight") > 0)
-            .then(pl.col("person_weight").pow(-1))
-            .otherwise(None)
-            .alias("sampleRate")
-        )
+        persons_ctramp = persons_ctramp.with_columns(sample_rate("person_weight"))
 
-    # Reorder columns to the canonical CT-RAMP person output order.
-    # Only include columns that are actually present in the DataFrame.
-    column_order = [
-        "hh_id",
-        "person_id",
-        "person_num",
-        "age",
-        "gender",
-        "type",
-        "value_of_time",
-        "fp_choice",
-        "activity_pattern",
-        "imf_choice",
-        "inmf_choice",
-        "workDCLogsum",
-        "schoolDCLogsum",
-        "sampleRate",
-        "wfh_choice",
-        "industry",
-    ]
-    ordered = [c for c in column_order if c in persons_ctramp.columns]
-    remaining = [c for c in persons_ctramp.columns if c not in ordered]
-    persons_ctramp = persons_ctramp.select(ordered + remaining)
+    persons_ctramp = order_columns(
+        persons_ctramp,
+        [
+            "hh_id",
+            "person_id",
+            "person_num",
+            "age",
+            "gender",
+            "type",
+            "value_of_time",
+            "fp_choice",
+            "activity_pattern",
+            "imf_choice",
+            "inmf_choice",
+            "workDCLogsum",
+            "schoolDCLogsum",
+            "sampleRate",
+            "wfh_choice",
+            "industry",
+        ],
+    )
 
     logger.info("Formatted %d persons for CT-RAMP", len(persons_ctramp))
     debug_ptype(persons_ctramp)

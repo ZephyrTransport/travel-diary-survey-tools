@@ -66,6 +66,13 @@ def select_representative_members(joint_members: pl.DataFrame) -> pl.DataFrame:
     caller can take the zone that was assigned to that real location instead of
     re-deriving one.
 
+    Offsets are rounded to 1e-9 degrees (a fraction of a millimetre) so that a
+    tie is one: two members are equidistant from their midpoint in exact
+    arithmetic but not in floating point, and unrounded the last bit of noise
+    would decide the pair instead of the tie-break. The per-tour sum is rounded
+    again, since the legs are added in no fixed order. Legs with no joint tour
+    are their own group, which is the same rule over a single leg.
+
     Args:
         joint_members: Member linked trips carrying ``joint_trip_id``,
             ``joint_tour_id``, ``person_id`` and both ends' coordinates.
@@ -79,26 +86,16 @@ def select_representative_members(joint_members: pl.DataFrame) -> pl.DataFrame:
     centres = joint_members.group_by("joint_trip_id").agg(
         [pl.col(c).mean().alias(f"_c_{c}") for c in COORD_COLUMNS]
     )
-    offsets = joint_members.join(centres, on="joint_trip_id", how="left").with_columns(
-        # Rounded so that a tie is one: two members are equidistant from their own
-        # midpoint in exact arithmetic but not in floating point, and unrounded the
-        # last bit of noise would decide the pair -- the commonest case -- instead
-        # of the tie-break. 1e-9 degrees is a fraction of a millimetre, far below
-        # any distance that separates two members for real.
-        (_offset_from_centre("o") + _offset_from_centre("d")).round(9).alias("_offset")
-    )
-
-    # One representative per tour: sum each member's offset across the legs they
-    # travelled, then take the most central. Legs with no joint tour fall back to
-    # being their own group, which is the same rule over a single leg.
     group = pl.coalesce(
         pl.col("joint_tour_id").cast(pl.Utf8), pl.col("joint_trip_id").cast(pl.Utf8)
     )
-    totals = (
-        offsets.with_columns(group.alias("_group"))
-        .group_by("_group", "person_id")
-        .agg(pl.col("_offset").sum())
+    offsets = joint_members.join(centres, on="joint_trip_id", how="left").with_columns(
+        (_offset_from_centre("o") + _offset_from_centre("d")).round(9).alias("_offset"),
+        group.alias("_group"),
     )
+
+    # Each member's offset summed over the tour's legs; the most central wins.
+    totals = offsets.group_by("_group", "person_id").agg(pl.col("_offset").sum().round(9))
     representative = (
         totals.sort(["_offset", "person_id"])
         .unique(subset="_group", keep="first", maintain_order=True)
@@ -106,8 +103,7 @@ def select_representative_members(joint_members: pl.DataFrame) -> pl.DataFrame:
     )
 
     return (
-        offsets.with_columns(group.alias("_group"))
-        .join(representative, on=["_group", "person_id"], how="semi")
+        offsets.join(representative, on=["_group", "person_id"], how="semi")
         .unique(subset="joint_trip_id", keep="first", maintain_order=True)
         .drop("_group", "_offset", *[f"_c_{c}" for c in COORD_COLUMNS])
     )

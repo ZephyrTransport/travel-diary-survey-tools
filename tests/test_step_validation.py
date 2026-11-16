@@ -1,198 +1,150 @@
-"""Tests for step-aware validation of Pydantic models.
-
-This module tests the selective skip behavior of the pipeline, ensuring that
-fields are only required in their designated pipeline steps.
-"""
+"""A model field is required only in the steps whose contract asks for it."""
 
 from datetime import datetime
+from typing import Any
 
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
-import processing  # noqa: F401  # triggers step registration
+import processing  # triggers step registration
 from data_canon.models.survey import UnlinkedTripModel
 from data_canon.validation.row import (
     get_required_fields_for_step,
     validate_row_for_step,
 )
+from pipeline.step_registry import STEP_REGISTRY
+
+DATETIMES = {
+    "depart_time": datetime(2024, 1, 15, 10, 0, 0),
+    "arrive_time": datetime(2024, 1, 15, 11, 30, 0),
+}
+COORDINATES = {
+    "o_lat": 37.7749,
+    "o_lon": -122.4194,
+    "d_lat": 37.7849,
+    "d_lon": -122.4094,
+}
+
+
+def trip_row(**overrides: Any) -> dict[str, Any]:
+    """A trip row without ``linked_trip_id``, the datetimes or the coordinates."""
+    row = {
+        "unlinked_trip_id": 1,
+        "person_id": 101,
+        "hh_id": 1,
+        "person_day_id": 10101,
+        "depart_date": "2024-01-15",
+        "depart_hour": 10,
+        "depart_minute": 0,
+        "depart_seconds": 0,
+        "arrive_date": "2024-01-15",
+        "arrive_hour": 11,
+        "arrive_minute": 30,
+        "arrive_seconds": 0,
+        "o_purpose_category": 1,
+        "d_purpose_category": 2,
+        "mode_type": 1,
+        "duration_minutes": 90.0,
+        "distance_miles": 10.5,
+    }
+    row.update(overrides)
+    return row
 
 
 class TestSelectiveFieldRequirements:
-    """Test that fields are only required in specific steps."""
+    """Which fields each step requires."""
 
-    def test_step_specific_fields_required_only_in_that_step(self):
-        """Fields should only be required in their designated step."""
-        # linked_trip_id is not required in link_trips, but is in extract_tours
-        required_linking = get_required_fields_for_step("unlinked_trips", "link_trips")
-        assert "linked_trip_id" not in required_linking
+    @pytest.mark.parametrize(
+        ("field", "step", "required"),
+        [
+            # linked_trip_id is produced by link_trips, so only extract_tours needs it.
+            ("linked_trip_id", "link_trips", False),
+            ("linked_trip_id", "extract_tours", True),
+            # depart_time/arrive_time are built after load_data.
+            ("depart_time", "load_data", False),
+            ("arrive_time", "load_data", False),
+            ("depart_time", "link_trips", True),
+            ("arrive_time", "link_trips", True),
+            ("depart_time", "extract_tours", True),
+            ("arrive_time", "extract_tours", True),
+        ],
+    )
+    def test_step_specific_fields_required_only_in_that_step(
+        self, field: str, step: str, required: bool
+    ):
+        """A field is required only from the step whose contract names it."""
+        assert (field in get_required_fields_for_step("unlinked_trips", step)) is required
 
-        required_tours = get_required_fields_for_step("unlinked_trips", "extract_tours")
-        assert "linked_trip_id" in required_tours
-
-    def test_fields_added_during_pipeline(self):
-        """Fields added during pipeline only required after creation."""
-        # depart_time/arrive_time are not required in load_data
-        required_load = get_required_fields_for_step("unlinked_trips", "load_data")
-        assert "depart_time" not in required_load
-        assert "arrive_time" not in required_load
-
-        # Required in link_trips
-        required_link = get_required_fields_for_step("unlinked_trips", "link_trips")
-        assert "depart_time" in required_link
-        assert "arrive_time" in required_link
-
-        # Also required in extract_tours
-        required_tours = get_required_fields_for_step("unlinked_trips", "extract_tours")
-        assert "depart_time" in required_tours
-        assert "arrive_time" in required_tours
+    def test_an_unregistered_step_requires_nothing(self):
+        """An unknown step, or a table the step does not declare, requires no fields."""
+        assert get_required_fields_for_step("unlinked_trips", "no_such_step") == set()
+        assert get_required_fields_for_step("no_such_table", "extract_tours") == set()
 
 
 class TestStepValidationBehavior:
-    """Test the actual validation behavior across steps."""
+    """Row validation against a step's contract."""
 
-    def test_validation_passes_without_step_specific_fields_in_wrong_step(self):
-        """Should allow missing step-specific fields in other steps."""
-        row = {
-            "unlinked_trip_id": 1,
-            "person_id": 101,
-            "hh_id": 1,
-            "day_id": 10101,
-            # No linked_trip_id or tour_id - OK for preprocessing
-            "depart_date": "2024-01-15",
-            "depart_hour": 10,
-            "depart_minute": 0,
-            "depart_seconds": 0,
-            "arrive_date": "2024-01-15",
-            "arrive_hour": 11,
-            "arrive_minute": 30,
-            "arrive_seconds": 0,
-            "o_purpose_category": 1,
-            "d_purpose_category": 2,
-            "mode_type": 1,
-            "duration_minutes": 90.0,
-            "distance_miles": 10.5,
-        }
+    @pytest.mark.parametrize(
+        ("row", "step"),
+        [
+            # add_zone_ids requires the coordinates but not linked_trip_id or the datetimes.
+            pytest.param(trip_row(**COORDINATES), "add_zone_ids", id="zones-no-linked-id"),
+            pytest.param(
+                trip_row(linked_trip_id=1, tour_id=1, **DATETIMES),
+                "extract_tours",
+                id="tours-complete",
+            ),
+            pytest.param(trip_row(**DATETIMES, **COORDINATES), "link_trips", id="link-complete"),
+        ],
+    )
+    def test_validation_passes_when_the_step_has_what_it_needs(
+        self, row: dict[str, Any], step: str
+    ):
+        """A row missing fields another step requires still validates for this one."""
+        validate_row_for_step(row, UnlinkedTripModel, "unlinked_trips", step)
 
-        # Should pass - preprocessing has no required fields registered
-        validate_row_for_step(row, UnlinkedTripModel, "unlinked_trips", "preprocessing")
-
-    def test_validation_fails_without_step_specific_fields_in_right_step(self):
-        """Should require step-specific fields in their designated step."""
-        row = {
-            "unlinked_trip_id": 1,
-            "person_id": 101,
-            "hh_id": 1,
-            "day_id": 10101,
-            # Missing linked_trip_id
-            "depart_date": "2024-01-15",
-            "depart_hour": 10,
-            "depart_minute": 0,
-            "depart_seconds": 0,
-            "arrive_date": "2024-01-15",
-            "arrive_hour": 11,
-            "arrive_minute": 30,
-            "arrive_seconds": 0,
-            "o_purpose_category": 1,
-            "d_purpose_category": 2,
-            "mode_type": 1,
-            "duration_minutes": 90.0,
-            "distance_miles": 10.5,
-        }
-
-        # Should fail - we're in extract_tours and linked_trip_id is required
-        with pytest.raises(ValueError, match="linked_trip_id"):
-            validate_row_for_step(row, UnlinkedTripModel, "unlinked_trips", "extract_tours")
-
-    def test_validation_passes_with_all_required_fields_for_step(self):
-        """Should pass when all step-required fields are present."""
-        row = {
-            "unlinked_trip_id": 1,
-            "person_id": 101,
-            "hh_id": 1,
-            "day_id": 10101,
-            "linked_trip_id": 1,
-            "tour_id": 1,
-            "depart_date": "2024-01-15",
-            "depart_hour": 10,
-            "depart_minute": 0,
-            "depart_seconds": 0,
-            "arrive_date": "2024-01-15",
-            "arrive_hour": 11,
-            "arrive_minute": 30,
-            "arrive_seconds": 0,
-            "o_purpose_category": 1,
-            "d_purpose_category": 2,
-            "mode_type": 1,
-            "duration_minutes": 90.0,
-            "distance_miles": 10.5,
-            "depart_time": datetime(2024, 1, 15, 10, 0, 0),
-            "arrive_time": datetime(2024, 1, 15, 11, 30, 0),
-        }
-
-        # Should pass - all extract_tours fields present
-        validate_row_for_step(row, UnlinkedTripModel, "unlinked_trips", "extract_tours")
-
-    def test_datetime_validation_selective_behavior(self):
-        """Datetime fields should follow same selective pattern."""
-        # Without datetime - OK for preprocessing (no registered requirements)
-        row_no_dt = {
-            "unlinked_trip_id": 1,
-            "person_id": 101,
-            "hh_id": 1,
-            "day_id": 10101,
-            "depart_date": "2024-01-15",
-            "depart_hour": 10,
-            "depart_minute": 0,
-            "depart_seconds": 0,
-            "arrive_date": "2024-01-15",
-            "arrive_hour": 11,
-            "arrive_minute": 30,
-            "arrive_seconds": 0,
-            "o_purpose_category": 1,
-            "d_purpose_category": 2,
-            "mode_type": 1,
-            "duration_minutes": 90.0,
-            "distance_meters": 8000,
-        }
-        validate_row_for_step(row_no_dt, UnlinkedTripModel, "unlinked_trips", "preprocessing")
-
-        # Without datetime - Fails for link_trips
-        with pytest.raises(ValueError, match=r"depart_time|arrive_time"):
-            validate_row_for_step(row_no_dt, UnlinkedTripModel, "unlinked_trips", "link_trips")
-
-        # With datetime and location fields - OK for link_trips
-        row_with_dt = row_no_dt.copy()
-        row_with_dt["depart_time"] = datetime(2024, 1, 15, 10, 0, 0)
-        row_with_dt["arrive_time"] = datetime(2024, 1, 15, 11, 30, 0)
-        row_with_dt["o_lat"] = 37.7749
-        row_with_dt["o_lon"] = -122.4194
-        row_with_dt["d_lat"] = 37.7849
-        row_with_dt["d_lon"] = -122.4094
-        validate_row_for_step(row_with_dt, UnlinkedTripModel, "unlinked_trips", "link_trips")
+    @pytest.mark.parametrize(
+        ("row", "step", "match"),
+        [
+            pytest.param(
+                trip_row(**DATETIMES), "extract_tours", "linked_trip_id", id="tours-no-linked-id"
+            ),
+            pytest.param(
+                trip_row(**COORDINATES),
+                "link_trips",
+                r"depart_time|arrive_time",
+                id="link-no-datetimes",
+            ),
+        ],
+    )
+    def test_validation_fails_without_step_specific_fields(
+        self, row: dict[str, Any], step: str, match: str
+    ):
+        """A row missing a field its step requires fails."""
+        with pytest.raises(ValueError, match=match):
+            validate_row_for_step(row, UnlinkedTripModel, "unlinked_trips", step)
 
     def test_validates_present_fields_even_if_not_required_in_step(self):
-        """Should validate type/constraints of present fields in any step."""
-        row = {
-            "unlinked_trip_id": 1,
-            "person_id": 101,
-            "hh_id": 1,
-            "day_id": 10101,
-            "linked_trip_id": -5,  # Invalid: must be >= 1
-            "depart_date": "2024-01-15",
-            "depart_hour": 10,
-            "depart_minute": 0,
-            "depart_seconds": 0,
-            "arrive_date": "2024-01-15",
-            "arrive_hour": 11,
-            "arrive_minute": 30,
-            "arrive_seconds": 0,
-            "o_purpose_category": 1,
-            "d_purpose_category": 2,
-            "mode_type": 1,
-            "duration_minutes": 90.0,
-            "distance_miles": 10.5,
-        }
+        """A present field is checked against its constraints even where it is not required."""
+        row = trip_row(linked_trip_id=-5)  # invalid: must be >= 1
 
-        # Should fail - linked_trip_id is present but invalid
         with pytest.raises(PydanticValidationError, match="greater than or equal"):
-            validate_row_for_step(row, UnlinkedTripModel, "unlinked_trips", "preprocessing")
+            validate_row_for_step(row, UnlinkedTripModel, "unlinked_trips", "load_data")
+
+
+# Steps that declare no columns, and why. Any other step must declare a contract.
+_NO_CONTRACT = {
+    "load_data": "reads whatever files the config names",
+    "write_data": "writes whatever tables exist",
+}
+
+
+def test_every_step_declares_its_columns():
+    """A step with an empty ``@step()`` is either listed above or a forgotten contract."""
+    # Only the package's steps: other tests register throwaway steps in the same registry.
+    steps = {name for name in dir(processing) if name in STEP_REGISTRY}
+    undeclared = sorted(name for name in steps if not STEP_REGISTRY[name].tables)
+    assert undeclared == sorted(_NO_CONTRACT), (
+        f"Steps declaring no requires/produces: {undeclared}. Declare what the step reads "
+        f"and writes, or add it to _NO_CONTRACT with the reason."
+    )

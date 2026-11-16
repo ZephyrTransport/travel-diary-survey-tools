@@ -1,36 +1,17 @@
 """Helper functions for resolving enum labels to values.
 
 This module provides utilities for working with codebook enumerations,
-particularly for resolving enum member names to their numeric values
-and preparing data for imputation by replacing sentinel/missing values.
+particularly for resolving enum member names to their numeric values.
 """
 
 import inspect
 import logging
-from typing import get_args, get_origin
+from typing import get_args
 
+from data_canon.core.dataclass import CANONICAL_MODELS
 from data_canon.core.labeled_enum import LabeledEnum
-from data_canon.models.survey import (
-    HouseholdModel,
-    JointTripModel,
-    LinkedTripModel,
-    PersonModel,
-    TourModel,
-    UnlinkedTripModel,
-)
 
 logger = logging.getLogger(__name__)
-
-
-# Map table names to their Pydantic model classes (canonical survey models only)
-MODEL_MAPPING = {
-    "households": HouseholdModel,
-    "persons": PersonModel,
-    "unlinked_trips": UnlinkedTripModel,
-    "linked_trips": LinkedTripModel,
-    "tours": TourModel,
-    "joint_trips": JointTripModel,
-}
 
 
 def _extract_enum_from_annotation(annotation: object) -> type[LabeledEnum] | None:
@@ -50,23 +31,12 @@ def _extract_enum_from_annotation(annotation: object) -> type[LabeledEnum] | Non
         >>> _extract_enum_from_annotation(str)
         None
     """
-    # Handle Union types (e.g., IncomeBroad | None or Optional[IncomeBroad])
-    origin = get_origin(annotation)
-    if origin is not None:  # This is a generic type like Union
-        args = get_args(annotation)
-        # Filter out None and find the first LabeledEnum
-        for arg in args:
-            if arg is type(None):
-                continue
-            if inspect.isclass(arg) and issubclass(arg, LabeledEnum):
-                return arg
-        return None
-
-    # Direct type (not Union)
-    if inspect.isclass(annotation) and issubclass(annotation, LabeledEnum):
-        return annotation
-
-    return None
+    # A Union (IncomeBroad | None) offers its members; a plain type offers itself
+    candidates = get_args(annotation) or (annotation,)
+    return next(
+        (a for a in candidates if inspect.isclass(a) and issubclass(a, LabeledEnum)),
+        None,
+    )
 
 
 def get_enum_class_for_field(table_name: str, field_name: str) -> type[LabeledEnum] | None:
@@ -89,7 +59,7 @@ def get_enum_class_for_field(table_name: str, field_name: str) -> type[LabeledEn
         <enum 'IncomeBroad'>
     """
     # Get the model class for this table
-    model_class = MODEL_MAPPING.get(table_name)
+    model_class = CANONICAL_MODELS.get(table_name)
     if not model_class:
         msg = "Unknown table name '%s' - cannot find model class"
         raise ValueError(msg % table_name)
@@ -126,26 +96,20 @@ def resolve_enum_labels(
         >>> resolve_enum_labels('households', 'income_bin', ['MISSING', 'PNTA'])
         [995, 999]
     """
-    # If it is already an integer, we're going to throw a shameful warning but pass it along
+    # Integer codes pass through unchecked, with a warning
     if all(
         isinstance(label, int) or (isinstance(label, str) and label.isdigit())
         for label in enum_labels
     ):
         logger.warning(
-            """
-            Looks like you passed in integer values directly, tsk tsk.
-            This is not recommended but we'll pass it through as integers and hope for the best.
-            """
+            "%s.%s: given integer codes %s rather than labels; using them unchecked",
+            table_name,
+            field_name,
+            enum_labels,
         )
         return [int(label) for label in enum_labels]
 
     enum_class = get_enum_class_for_field(table_name, field_name)
-    if not enum_class:
-        msg = (
-            f"Cannot resolve enum labels for field '{field_name}' "
-            f"in table '{table_name}' - no enum class found"
-        )
-        raise ValueError(msg)
 
     resolved_values = []
     for label in enum_labels:

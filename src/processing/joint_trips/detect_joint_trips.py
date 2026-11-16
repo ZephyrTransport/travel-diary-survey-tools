@@ -8,7 +8,7 @@ import logging
 
 import polars as pl
 
-from pipeline.decoration import step
+from pipeline.decoration import Tables, step
 from utils.create_ids import create_concatenated_id
 
 from .aggregation import (
@@ -24,27 +24,6 @@ from .similarity import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _create_empty_results(
-    linked_trips: pl.DataFrame,
-) -> dict[str, pl.DataFrame]:
-    """Create empty result structure when no joint trips are detected."""
-    linked_trips_with_joints = linked_trips.with_columns(
-        [pl.lit(None, dtype=pl.Int64).alias("joint_trip_id")]
-    )
-    empty_joint_trips = pl.DataFrame(
-        schema={
-            "joint_trip_id": pl.Int64,
-            "hh_id": pl.Int64,
-            "day_id": pl.Int64,
-            "num_joint_travelers": pl.Int64,
-        }
-    )
-    return {
-        "linked_trips": linked_trips_with_joints,
-        "joint_trips": empty_joint_trips,
-    }
 
 
 def _filter_multi_person_households(
@@ -74,12 +53,17 @@ def _filter_multi_person_households(
 def _create_and_filter_trip_pairs(
     candidate_trips: pl.DataFrame,
 ) -> pl.DataFrame:
-    """Create trip pairs and apply deduplication and temporal filters."""
-    # Self-join within household to create trip pairs
+    """Create trip pairs and apply deduplication and temporal filters.
+
+    Pairs are formed within one household date only. Two members' trips that
+    straddle the survey's day boundary fall on different dates, and a joint
+    trip cannot belong to two.
+    """
     trip_pairs = candidate_trips.join(
         candidate_trips.select(
             [
                 "hh_id",
+                "travel_date",
                 "linked_trip_id",
                 "person_id",
                 "o_lat",
@@ -101,7 +85,7 @@ def _create_and_filter_trip_pairs(
                 "arrive_time": "arrive_time_b",
             }
         ),
-        on=["hh_id"],
+        on=["hh_id", "travel_date"],
         how="inner",
     )
 
@@ -178,6 +162,7 @@ def _assign_joint_trip_ids(
 @step(
     requires={
         "linked_trips": {
+            "person_day_id",
             "o_lat",
             "o_lon",
             "d_lat",
@@ -185,21 +170,17 @@ def _assign_joint_trip_ids(
             "depart_time",
             "arrive_time",
         },
+        "person_days": {"person_day_id", "hh_day_id", "travel_date"},
+        "households": set(),  # counted for the log
     },
     produces={
         "linked_trips": {"joint_trip_id"},
-        "joint_trips": {"joint_trip_id", "hh_id", "day_id"},
+        "joint_trips": {"joint_trip_id", "hh_id", "hh_day_id", "travel_date"},
     },
 )
 def detect_joint_trips(
-    linked_trips: pl.DataFrame,
-    households: pl.DataFrame,
-    method: str = "buffer",
-    time_threshold_minutes: float = 15.0,
-    space_threshold_meters: float = 100.0,
-    covariance: list[float] | list[list[float]] | None = None,
-    confidence_level: float = 0.90,
-    log_discrepancies: bool = False,
+    tables: Tables,
+    matching: JointTripConfig,
 ) -> dict[str, pl.DataFrame]:
     """Detect joint trips among household members using similarity matching.
 
@@ -208,23 +189,16 @@ def detect_joint_trips(
     thresholds or Mahalanobis distance.
 
     Args:
-        linked_trips: Journey records with coordinates and timing. Required columns:
-            linked_trip_id, hh_id, person_id, o/d coordinates, depart/arrive times.
-        households: Household table for pre-filtering.
-        method: Detection method - "buffer" or "mahalanobis" (default: "buffer").
-        time_threshold_minutes: Max time difference for buffer method (default: 15.0).
-        space_threshold_meters: Max spatial distance for buffer method (default: 100.0).
-        covariance: Covariance matrix for mahalanobis method - diagonal (4 values) or
-            full (4x4 matrix). If None, uses defaults (~84m spatial, ~4.5min temporal).
-        confidence_level: Statistical confidence level for mahalanobis (default: 0.90).
-            Higher = stricter. 0.90 is strict, 0.75 is moderate.
-        log_discrepancies: Whether to log trips with reported vs detected traveler
-            mismatches (default: False).
+        tables: ``linked_trips`` (journeys with coordinates and timing),
+            ``households`` and ``person_days`` (with ``travel_date``: trips are
+            paired only within one household date, and each joint trip records it).
+        matching: How trips are matched: the method and its thresholds, from
+            the config's ``matching:`` block. See ``JointTripConfig``.
 
     Returns:
         Dictionary containing:
             - linked_trips: Original trips with added joint_trip_id column
-            - joint_trips: Aggregated table of shared trips with participant lists
+            - joint_trips: One row per shared trip (see Phase 5)
 
     Algorithm:
         # Phase 1: Household Pre-filtering
@@ -240,11 +214,11 @@ def detect_joint_trips(
             - Destination coordinates (d_lon, d_lat)
             - Departure time
             - Arrival time
-        2. Store distances in condensed matrix format for efficiency
+        2. Add the four distances as columns on each candidate pair
 
         # Phase 3: Similarity Filtering
 
-        ## Buffer Method (default):
+        ## Buffer Method:
 
         - Filter trip pairs where:
             - Spatial distance (haversine) ≤ space_threshold_meters for both
@@ -257,7 +231,8 @@ def detect_joint_trips(
 
         - Calculate statistical distance using covariance matrix:
             - Accounts for correlated variations in space/time
-            - Compares to chi-squared distribution at confidence_level
+            - Keeps pairs whose distance is below a cutoff set by
+              confidence_level (see ``JointTripConfig.get_distance_threshold``)
         - More sophisticated, calibrated to actual joint trip patterns
         - Can capture joint trips more flexibly than fixed thresholds
 
@@ -267,22 +242,22 @@ def detect_joint_trips(
         2. Detect maximal cliques (groups of mutually-similar trips)
         3. Handle overlapping cliques by selecting disjoint set with maximum coverage
         4. Each clique represents one joint trip event
-        5. Ensures transitivity: if A travels with B, and B with C, then A,B,C form
-           one joint trip
+        5. A clique needs every pair similar: A with B and B with C makes A,B,C
+           one joint trip only if A is also similar to C
 
         # Phase 5: Joint Trip Aggregation
 
         1. Assign unique joint_trip_id to each clique
-        2. Create joint_trips table with:
-            - Representative location/time (mean of participants)
-            - person_list: Array of participating person IDs
-            - trip_list: Array of individual linked_trip_ids
-            - num_participants: Count of travelers
-        3. Validate against reported num_travelers field if available
+        2. Create joint_trips table, one row per joint trip:
+            - joint_trip_id, hh_id, travel_date
+            - num_joint_travelers: number of member linked trips
+            - survey_complete: true only if every member trip is complete
+        3. Mark each member linked trip with its joint_trip_id
+        4. Validate against reported num_travelers field if available
 
     Notes:
-        - Only compares trips within same household (joint trips across
-          households not detected)
+        - Only compares trips within one household date (joint trips across
+          households, or across the survey's day boundary, not detected)
         - Mahalanobis method requires calibrated covariance matrix (see
           scripts/calibrate_joint_trip_covariance.py)
         - Clique detection prevents false positives from partial or
@@ -291,70 +266,40 @@ def detect_joint_trips(
           number of travelers
         - Non-joint trips retain joint_trip_id = NULL
     """
-    # Validate and construct config
-    config = JointTripConfig(
-        method=method,
-        time_threshold_minutes=time_threshold_minutes,
-        space_threshold_meters=space_threshold_meters,
-        covariance=covariance,
-        confidence_level=confidence_level,
-        log_discrepancies=log_discrepancies,
-    )
-
-    # Default covariance for Mahalanobis if not provided
-    if config.method == "mahalanobis" and config.covariance is None:
-        config.covariance = [7000, 7000, 20, 20]  # ~84m, ~84m, ~4.5min, ~4.5min
-        logger.info("Using default diagonal covariance for Mahalanobis method")
-
+    linked_trips = tables["linked_trips"]
+    households = tables["households"]
+    person_days = tables["person_days"]
     logger.info(
         "Detecting joint trips using %s method (%d trips, %d households)",
-        config.method,
+        matching.method,
         len(linked_trips),
         len(households),
     )
 
-    # Pre-filter to household with 2+ persons
-    candidate_trips = _filter_multi_person_households(linked_trips)
-
-    if len(candidate_trips) == 0:
-        logger.warning(
-            "No multi-person households found. No joint trips possible, returning empty results."
-        )
-        return _create_empty_results(linked_trips)
+    # Pre-filter to household with 2+ persons, each trip on its travel date
+    candidate_trips = _filter_multi_person_households(linked_trips).join(
+        person_days.select("person_day_id", "travel_date"), on="person_day_id", how="left"
+    )
 
     # Create trip pairs and apply filters
     trip_pairs = _create_and_filter_trip_pairs(candidate_trips)
-
-    if len(trip_pairs) == 0:
-        logger.warning(
-            "No temporally overlapping trip pairs found. "
-            "No joint trips detected, consider checking data quality."
-        )
-        return _create_empty_results(linked_trips)
 
     # Compute pairwise distances
     trip_pairs = compute_pairwise_distances(trip_pairs)
 
     # Apply filtering based on method
-    if config.method == "buffer":
+    if matching.method == "buffer":
         filtered_pairs = apply_buffer_filter(
             trip_pairs,
-            config.space_threshold_meters,
-            config.time_threshold_minutes,
+            matching.space_threshold_meters,
+            matching.time_threshold_minutes,
         )
     else:  # mahalanobis
         filtered_pairs = apply_mahalanobis_filter(
             trip_pairs,
-            config.covariance,
-            config.distance_threshold,
+            matching.covariance,
+            matching.get_distance_threshold(),
         )
-
-    if len(filtered_pairs) == 0:
-        logger.warning(
-            "No joint trips detected. Consider relaxing thresholds or "
-            "checking data quality (GPS accuracy, time synchronization)."
-        )
-        return _create_empty_results(linked_trips)
 
     # Detect joint trips using clique detection
     clique_assignments, flagged_conflicts = detect_disjoint_cliques(
@@ -368,7 +313,7 @@ def detect_joint_trips(
             "Flagged %d clique conflicts resolved by quality ranking",
             len(flagged_conflicts),
         )
-        if log_discrepancies:
+        if matching.log_discrepancies:
             # Show first 5 flagged conflicts
             for i, clique in enumerate(flagged_conflicts[:5], 1):
                 logger.debug("Flagged clique %d: trips %s", i, clique)
@@ -381,26 +326,19 @@ def detect_joint_trips(
         joint_trip_assignments, on="linked_trip_id", how="left"
     )
 
-    # Build joint_trips aggregation table
-    joint_trips_table = build_joint_trips_table(linked_trips_with_joints, joint_trip_assignments)
+    joint_trips_table = build_joint_trips_table(linked_trips_with_joints, person_days)
+    if joint_trips_table.is_empty():
+        logger.warning(
+            "No joint trips found: %s trips in multi-person households, "
+            "%s pairs overlapping in time, 0 pairs matched by method=%s. "
+            "If this survey should have joint travel, check the data or the matching thresholds.",
+            f"{candidate_trips.height:,}",
+            f"{trip_pairs.height:,}",
+            matching.method,
+        )
 
-    # Validate against num_travelers (optional logging)
-    validate_against_num_travelers(
-        linked_trips_with_joints,
-        joint_trip_assignments,
-        config.log_discrepancies,
-    )
-
-    # Drop intermediate distance columns before returning
-    cols_to_drop = {
-        "origin_dist_m",
-        "dest_dist_m",
-        "depart_diff_min",
-        "arrive_diff_min",
-    }
-    existing_cols_to_drop = [c for c in cols_to_drop if c in linked_trips_with_joints.columns]
-    if existing_cols_to_drop:
-        linked_trips_with_joints = linked_trips_with_joints.drop(existing_cols_to_drop)
+    # Compare against reported num_travelers (logging only)
+    validate_against_num_travelers(linked_trips_with_joints, matching.log_discrepancies)
 
     logger.info(
         "Joint trip detection completed: %d joint trip groups detected",

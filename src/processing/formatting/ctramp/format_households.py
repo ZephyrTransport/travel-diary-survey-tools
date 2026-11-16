@@ -4,10 +4,7 @@ Transforms canonical household data into CT-RAMP model format, including:
 
 - **Income Conversion**: Converts categorical income values to midpoint dollars
   in configurable base year
-- **Income Bracketing**: Classifies households into low/med/high/very high
-  income brackets using user-defined thresholds
-- **Spatial Fields**: Maps home TAZ (optionally filters households without
-  valid TAZ)
+- **Spatial Fields**: Maps the home TAZ
 - **Joint Tour Frequency**: Derives jtf_choice field from joint tour counts by
   purpose category
 - **Excludes**: Random number fields (ao_rn, fp_rn, cdap_rn) and auto_suff
@@ -23,12 +20,12 @@ import logging
 import polars as pl
 
 from data_canon.codebook.ctramp import JTFChoice
-from data_canon.codebook.households import IncomeBroad
 from data_canon.codebook.persons import Employment
-from processing.formatting.ctramp.purpose_mappings import PURPOSECATEGORY_TO_JTF_GROUP
-from utils.helpers import get_income_midpoint
+from processing.formatting.income_bins import income_bin_midpoints
 
 from .ctramp_config import CTRAMPConfig
+from .output_columns import order_columns, sample_rate
+from .purpose_mappings import PURPOSECATEGORY_TO_JTF_GROUP
 
 logger = logging.getLogger(__name__)
 
@@ -108,24 +105,19 @@ def _compute_jtf_choice(
         (0, 0, 0, 0, 1, JTFChoice.ONE_DISCR),
     ]
 
-    # Build when/then chain from rules
-    expr = None
-    for shop, maint, eatout, visit, discr, choice in jtf_rules:
-        condition = (
+    def at_least(shop: int, maint: int, eatout: int, visit: int, discr: int) -> pl.Expr:
+        return (
             (pl.col("shop_count") >= shop)
             & (pl.col("maint_count") >= maint)
             & (pl.col("eatout_count") >= eatout)
             & (pl.col("visit_count") >= visit)
             & (pl.col("discr_count") >= discr)
         )
-        if expr is None:
-            expr = pl.when(condition).then(pl.lit(choice.value))
-        else:
-            expr = expr.when(condition).then(pl.lit(choice.value))
 
-    if expr is None:
-        msg = "No JTF rules defined"
-        raise ValueError(msg)
+    (*first_counts, first_choice), *rest = jtf_rules
+    expr = pl.when(at_least(*first_counts)).then(pl.lit(first_choice.value))
+    for *counts, choice in rest:
+        expr = expr.when(at_least(*counts)).then(pl.lit(choice.value))
 
     hh_jtf_agg = hh_jtf_agg.with_columns(expr.otherwise(pl.lit(None)).alias("jtf_choice"))
 
@@ -162,8 +154,8 @@ def format_households(
     - Map TAZ using configuration
 
     Args:
-        households_canonical: Canonical households DataFrame with hh_id, home_taz,
-            income_detailed, income_followup, num_vehicles
+        households_canonical: Canonical households DataFrame with hh_id,
+            home_<taz_field>, income_bin (or a precomputed income), num_vehicles
         persons_canonical: Canonical persons DataFrame with hh_id, employment (for
             computing household size and worker count)
         tours_canonical: Canonical tours DataFrame with hh_id, joint_tour_id,
@@ -179,7 +171,7 @@ def format_households(
             - autos: Number of automobiles
             - size: Number of persons
             - workers: Number of workers
-            - jtf_choice: Joint tour frequency (count of unique joint tours)
+            - jtf_choice: Joint tour frequency choice (JTFChoice code)
 
     Notes:
         - Model-output fields (walk_subzone, humanVehicles, autonomousVehicles,
@@ -212,13 +204,8 @@ def format_households(
     households_ctramp = households_canonical.join(household_aggregates, on="hh_id", how="left")
 
     # Derive income: use pre-computed value if available, otherwise midpoint of income_bin
-    income_bin_map = {
-        bin_cat.value: int(get_income_midpoint(bin_cat))
-        for bin_cat in IncomeBroad
-        if "Prefer not to answer" not in bin_cat.label and "Missing" not in bin_cat.label
-    }
     income_bin_expr = (
-        pl.col("income_bin").cast(pl.Int64).replace_strict(income_bin_map, default=None)
+        pl.col("income_bin").cast(pl.Int64).replace_strict(income_bin_midpoints(), default=None)
     )
     if "income" not in households_ctramp.columns:
         households_ctramp = households_ctramp.with_columns(income=income_bin_expr)
@@ -235,11 +222,6 @@ def format_households(
         .alias("income")
     )
 
-    # Compute jtf_choice for all households
-    if tours_canonical is None:
-        msg = "Tours data is required to compute jtf_choice"
-        raise ValueError(msg)
-
     households_ctramp = _compute_jtf_choice(households_ctramp, tours_canonical)
 
     # Validate num_vehicles is present
@@ -252,62 +234,54 @@ def format_households(
         pl.col("num_vehicles").cast(pl.Int64).alias("autos")
     )
 
-    # Add weight and sampleRate if hh_weight exists
     if "hh_weight" in households_ctramp.columns:
-        households_ctramp = households_ctramp.with_columns(
-            pl.when(pl.col("hh_weight") > 0)
-            .then(pl.col("hh_weight").pow(-1))
-            .otherwise(None)
-            .alias("sampleRate")
-        )
+        households_ctramp = households_ctramp.with_columns(sample_rate("hh_weight"))
 
     # Rename home_taz to taz and alias it for format_mandatory_location
     households_ctramp = households_ctramp.with_columns(
         pl.col(f"home_{config.taz_field}").alias("taz")
     )
 
-    # Reorder columns to the canonical CT-RAMP household output order.
-    # Only include columns that are actually present in the DataFrame.
-    column_order = [
-        "hh_id",
-        "taz",
-        "walk_subzone",
-        "income",
-        "autos",
-        "cdap_pattern",
-        "jtf_choice",
-        "jtf_pattern",
-        "size",
-        "workers",
-        "auto_suff",
-        "ao_rn",
-        "fp_rn",
-        "cdap_rn",
-        "imtf_rn",
-        "imtod_rn",
-        "immc_rn",
-        "jtf_rn",
-        "jtl_rn",
-        "jtod_rn",
-        "jmc_rn",
-        "inmtf_rn",
-        "inmtl_rn",
-        "inmtod_rn",
-        "inmmc_rn",
-        "awf_rn",
-        "awl_rn",
-        "awtod_rn",
-        "awmc_rn",
-        "stf_rn",
-        "stl_rn",
-        "humanVehicles",
-        "autonomousVehicles",
-        "sampleRate",
-        "pct_of_poverty",
-    ]
-    ordered = [c for c in column_order if c in households_ctramp.columns]
-    remaining = [c for c in households_ctramp.columns if c not in ordered]
-    households_ctramp = households_ctramp.select(ordered + remaining)
+    households_ctramp = order_columns(
+        households_ctramp,
+        [
+            "hh_id",
+            "taz",
+            "walk_subzone",
+            "income",
+            "autos",
+            "cdap_pattern",
+            "jtf_choice",
+            "jtf_pattern",
+            "size",
+            "workers",
+            "auto_suff",
+            "ao_rn",
+            "fp_rn",
+            "cdap_rn",
+            "imtf_rn",
+            "imtod_rn",
+            "immc_rn",
+            "jtf_rn",
+            "jtl_rn",
+            "jtod_rn",
+            "jmc_rn",
+            "inmtf_rn",
+            "inmtl_rn",
+            "inmtod_rn",
+            "inmmc_rn",
+            "awf_rn",
+            "awl_rn",
+            "awtod_rn",
+            "awmc_rn",
+            "stf_rn",
+            "stl_rn",
+            "humanVehicles",
+            "autonomousVehicles",
+            "sampleRate",
+            "pct_of_poverty",
+        ],
+    )
 
     logger.info("Formatted %d households for CT-RAMP", len(households_ctramp))
 

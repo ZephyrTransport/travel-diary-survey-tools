@@ -1,50 +1,60 @@
+[](){#weighting-data-preparation}
 # Data Preparation
 
 ::: processing.weighting.data_prep
     options:
-      show_root_heading: true
-      show_docstring_description: true
+      show_root_heading: false
+      show_root_full_path: false
+      show_root_toc_entry: false
       members: false
 
 ::: processing.weighting.data_prep.crosswalk
     options:
       show_root_heading: true
-      members:
-        - PumaCrosswalk
-        - TargetZoneConfig
-        - GeographyConfig
+      show_root_full_path: false
+      show_root_toc_entry: true
+      members: false
 
 ::: processing.weighting.data_prep.census_geo
     options:
       show_root_heading: true
-      members:
-        - puma_vintage_for_pums_year
-        - get_puma_gdf
-        - get_block_gdf
+      show_root_full_path: false
+      show_root_toc_entry: true
+      members: false
 
 ::: processing.weighting.data_prep.pums_data
     options:
       show_root_heading: true
-      members:
-        - PUMSSource
-        - fetch_pums_data
-        - load_pums_from_files
+      show_root_full_path: false
+      show_root_toc_entry: true
+      members: false
 
 ::: processing.weighting.data_prep.control_data
     options:
       show_root_heading: true
-      members:
-        - ControlSpec
-        - ControlTotals
-        - recode_pums_households
-        - recode_pums_persons
-        - build_control_totals
-        - apply_zone_groups
+      show_root_full_path: false
+      show_root_toc_entry: true
+      members: false
 
 ::: processing.weighting.data_prep.seed_data
     options:
       show_root_heading: true
-      members:
-        - recode_survey_households
-        - recode_survey_persons
-        - build_seed_table
+      show_root_full_path: false
+      show_root_toc_entry: true
+      members: false
+
+::: processing.weighting.data_prep.incidence
+    options:
+      show_root_heading: true
+      show_root_full_path: false
+      show_root_toc_entry: true
+      members: false
+
+::: processing.weighting.data_prep.fractional_impute
+    options:
+      show_root_heading: true
+      show_root_full_path: false
+      show_root_toc_entry: true
+      members: false
+
+Code: [processing.weighting.data_prep](../../reference/processing/weighting/data_prep.md)

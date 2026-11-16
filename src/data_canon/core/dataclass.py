@@ -1,4 +1,4 @@
-"""Data validation functions for travel survey data using Pydantic models."""
+"""The canonical survey tables, held together and validated against their models."""
 
 import inspect
 import logging
@@ -34,7 +34,8 @@ logger = logging.getLogger(__name__)
 CANONICAL_MODELS: dict[str, type[BaseModel]] = {
     "households": survey_models.HouseholdModel,
     "persons": survey_models.PersonModel,
-    "days": survey_models.PersonDayModel,
+    "household_days": survey_models.HouseholdDayModel,
+    "person_days": survey_models.PersonDayModel,
     "unlinked_trips": survey_models.UnlinkedTripModel,
     "linked_trips": survey_models.LinkedTripModel,
     "tours": survey_models.TourModel,
@@ -51,11 +52,25 @@ class CanonicalData:
     """Canonical data structure for travel survey data with validation.
 
     Use the validate() method to validate specific tables.
+
+    ``models`` is copied from the module-level ``CANONICAL_MODELS``, which is
+    named there as well because the declared relationships between the models
+    are read outside validation: a consumer removing records has to respect the
+    same foreign keys.
+
+    ``generated_columns`` holds columns a step generated whose names come from
+    configuration rather than a model field: zone ids, pre-imputation stashes,
+    usability profiles, per-profile weights. The steps that create them populate
+    it at runtime; it is read when deciding what to deliver and when checking
+    what was promised. It maps table -> column -> what the step promised of it,
+    so a column a project named can still explain itself and still be
+    constrained.
     """
 
     households: pl.DataFrame | None = None
     persons: pl.DataFrame | None = None
-    days: pl.DataFrame | None = None
+    household_days: pl.DataFrame | None = None
+    person_days: pl.DataFrame | None = None
     unlinked_trips: pl.DataFrame | None = None
     linked_trips: pl.DataFrame | None = None
     tours: pl.DataFrame | None = None
@@ -65,23 +80,13 @@ class CanonicalData:
     habitual_location_days: pl.DataFrame | None = None
     household_weights: pl.DataFrame | None = None
 
-    # Model mapping for validation. Named at module scope as well, because the
-    # declared relationships between these models are read outside validation --
-    # a consumer removing records has to respect the same foreign keys.
     models: dict[str, type[BaseModel]] = field(default_factory=lambda: dict(CANONICAL_MODELS))
 
-    # Columns a step generated whose names come from configuration rather than
-    # a model field: zone ids, pre-imputation stashes, usability profiles,
-    # per-profile weights. Populated at runtime by the steps that create them;
-    # read when deciding what to deliver, and when checking what was promised.
-    # Maps table -> column -> what the step promised of it, so a column a project
-    # named can still explain itself and still be constrained.
     generated_columns: dict[str, dict[str, GeneratedColumn]] = field(
         default_factory=dict, repr=False
     )
 
-    # Custom validators: table_name -> list of validator functions
-    # Populated from custom_validation.CUSTOM_VALIDATORS
+    # table_name -> validator functions, from data_canon.validation.custom
     custom_validators: dict[str, list[Callable]] = field(
         default_factory=lambda: {
             table: list(validators) for table, validators in CUSTOM_VALIDATORS.items()
@@ -93,7 +98,8 @@ class CanonicalData:
         default_factory=lambda: [
             "households",
             "persons",
-            "days",
+            "household_days",
+            "person_days",
             "unlinked_trips",
             "linked_trips",
             "joint_trips",
@@ -118,7 +124,7 @@ class CanonicalData:
         """Record columns a step generated whose names come from configuration.
 
         ``add_zone_ids`` emits ``{prefix}_{zone_name}``, the imputation step
-        emits ``{column}_preimputed``, and ``cascade_completeness`` emits one
+        emits ``{column}_preimputed``, and ``cascade_usability`` emits one
         column per usability profile, so the names differ per project and cannot
         be declared as model fields. They are still ours -- computed, named in
         config, and wanted in the delivered output -- so a step that creates them
@@ -153,13 +159,6 @@ class CanonicalData:
         declared = set(model.model_fields) if model is not None else set()
         return declared | set(self.generated_columns.get(table, {}))
 
-    def describe_generated(self, table: str) -> dict[str, str]:
-        """Descriptions for *table*'s generated columns, empty string where none."""
-        return {
-            column: spec.description
-            for column, spec in self.generated_columns.get(table, {}).items()
-        }
-
     def as_dict(self) -> dict[str, pl.DataFrame | None]:
         """Return all canonical tables as a dict (including None entries)."""
         return {name: getattr(self, name) for name in self.TABLE_NAMES}
@@ -186,10 +185,11 @@ class CanonicalData:
         """Validate a table through all validation layers.
 
         Runs validation in this order:
-        1. Column constraints (uniqueness)
+        1. Column constraints (uniqueness, and what generated columns promised)
         2. Foreign key constraints
         3. Row-level Pydantic validation (step-aware if step provided)
-        4. Custom user-registered validators
+        4. Custom validators
+        5. Required children: rows that must be referenced by another table
 
         Args:
             table_name: Name of the table to validate
@@ -249,7 +249,7 @@ class CanonicalData:
         )
 
         # 4. Custom validators
-        self._run_custom_validators(table_name, df)
+        self._run_custom_validators(table_name)
 
         # 5. Required children (bidirectional FK check)
         self._check_required_children(table_name, df)
@@ -262,42 +262,30 @@ class CanonicalData:
             elapsed,
         )
 
-    def _run_custom_validators(
-        self,
-        table_name: str,
-        _df: pl.DataFrame,
-    ) -> None:
-        """Run user-registered custom validators for a table.
+    def _run_custom_validators(self, table_name: str) -> None:
+        """Run the custom validators registered for a table.
+
+        A validator that reads a table not yet loaded is skipped; the rest still run.
 
         Args:
             table_name: Name of the table being validated
-            df: DataFrame being validated
         """
-        if table_name not in self.custom_validators:
-            return
-
-        for validator_func in self.custom_validators[table_name]:
+        for validator_func in self.custom_validators.get(table_name, []):
             # Inspect function signature to build arguments
             sig = inspect.signature(validator_func)
-            kwargs = {}
-
-            for param_name in sig.parameters:
-                if hasattr(self, param_name):
-                    table_df = getattr(self, param_name)
-                    # Skip validator if required table is None
-                    if table_df is None:
-                        logger.warning(
-                            "Skipping validator %s: required table '%s' is None",
-                            validator_func.__name__,
-                            param_name,
-                        )
-                        return
-                    kwargs[param_name] = table_df
-                else:
-                    msg = (
-                        f"Validator {validator_func.__name__} requires unknown table: {param_name}"
-                    )
-                    raise ValueError(msg)
+            unknown = [p for p in sig.parameters if not hasattr(self, p)]
+            if unknown:
+                msg = f"Validator {validator_func.__name__} requires unknown table: {unknown[0]}"
+                raise ValueError(msg)
+            kwargs = {p: getattr(self, p) for p in sig.parameters}
+            missing = [p for p, df in kwargs.items() if df is None]
+            if missing:
+                logger.warning(
+                    "Skipping validator %s: table '%s' is not loaded",
+                    validator_func.__name__,
+                    missing[0],
+                )
+                continue
 
             # Call validator
             errors = validator_func(**kwargs)
@@ -336,7 +324,7 @@ class CanonicalData:
         parent_col = unique_fields[0]
 
         # Find all child tables that have required_child FK to this table
-        for child_table_name, child_model in self.models.items():
+        for child_table, child_model in self.models.items():
             required_child_fields = get_required_children_fields(child_model)
 
             for child_fk_col, (
@@ -348,11 +336,7 @@ class CanonicalData:
                 if parent_table != table_name:
                     continue
 
-                # With required_child_when, only parent rows where that column
-                # is true need a child -- e.g. only *surveyable* persons must
-                # have days; unrelated household members are enumerated but
-                # file no travel. A missing column or a null value still needs
-                # a child, so the constraint can never weaken by accident.
+                # required_child_when: only rows where it is true (or null) need one
                 must_have_children = df
                 if when_col and when_col in df.columns:
                     must_have_children = df.filter(
@@ -367,21 +351,23 @@ class CanonicalData:
                     )
                 parent_ids = set(must_have_children[parent_col].to_list())
 
-                child_table = child_table_name
                 child_df = getattr(self, child_table)
-
                 if child_df is None:
                     logger.warning(
-                        "Skipping required children check: child table '%s' is None",
+                        "Not checking every '%s' row has a '%s' row: '%s' is not loaded",
+                        table_name,
+                        child_table,
                         child_table,
                     )
                     continue
 
                 if child_fk_col not in child_df.columns:
                     logger.warning(
-                        "Skipping required children check: FK column '%s' not in '%s'",
-                        child_fk_col,
+                        "Not checking every '%s' row has a '%s' row: '%s' has no column '%s'",
+                        table_name,
                         child_table,
+                        child_table,
+                        child_fk_col,
                     )
                     continue
 
@@ -399,7 +385,7 @@ class CanonicalData:
                     msg = (
                         f"Found {len(parents_without_children)} "
                         f"'{table_name}' records with no '{child_table}' "
-                        f"children{when_note}. Sample: {sample_str}{ellipsis}"
+                        f"rows{when_note}. Sample: {sample_str}{ellipsis}"
                     )
                     raise DataValidationError(
                         table=table_name,
@@ -407,44 +393,3 @@ class CanonicalData:
                         column=parent_col,
                         message=msg,
                     )
-
-    # Left this in here for future extension, but not currently used.
-    def register_validator(self, *table_names: str) -> Callable:
-        """Register a custom validator on one or more tables.
-
-        Args:
-            *table_names: One or more table names to register validator on
-
-        Returns:
-            Decorator function
-
-        Example:
-            >>> @data.register_validator("tours")
-            >>> def check_tours(tours: pl.DataFrame) -> list[str]:
-            >>>     errors = []
-            >>>     # Check logic
-            >>>     return errors
-
-            >>> @data.register_validator("tours", "linked_trips")
-            >>> def check_consistency(
-            >>>     tours: pl.DataFrame,
-            >>>     linked_trips: pl.DataFrame
-            >>> ) -> list[str]:
-            >>>     # Multi-table check
-            >>>     return []
-        """
-        if not table_names:
-            msg = "Must specify at least one table name"
-            raise ValueError(msg)
-
-        def decorator(func: Callable) -> Callable:
-            for table_name in table_names:
-                if table_name not in self.models:
-                    msg = f"Unknown table: {table_name}"
-                    raise ValueError(msg)
-                if table_name not in self.custom_validators:
-                    self.custom_validators[table_name] = []
-                self.custom_validators[table_name].append(func)
-            return func
-
-        return decorator

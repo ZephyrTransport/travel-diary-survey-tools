@@ -1,688 +1,397 @@
-"""Tests for the weight hierarchy and the propagation that walks it."""
+"""The weight hierarchy: the walk, the gate, and the post-run checks."""
+
+import ast
+import pathlib
 
 import polars as pl
 import pytest
 
-from processing.weighting.core.hierarchy import (
-    HIERARCHY,
-    WEIGHT_COLUMNS,
-    WEIGHT_CONFIG_MAPPING,
-)
+from processing.weighting.core.hierarchy import HIERARCHY
 from processing.weighting.core.propagation import (
     collect_tables,
+    is_usable,
     non_null_tables,
     propagate_weights,
     safe_join_weight,
+    seed_admits,
+)
+from processing.weighting.core.specs import ControlTotals
+from processing.weighting.validation.weight_checks import (
+    _check_hierarchy,
+    _check_joint_sums,
+    weight_sanity_checks,
 )
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
+HH_ONLY = {"households": "hh_weight"}
+FLAG = "ctramp"
 
-
-class TestConstants:
-    """Verify the shared constant dictionaries are consistent."""
-
-    def test_weight_config_mapping_keys(self):
-        """Every hierarchy level exposes a config key for supplying its weight."""
-        assert len(WEIGHT_CONFIG_MAPPING) == len(HIERARCHY)
-        assert "hh_weight" in WEIGHT_CONFIG_MAPPING
-        assert "tour_weight" in WEIGHT_CONFIG_MAPPING
-        assert "joint_tour_weight" in WEIGHT_CONFIG_MAPPING
-
-    def test_weight_columns_derived_from_mapping(self):
-        """WEIGHT_COLUMNS should have one entry per table in the mapping."""
-        expected = {table: wt for table, _, wt in WEIGHT_CONFIG_MAPPING.values()}
-        assert expected == WEIGHT_COLUMNS
-
-
-# ---------------------------------------------------------------------------
-# collect_tables / non_null_tables
-# ---------------------------------------------------------------------------
-
-
-class TestCollectTables:
-    """Tests for collect_tables, which bundles provided tables into a dict."""
-
-    def test_collect_all_none(self):
-        """If all tables are None, collect_tables returns a dict of all None."""
-        tables = collect_tables()
-        assert all(v is None for v in tables.values())
-        assert len(tables) == len(HIERARCHY)
-
-    def test_collect_partial(self):
-        """collect_tables correctly collects provided tables and fills in None."""
-        hh = pl.DataFrame({"hh_id": [1]})
-        tables = collect_tables(households=hh)
-        assert tables["households"] is hh
-        assert tables["persons"] is None
-
-    def test_non_null_tables_filters(self):
-        """non_null_tables filters out None values from the tables dict."""
-        hh = pl.DataFrame({"hh_id": [1]})
-        tables = collect_tables(households=hh)
-        result = non_null_tables(tables)
-        assert list(result.keys()) == ["households"]
-
-
-# ---------------------------------------------------------------------------
-# safe_join_weight
-# ---------------------------------------------------------------------------
-
-
-class TestSafeJoinWeight:
-    """Tests for safe_join_weight, which joins a weight column on, replacing any existing."""
-
-    def test_basic_join(self):
-        """Basic left join of weight column from w to df."""
-        df = pl.DataFrame({"hh_id": [1, 2], "size": [3, 4]})
-        w = pl.DataFrame({"hh_id": [1, 2], "hh_weight": [1.5, 2.0]})
-        result = safe_join_weight(df, w, "hh_id")
-        assert "hh_weight" in result.columns
-        assert result["hh_weight"].to_list() == [1.5, 2.0]
-
-    def test_drops_existing_weight_col(self):
-        """If the target already has the weight column, drop it first."""
-        df = pl.DataFrame({"hh_id": [1, 2], "hh_weight": [0.0, 0.0]})
-        w = pl.DataFrame({"hh_id": [1, 2], "hh_weight": [1.5, 2.0]})
-        result = safe_join_weight(df, w, "hh_id")
-        assert result["hh_weight"].to_list() == [1.5, 2.0]
-
-    def test_left_join_null_for_missing(self):
-        """If w has fewer rows than df, missing rows get null weights."""
-        df = pl.DataFrame({"hh_id": [1, 2, 3]})
-        w = pl.DataFrame({"hh_id": [1, 2], "hh_weight": [1.5, 2.0]})
-        result = safe_join_weight(df, w, "hh_id")
-        assert result["hh_weight"].to_list() == [1.5, 2.0, None]
-
-
-# ---------------------------------------------------------------------------
-# propagate_weights -- carry-forward
-# ---------------------------------------------------------------------------
-
-
-def _make_tables():
-    """Build a minimal set of canonical tables for propagation tests."""
-    households = pl.DataFrame({"hh_id": [1, 2], "hh_weight": [10.0, 20.0]})
-    persons = pl.DataFrame({"person_id": [1, 2, 3], "hh_id": [1, 1, 2]})
-    days = pl.DataFrame({"day_id": [10, 20, 30], "person_id": [1, 2, 3]})
-    unlinked_trips = pl.DataFrame(
-        {
-            "unlinked_trip_id": [100, 200, 300, 400],
-            "day_id": [10, 10, 20, 30],
-            "linked_trip_id": [1, 1, 2, 2],
-        }
-    )
-    linked_trips = pl.DataFrame(
-        {
-            "linked_trip_id": [1, 2],
-            "tour_id": [1, 1],
-        }
-    )
-    tours = pl.DataFrame({"tour_id": [1]})
-    return {
-        "households": households,
-        "persons": persons,
-        "days": days,
-        "unlinked_trips": unlinked_trips,
-        "linked_trips": linked_trips,
-        "joint_trips": None,
-        "tours": tours,
+# Every combination of the two seed-gate inputs, nulls included.
+GATE_FRAME = pl.DataFrame(
+    {
+        "case": ["both", "flag only", "complete only", "neither", "null flag", "null complete"],
+        "profile": [True, True, False, False, None, True],
+        "survey_complete": [True, False, True, False, True, None],
     }
+)
+
+
+def test_collect_tables_fills_the_rest_with_none():
+    """Every level gets a key; the ones not supplied are None, and filterable."""
+    assert all(v is None for v in collect_tables().values())
+
+    hh = pl.DataFrame({"hh_id": [1]})
+    tables = collect_tables(households=hh)
+    assert len(tables) == len(HIERARCHY)
+    assert tables["households"] is hh
+    assert tables["persons"] is None
+    assert list(non_null_tables(tables).keys()) == ["households"]
+
+
+def test_safe_join_replaces_any_existing_weight():
+    """The target's own weight column is dropped first, and rows w lacks go null."""
+    df = pl.DataFrame({"hh_id": [1, 2, 3], "hh_weight": [0.0, 0.0, 0.0]})
+    w = pl.DataFrame({"hh_id": [1, 2], "hh_weight": [1.5, 2.0]})
+    result = safe_join_weight(df, w, "hh_id")
+    assert result["hh_weight"].to_list() == [1.5, 2.0, None]
+
+
+def _make_tables(*, complete: bool = False) -> dict[str, pl.DataFrame | None]:
+    """Two households, three persons, one day each, four trips on one tour.
+
+    ``complete`` adds a ``survey_complete`` flag that drops household 2 and its
+    person, person 2's day, and the trips on days 20 and 30.
+    """
+    tables = {
+        "households": pl.DataFrame({"hh_id": [1, 2], "hh_weight": [10.0, 20.0]}),
+        "persons": pl.DataFrame({"person_id": [1, 2, 3], "hh_id": [1, 1, 2]}),
+        "person_days": pl.DataFrame(
+            {"person_day_id": [10, 20, 30], "person_id": [1, 2, 3], "hh_id": [1, 1, 2]}
+        ),
+        "unlinked_trips": pl.DataFrame(
+            {
+                "unlinked_trip_id": [100, 200, 300, 400],
+                "person_day_id": [10, 10, 20, 30],
+                "linked_trip_id": [1, 1, 2, 2],
+            }
+        ),
+        "linked_trips": pl.DataFrame({"linked_trip_id": [1, 2], "tour_id": [1, 1]}),
+        "joint_trips": None,
+        "tours": pl.DataFrame({"tour_id": [1]}),
+    }
+    if complete:
+        flags = {
+            "households": [True, False],
+            "persons": [True, True, False],
+            "person_days": [True, False, False],
+            "unlinked_trips": [True, True, False, False],
+        }
+        for name, values in flags.items():
+            tables[name] = tables[name].with_columns(pl.Series("survey_complete", values))
+    return tables
 
 
 class TestPropagateCarryForward:
-    """Tests for the carry-forward (parent -> child) branch."""
+    """Each level copies the weight of the level above it."""
 
     def test_full_hierarchy(self):
-        """Weights propagate from households all the way to unlinked_trips."""
+        """Weights copy down to unlinked trips; each aggregate level is its members' mean."""
         tables = _make_tables()
-        has_weight: dict[str, str] = {"households": "hh_weight"}
+        has_weight = dict(HH_ONLY)
 
         propagate_weights(tables, has_weight, usability_flag_col="usable")
 
-        # persons get hh_weight via hh_id
-        assert "person_weight" in tables["persons"].columns
-        assert tables["persons"].sort("person_id")["person_weight"].to_list() == [
+        assert tables["persons"].sort("person_id")["person_weight"].to_list() == [10.0, 10.0, 20.0]
+        assert tables["person_days"].sort("person_day_id")["person_day_weight"].to_list() == [
             10.0,
             10.0,
             20.0,
         ]
-
-        # days get person_weight via person_id
-        assert "day_weight" in tables["days"].columns
-        assert tables["days"].sort("day_id")["day_weight"].to_list() == [
-            10.0,
-            10.0,
-            20.0,
-        ]
-
-        # unlinked_trips get day_weight via day_id
-        assert "unlinked_trip_weight" in tables["unlinked_trips"].columns
         assert tables["unlinked_trips"].sort("unlinked_trip_id")[
             "unlinked_trip_weight"
         ].to_list() == [10.0, 10.0, 10.0, 20.0]
-
-        # has_weight tracks all (carry-forward + aggregation)
+        # linked trip 2 is the mean of 10 and 20; the tour the mean of 10 and 15
+        lt = tables["linked_trips"].sort("linked_trip_id")
+        assert lt["linked_trip_weight"].to_list() == [10.0, 15.0]
+        assert tables["tours"]["tour_weight"].to_list() == [12.5]
         assert has_weight == {
             "households": "hh_weight",
             "persons": "person_weight",
-            "days": "day_weight",
+            "person_days": "person_day_weight",
             "unlinked_trips": "unlinked_trip_weight",
             "linked_trips": "linked_trip_weight",
             "tours": "tour_weight",
         }
 
-    def test_error_parent_no_weight(self):
-        """Error when child exists but parent has no weight (hierarchy gap)."""
-        tables = _make_tables()
-        # households present but NOT in has_weight -> gap
-        has_weight: dict[str, str] = {}
-
-        with pytest.raises(ValueError, match="has no weight column"):
-            propagate_weights(tables, has_weight, usability_flag_col="usable")
-
-    def test_error_parent_df_is_none(self):
-        """Error when has_weight says parent has weight but its DataFrame is None."""
-        tables = _make_tables()
-        tables["households"] = None  # remove the actual DataFrame
-        has_weight: dict[str, str] = {"households": "hh_weight"}
-
-        with pytest.raises(ValueError, match="parent table households is None"):
-            propagate_weights(tables, has_weight, usability_flag_col="usable")
-
-    def test_error_child_missing_join_key(self):
-        """Error when child table is missing the join key column."""
-        tables = _make_tables()
-        # Replace persons with a frame that lacks hh_id
-        tables["persons"] = pl.DataFrame({"person_id": [1, 2, 3], "age": [25, 30, 40]})
-        has_weight: dict[str, str] = {"households": "hh_weight"}
-
-        with pytest.raises(ValueError, match="missing join key hh_id"):
-            propagate_weights(tables, has_weight, usability_flag_col="usable")
+    @pytest.mark.parametrize(
+        ("mutate", "has_weight", "match"),
+        [
+            pytest.param(
+                lambda t: t,
+                {},
+                "has no weight column",
+                id="parent_has_no_weight",
+            ),
+            pytest.param(
+                lambda t: t | {"households": None},
+                HH_ONLY,
+                "households, which is not loaded",
+                id="parent_frame_is_none",
+            ),
+            pytest.param(
+                lambda t: t | {"persons": pl.DataFrame({"person_id": [1], "age": [25]})},
+                HH_ONLY,
+                "missing join key hh_id",
+                id="child_missing_join_key",
+            ),
+        ],
+    )
+    def test_carry_forward_gaps_raise(self, mutate, has_weight, match):
+        """Each way the carry-forward edge can be broken names itself."""
+        tables = mutate(_make_tables())
+        with pytest.raises(ValueError, match=match):
+            propagate_weights(tables, dict(has_weight), usability_flag_col="usable")
 
     def test_skip_prevents_carry_forward(self):
         """Tables in the skip set are not overwritten."""
         tables = _make_tables()
-        # Give persons their own weight already
         tables["persons"] = tables["persons"].with_columns(pl.lit(99.0).alias("person_weight"))
-        has_weight: dict[str, str] = {"households": "hh_weight"}
+        has_weight = dict(HH_ONLY)
 
-        # Skip persons, days, and unlinked_trips so we only test skip on persons
         propagate_weights(
             tables,
             has_weight,
-            skip={"persons", "days", "unlinked_trips", "linked_trips", "tours"},
+            skip={"persons", "person_days", "unlinked_trips", "linked_trips", "tours"},
             usability_flag_col="usable",
         )
 
-        # persons weight should stay at 99, not be overwritten
         assert tables["persons"]["person_weight"].to_list() == [99.0, 99.0, 99.0]
-        # persons not in has_weight because it was skipped
         assert "persons" not in has_weight
 
     def test_child_none_is_skipped(self):
-        """If a child table is None, propagation skips it."""
+        """A level whose table is None is skipped, not an error."""
         tables = _make_tables()
-        tables["persons"] = None
-        tables["days"] = None
-        tables["unlinked_trips"] = None
-        tables["linked_trips"] = None
-        tables["tours"] = None
-        has_weight: dict[str, str] = {"households": "hh_weight"}
+        for name in ("persons", "person_days", "unlinked_trips", "linked_trips", "tours"):
+            tables[name] = None
+        has_weight = dict(HH_ONLY)
 
-        # Should not raise -- all downstream tables are None
         propagate_weights(tables, has_weight, usability_flag_col="usable")
 
-        assert has_weight == {"households": "hh_weight"}
-
-
-# ---------------------------------------------------------------------------
-# propagate_weights -- aggregation
-# ---------------------------------------------------------------------------
+        assert has_weight == HH_ONLY
 
 
 class TestPropagateAggregate:
     """Tests for the aggregate (mean weight) branch."""
 
-    def test_aggregate_linked_trips(self):
-        """Linked trip weight = mean of component unlinked trip weights."""
-        tables = _make_tables()
-        has_weight: dict[str, str] = {"households": "hh_weight"}
-
-        propagate_weights(tables, has_weight, usability_flag_col="usable")
-
-        assert "linked_trip_weight" in tables["linked_trips"].columns
-        lt = tables["linked_trips"].sort("linked_trip_id")
-        # linked_trip 1 has unlinked_trips 100 (wt=10) and 200 (wt=10) -> mean=10
-        # linked_trip 2 has unlinked_trips 300 (wt=10) and 400 (wt=20) -> mean=15
-        assert lt["linked_trip_weight"].to_list() == [10.0, 15.0]
-
-    def test_aggregate_tours(self):
-        """Tour weight = mean of linked trip weights."""
-        tables = _make_tables()
-        has_weight: dict[str, str] = {"households": "hh_weight"}
-
-        propagate_weights(tables, has_weight, usability_flag_col="usable")
-
-        assert "tour_weight" in tables["tours"].columns
-        # tour 1 has linked_trips 1 (wt=10) and 2 (wt=15) -> mean=12.5
-        assert tables["tours"]["tour_weight"].to_list() == [12.5]
-
     def test_aggregate_excludes_zeros_and_nulls(self):
         """Zeros and nulls are excluded from the mean aggregation."""
         tables = _make_tables()
-        # Manually set unlinked trip weights (bypass carry-forward)
-        tables["unlinked_trips"] = pl.DataFrame(
-            {
-                "unlinked_trip_id": [100, 200, 300, 400],
-                "day_id": [10, 10, 20, 30],
-                "linked_trip_id": [1, 1, 2, 2],
-                "unlinked_trip_weight": [5.0, 0.0, None, 3.0],
-            }
+        tables["unlinked_trips"] = tables["unlinked_trips"].with_columns(
+            pl.Series("unlinked_trip_weight", [5.0, 0.0, None, 3.0])
         )
-        has_weight: dict[str, str] = {
+        has_weight = {
             "households": "hh_weight",
             "persons": "person_weight",
-            "days": "day_weight",
+            "person_days": "person_day_weight",
             "unlinked_trips": "unlinked_trip_weight",
         }
 
         propagate_weights(
             tables,
             has_weight,
-            skip={"persons", "days", "unlinked_trips"},
+            skip={"persons", "person_days", "unlinked_trips"},
             usability_flag_col="usable",
         )
 
         lt = tables["linked_trips"].sort("linked_trip_id")
-        # linked_trip 1: mean(5.0) = 5.0  (zero excluded)
-        # linked_trip 2: mean(3.0) = 3.0  (null excluded)
         assert lt["linked_trip_weight"].to_list() == [5.0, 3.0]
 
-    def test_error_aggregate_source_missing_group_key(self):
-        """Error when source table for aggregation is missing the group key."""
-        tables = _make_tables()
-        # Remove linked_trip_id from unlinked_trips
-        tables["unlinked_trips"] = pl.DataFrame(
-            {
-                "unlinked_trip_id": [100, 200],
-                "day_id": [10, 10],
-                "unlinked_trip_weight": [5.0, 3.0],
-            }
-        )
-        has_weight: dict[str, str] = {
+    @pytest.mark.parametrize(
+        ("mutate", "drop_source_weight", "match"),
+        [
+            pytest.param(
+                lambda t: (
+                    t
+                    | {
+                        "unlinked_trips": pl.DataFrame(
+                            {
+                                "unlinked_trip_id": [100, 200],
+                                "person_day_id": [10, 10],
+                                "unlinked_trip_weight": [5.0, 3.0],
+                            }
+                        )
+                    }
+                ),
+                False,
+                "missing linked_trip_id",
+                id="source_missing_group_key",
+            ),
+            pytest.param(
+                lambda t: t | {"unlinked_trips": None},
+                False,
+                "source table unlinked_trips is None",
+                id="source_frame_is_none",
+            ),
+            pytest.param(
+                lambda t: t,
+                True,
+                "source table unlinked_trips has no weight",
+                id="source_has_no_weight",
+            ),
+        ],
+    )
+    def test_aggregate_gaps_raise(self, mutate, drop_source_weight, match):
+        """Each way the aggregate edge can be broken names itself."""
+        tables = mutate(_make_tables())
+        has_weight = {
             "households": "hh_weight",
             "persons": "person_weight",
-            "days": "day_weight",
+            "person_days": "person_day_weight",
             "unlinked_trips": "unlinked_trip_weight",
         }
+        if drop_source_weight:
+            del has_weight["unlinked_trips"]
 
-        with pytest.raises(ValueError, match="missing linked_trip_id"):
+        with pytest.raises(ValueError, match=match):
             propagate_weights(
                 tables,
                 has_weight,
-                skip={"persons", "days", "unlinked_trips"},
+                skip={"persons", "person_days", "unlinked_trips"},
                 usability_flag_col="usable",
             )
-
-    def test_aggregate_skip_when_target_none(self):
-        """Aggregation skips when the target table is None."""
-        tables = _make_tables()
-        tables["linked_trips"] = None
-        tables["tours"] = None
-        has_weight: dict[str, str] = {"households": "hh_weight"}
-
-        propagate_weights(tables, has_weight, usability_flag_col="usable")
-
-        assert "linked_trips" not in has_weight
-        assert "tours" not in has_weight
-
-    def test_error_aggregate_source_none(self):
-        """Error when aggregate target exists but source table is None."""
-        tables = _make_tables()
-        has_weight: dict[str, str] = {
-            "households": "hh_weight",
-            "persons": "person_weight",
-            "days": "day_weight",
-            "unlinked_trips": "unlinked_trip_weight",
-        }
-        # Source for linked_trips aggregation is None
-        tables["unlinked_trips"] = None
-
-        with pytest.raises(ValueError, match="source table unlinked_trips is None"):
-            propagate_weights(
-                tables,
-                has_weight,
-                skip={"persons", "days", "unlinked_trips"},
-                usability_flag_col="usable",
-            )
-
-    def test_error_aggregate_source_no_weight(self):
-        """Error when aggregate target exists but source has no weight."""
-        tables = _make_tables()
-        # unlinked_trips exists but has no weight in has_weight
-        has_weight: dict[str, str] = {
-            "households": "hh_weight",
-            "persons": "person_weight",
-            "days": "day_weight",
-        }
-
-        with pytest.raises(ValueError, match="source table unlinked_trips has no weight"):
-            propagate_weights(
-                tables,
-                has_weight,
-                skip={"persons", "days", "unlinked_trips"},
-                usability_flag_col="usable",
-            )
-
-
-# ---------------------------------------------------------------------------
-# propagate_weights -- completion flag
-# ---------------------------------------------------------------------------
-
-
-def _make_tables_with_complete():
-    """Build tables where some records are marked incomplete."""
-    households = pl.DataFrame(
-        {
-            "hh_id": [1, 2],
-            "hh_weight": [10.0, 20.0],
-            "survey_complete": [True, False],
-        }
-    )
-    persons = pl.DataFrame(
-        {
-            "person_id": [1, 2, 3],
-            "hh_id": [1, 1, 2],
-            "survey_complete": [True, True, False],
-        }
-    )
-    days = pl.DataFrame(
-        {
-            "day_id": [10, 20, 30],
-            "person_id": [1, 2, 3],
-            "hh_id": [1, 1, 2],
-            "survey_complete": [True, False, False],
-        }
-    )
-    unlinked_trips = pl.DataFrame(
-        {
-            "unlinked_trip_id": [100, 200, 300, 400],
-            "day_id": [10, 10, 20, 30],
-            "linked_trip_id": [1, 1, 2, 2],
-            "survey_complete": [True, True, False, False],
-        }
-    )
-    linked_trips = pl.DataFrame(
-        {
-            "linked_trip_id": [1, 2],
-            "tour_id": [1, 1],
-        }
-    )
-    tours = pl.DataFrame({"tour_id": [1]})
-    return {
-        "households": households,
-        "persons": persons,
-        "days": days,
-        "unlinked_trips": unlinked_trips,
-        "linked_trips": linked_trips,
-        "joint_trips": None,
-        "tours": tours,
-    }
-
-
-def _make_tables_partial_usability():
-    """One household whose parents each keep only some of their children.
-
-    Person 1 reports 4 days of which 2 are usable; day 10 holds 4 trips of which
-    1 is usable. Every parent keeps at least one child, so the carry-forward
-    checksum must hold exactly at every level.
-    """
-    households = pl.DataFrame({"hh_id": [1], "hh_weight": [10.0], "survey_complete": [True]})
-    persons = pl.DataFrame({"person_id": [1], "hh_id": [1], "survey_complete": [True]})
-    days = pl.DataFrame(
-        {
-            "day_id": [10, 20, 30, 40],
-            "person_id": [1, 1, 1, 1],
-            "hh_id": [1, 1, 1, 1],
-            "survey_complete": [True, True, False, False],
-        }
-    )
-    unlinked_trips = pl.DataFrame(
-        {
-            "unlinked_trip_id": [100, 200, 300, 400],
-            "day_id": [10, 10, 10, 10],
-            "linked_trip_id": [1, 1, 2, 2],
-            "survey_complete": [True, False, False, False],
-        }
-    )
-    return {
-        "households": households,
-        "persons": persons,
-        "days": days,
-        "unlinked_trips": unlinked_trips,
-        "linked_trips": pl.DataFrame({"linked_trip_id": [1, 2], "tour_id": [1, 1]}),
-        "joint_trips": None,
-        "tours": pl.DataFrame({"tour_id": [1]}),
-    }
 
 
 class TestPropagateUsableColumn:
-    """Tests for spreading each parent's weight across its usable children.
+    """Each record's weight is spread across the usable records below it."""
 
-    Usability defaults to ``usable``; these exercise it against
-    ``survey_complete``, the other supported column.
-    """
+    def test_unusable_records_get_zero_weight(self):
+        """A record the flag excludes gets 0 at every level of the walk.
 
-    def test_unusable_persons_get_zero_weight(self):
-        """Persons with survey_complete=False get weight 0 even if parent HH has weight."""
-        tables = _make_tables_with_complete()
-        has_weight: dict[str, str] = {"households": "hh_weight"}
-
-        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
-
-        persons = tables["persons"].sort("person_id")
-        assert persons["person_weight"].to_list() == [10.0, 10.0, 0.0]
-
-    def test_no_usable_column_keeps_carried_weights(self):
-        """With usability_flag_col=None, unusable children keep the parent weight."""
-        tables = _make_tables_with_complete()
-        has_weight: dict[str, str] = {"households": "hh_weight"}
-
-        propagate_weights(tables, has_weight, usability_flag_col=None)
-
-        # Person 3 (survey_complete=False, in HH 2 with weight 20) keeps 20 instead of 0
-        persons = tables["persons"].sort("person_id")
-        assert persons["person_weight"].to_list() == [10.0, 10.0, 20.0]
-        days = tables["days"].sort("day_id")
-        assert days["day_weight"].to_list() == [10.0, 10.0, 20.0]
-
-    def test_unusable_days_get_zero_weight(self):
-        """Days with survey_complete=False get weight 0; their person's weight is a shortfall.
-
-        Person 2's only day is unusable, so their weight goes unrepresented at
-        the day level -- it is **not** pooled onto person 1's day. Person 1's
-        single usable day carries exactly person 1's weight (the average-day
-        split, ``person_weight / n_usable_days``).
+        Person 2's only day is unusable, so their weight is not represented at the
+        day level; it is not pooled onto person 1's day.
         """
-        tables = _make_tables_with_complete()
-        has_weight: dict[str, str] = {"households": "hh_weight"}
+        tables = _make_tables(complete=True)
 
-        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
+        propagate_weights(tables, dict(HH_ONLY), usability_flag_col="survey_complete")
 
-        days = tables["days"].sort("day_id")
-        assert days["day_weight"].to_list() == [10.0, 0.0, 0.0]
-        # Person 1's days sum to person 1's weight; person 2's 10 is a shortfall.
-        assert days["day_weight"].sum() == pytest.approx(10.0)
-
-    def test_unusable_unlinked_trips_get_zero_weight(self):
-        """Unlinked trips with survey_complete=False get weight 0."""
-        tables = _make_tables_with_complete()
-        has_weight: dict[str, str] = {"households": "hh_weight"}
-
-        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
-
+        assert tables["persons"].sort("person_id")["person_weight"].to_list() == [10.0, 10.0, 0.0]
+        person_days = tables["person_days"].sort("person_day_id")
+        assert person_days["person_day_weight"].to_list() == [10.0, 0.0, 0.0]
         ut = tables["unlinked_trips"].sort("unlinked_trip_id")
-        # Day 10 carries 10.0 and both its trips are usable, so each keeps 10.0.
         assert ut["unlinked_trip_weight"].to_list() == [10.0, 10.0, 0.0, 0.0]
-
-    def test_aggregate_excludes_zero_from_unusable(self):
-        """Aggregated weights exclude zeros from unusable records."""
-        tables = _make_tables_with_complete()
-        has_weight: dict[str, str] = {"households": "hh_weight"}
-
-        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
-
         lt = tables["linked_trips"].sort("linked_trip_id")
-        # linked_trip 1: unlinked 100 (wt=10) + 200 (wt=10) -> mean=10
-        # linked_trip 2: unlinked 300 (wt=0, incomplete) + 400 (wt=0, incomplete) -> 0 (all zero)
         assert lt["linked_trip_weight"].to_list() == [10.0, 0.0]
 
-    def test_missing_usable_column_propagates_normally(self):
-        """Without the usability column present, weights propagate as before."""
-        tables = _make_tables()  # no complete/usable column
-        has_weight: dict[str, str] = {"households": "hh_weight"}
+    def test_no_usable_column_keeps_carried_weights(self):
+        """With usability_flag_col=None, unusable records keep the weight above them."""
+        tables = _make_tables(complete=True)
 
-        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
+        propagate_weights(tables, dict(HH_ONLY), usability_flag_col=None)
 
         persons = tables["persons"].sort("person_id")
         assert persons["person_weight"].to_list() == [10.0, 10.0, 20.0]
+        person_days = tables["person_days"].sort("person_day_id")
+        assert person_days["person_day_weight"].to_list() == [10.0, 10.0, 20.0]
 
     def test_unusable_aggregate_target_carries_no_weight(self):
         """A tour flagged unusable gets 0, even if a member trip has weight."""
-        tables = _make_tables_with_complete()
+        tables = _make_tables(complete=True)
         tables["linked_trips"] = tables["linked_trips"].with_columns(
             pl.lit(value=True).alias("survey_complete")
         )
         tables["tours"] = tables["tours"].with_columns(pl.lit(value=False).alias("survey_complete"))
-        has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
+        propagate_weights(tables, dict(HH_ONLY), usability_flag_col="survey_complete")
 
         assert tables["linked_trips"]["linked_trip_weight"].to_list() == [10.0, 0.0]
         assert tables["tours"]["tour_weight"].to_list() == [0.0]
-
-    def test_all_usable_propagates_normally(self):
-        """When every record is usable, weights propagate normally."""
-        tables = _make_tables_with_complete()
-        # Override all to complete
-        tables["persons"] = tables["persons"].with_columns(
-            pl.lit(value=True).alias("survey_complete")
-        )
-        tables["days"] = tables["days"].with_columns(pl.lit(value=True).alias("survey_complete"))
-        tables["unlinked_trips"] = tables["unlinked_trips"].with_columns(
-            pl.lit(value=True).alias("survey_complete")
-        )
-        has_weight: dict[str, str] = {"households": "hh_weight"}
-
-        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
-
-        persons = tables["persons"].sort("person_id")
-        assert persons["person_weight"].to_list() == [10.0, 10.0, 20.0]
 
 
 class TestPropagateRedistribution:
     """Days split their person's weight; trips conserve their day's claim."""
 
-    def test_usable_days_split_the_person_weight(self):
-        """A person keeping 2 of 4 days puts half their weight on each survivor.
-
-        The average-day rule: day_weight = person_weight / n_usable_days, so the
-        person's usable days sum to exactly their person weight.
-        """
-        tables = _make_tables_partial_usability()
-        has_weight: dict[str, str] = {"households": "hh_weight"}
-
-        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
-
-        days = tables["days"].sort("day_id")
-        assert days["day_weight"].to_list() == [5.0, 5.0, 0.0, 0.0]
-
-    def test_usable_trips_absorb_the_unusable_ones(self):
-        """A day keeping 1 of 4 trips gives that trip four times the day weight."""
-        tables = _make_tables_partial_usability()
-        has_weight: dict[str, str] = {"households": "hh_weight"}
-
-        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
-
-        ut = tables["unlinked_trips"].sort("unlinked_trip_id")
-        # day 10 carries 5.0 and kept 1 of its 4 trips -> 5 * 4/1
-        assert ut["unlinked_trip_weight"].to_list() == [20.0, 0.0, 0.0, 0.0]
-
-    def test_checksum_holds_at_every_level(self):
-        """Each edge maintains its own identity wherever a child survived."""
-        tables = _make_tables_partial_usability()
-        has_weight: dict[str, str] = {"households": "hh_weight"}
-
-        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
-
-        # 1 household at 10.0 with 1 person
-        assert tables["persons"]["person_weight"].sum() == pytest.approx(10.0)
-        # split: the person's usable days sum to the person weight
-        assert tables["days"]["day_weight"].sum() == pytest.approx(10.0)
-        # copy: day 10 carries 5.0 and holds all 4 trips
-        assert tables["unlinked_trips"]["unlinked_trip_weight"].sum() == pytest.approx(20.0)
-
-    def test_person_with_no_usable_day_is_a_shortfall_not_pooled(self):
-        """A person with no usable day keeps their weight; nobody absorbs their days.
-
-        Person 2 reported no usable travel day. They keep a person weight (person
-        weights stay calibrated to the person controls), but their weight is
-        simply unrepresented at the day level -- person 1's days must NOT inflate
-        to cover it, or person-day totals would be silently distorted.
-        """
+    def test_usable_days_split_and_usable_trips_absorb(self):
+        """2 of 4 days kept: each is half the person; 1 of 4 trips kept: it is 4x its day."""
         tables = {
             "households": pl.DataFrame(
                 {"hh_id": [1], "hh_weight": [10.0], "survey_complete": [True]}
             ),
-            "persons": pl.DataFrame(
-                {"person_id": [1, 2], "hh_id": [1, 1], "survey_complete": [True, True]}
-            ),
-            "days": pl.DataFrame(
+            "persons": pl.DataFrame({"person_id": [1], "hh_id": [1], "survey_complete": [True]}),
+            "person_days": pl.DataFrame(
                 {
-                    "day_id": [10, 20, 30, 40],
-                    "person_id": [1, 1, 2, 2],
+                    "person_day_id": [10, 20, 30, 40],
+                    "person_id": [1, 1, 1, 1],
                     "hh_id": [1, 1, 1, 1],
                     "survey_complete": [True, True, False, False],
                 }
             ),
-            "unlinked_trips": None,
-            "linked_trips": None,
+            "unlinked_trips": pl.DataFrame(
+                {
+                    "unlinked_trip_id": [100, 200, 300, 400],
+                    "person_day_id": [10, 10, 10, 10],
+                    "linked_trip_id": [1, 1, 2, 2],
+                    "survey_complete": [True, False, False, False],
+                }
+            ),
+            "linked_trips": pl.DataFrame({"linked_trip_id": [1, 2], "tour_id": [1, 1]}),
             "joint_trips": None,
-            "tours": None,
+            "tours": pl.DataFrame({"tour_id": [1]}),
         }
-        has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
+        propagate_weights(tables, dict(HH_ONLY), usability_flag_col="survey_complete")
 
-        # Both persons keep their weight -- person 2 is still a real person.
-        assert tables["persons"]["person_weight"].to_list() == [10.0, 10.0]
-        # Person 1's usable days split person 1's weight; person 2's days stay 0.
-        days = tables["days"].sort("day_id")
-        assert days["day_weight"].to_list() == [5.0, 5.0, 0.0, 0.0]
-        assert days["day_weight"].sum() == pytest.approx(10.0)
+        person_days = tables["person_days"].sort("person_day_id")
+        assert person_days["person_day_weight"].to_list() == [5.0, 5.0, 0.0, 0.0]
+        ut = tables["unlinked_trips"].sort("unlinked_trip_id")
+        assert ut["unlinked_trip_weight"].to_list() == [20.0, 0.0, 0.0, 0.0]
 
-    def test_day_split_matches_vendor_convention(self):
-        """Two persons with different usable-day counts: each conserves independently.
+    @pytest.mark.parametrize(
+        ("hh_weight", "usable_days", "expected_day_weights", "expected_per_person"),
+        [
+            pytest.param(
+                10.0,
+                [True, True, False, False],
+                [5.0, 5.0, 0.0, 0.0],
+                [10.0, 0.0],
+                id="person_2_kept_no_day",
+            ),
+            pytest.param(
+                100.0,
+                [True, True, True, False],
+                [50.0, 50.0, 100.0, 0.0],
+                [100.0, 100.0],
+                id="persons_kept_different_day_counts",
+            ),
+            pytest.param(
+                10.0,
+                [False, False, False, False],
+                [0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.0],
+                id="nobody_kept_a_day",
+            ),
+        ],
+    )
+    def test_person_with_no_usable_day_is_a_shortfall_not_pooled(
+        self, hh_weight, usable_days, expected_day_weights, expected_per_person
+    ):
+        """Each person's usable days split that person's weight, and nobody else's.
 
-        The vendor identity: day_weight = person_weight / n_usable_days, so
-        sum(day_weight per person) == person_weight regardless of how many days
-        the *other* household members kept. No cross-person transfer.
+        A person with no usable day keeps their person weight, which is then not
+        represented at the day level: the other person's days do not grow to
+        cover it, and the shortfall is not rescaled away.
         """
         tables = {
             "households": pl.DataFrame(
-                {"hh_id": [1], "hh_weight": [100.0], "survey_complete": [True]}
+                {"hh_id": [1], "hh_weight": [hh_weight], "survey_complete": [True]}
             ),
             "persons": pl.DataFrame(
                 {"person_id": [1, 2], "hh_id": [1, 1], "survey_complete": [True, True]}
             ),
-            "days": pl.DataFrame(
+            "person_days": pl.DataFrame(
                 {
-                    "day_id": [10, 20, 30, 40],
+                    "person_day_id": [10, 20, 30, 40],
                     "person_id": [1, 1, 2, 2],
                     "hh_id": [1, 1, 1, 1],
-                    "survey_complete": [True, True, True, False],
+                    "survey_complete": usable_days,
                 }
             ),
             "unlinked_trips": None,
@@ -690,285 +399,434 @@ class TestPropagateRedistribution:
             "joint_trips": None,
             "tours": None,
         }
-        has_weight: dict[str, str] = {"households": "hh_weight"}
 
-        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
+        propagate_weights(tables, dict(HH_ONLY), usability_flag_col="survey_complete")
 
-        days = tables["days"].sort("day_id")
-        # person 1: 100/2 per usable day; person 2: 100/1 on their single usable day
-        assert days["day_weight"].to_list() == [50.0, 50.0, 100.0, 0.0]
+        assert tables["persons"]["person_weight"].to_list() == [hh_weight, hh_weight]
+        person_days = tables["person_days"].sort("person_day_id")
+        assert person_days["person_day_weight"].to_list() == expected_day_weights
         per_person = (
-            tables["days"].group_by("person_id").agg(pl.col("day_weight").sum()).sort("person_id")
+            tables["person_days"]
+            .group_by("person_id")
+            .agg(pl.col("person_day_weight").sum())
+            .sort("person_id")
         )
-        assert per_person["day_weight"].to_list() == pytest.approx([100.0, 100.0])
-
-    def test_parent_with_no_usable_child_leaves_a_shortfall(self):
-        """A person keeping no day has nowhere to spread, so their days stay 0."""
-        tables = _make_tables_partial_usability()
-        tables["days"] = tables["days"].with_columns(pl.lit(value=False).alias("survey_complete"))
-        has_weight: dict[str, str] = {"households": "hh_weight"}
-
-        propagate_weights(tables, has_weight, usability_flag_col="survey_complete")
-
-        # The shortfall is real and deliberate: it is not silently rescaled away.
-        assert tables["days"]["day_weight"].to_list() == [0.0, 0.0, 0.0, 0.0]
+        assert per_person["person_day_weight"].to_list() == pytest.approx(expected_per_person)
 
 
-# ---------------------------------------------------------------------------
-# Joint levels: SUM, not mean
-# ---------------------------------------------------------------------------
+def _make_tables_with_joints() -> dict[str, pl.DataFrame]:
+    """Two members of one joint trip and joint tour, carrying different weights.
 
-
-def _make_tables_with_joints():
-    """One household, two members sharing a trip and the tour it sits on.
-
-    Both members' days are usable, but member 2's trip is not, so the joint
-    grouping has a party of two and only one *represented* member. That gap is
-    the whole point: it is what separates the party size from the divisor.
+    Person 1 reports two usable days and person 2 one, so the day split leaves
+    their trips on 15 and 30: sum 45, mean 22.5, first 15, max 30 all differ.
     """
-    households = pl.DataFrame({"hh_id": [1], "hh_weight": [10.0], "usable": [True]})
-    persons = pl.DataFrame({"person_id": [1, 2], "hh_id": [1, 1], "usable": [True, True]})
-    days = pl.DataFrame(
-        {
-            "day_id": [10, 20],
-            "person_id": [1, 2],
-            "hh_id": [1, 1],
-            "usable": [True, True],
-        }
-    )
-    unlinked_trips = pl.DataFrame(
-        {
-            "unlinked_trip_id": [100, 200],
-            "day_id": [10, 20],
-            "linked_trip_id": [1, 2],
-            "usable": [True, False],
-        }
-    )
-    linked_trips = pl.DataFrame(
-        {
-            "linked_trip_id": [1, 2],
-            "day_id": [10, 20],
-            "tour_id": [1, 2],
-            "joint_trip_id": [500, 500],
-            "usable": [True, False],
-        }
-    )
-    tours = pl.DataFrame(
-        {
-            "tour_id": [1, 2],
-            "day_id": [10, 20],
-            "joint_tour_id": [900, 900],
-            "usable": [True, False],
-        }
-    )
+    both = [True, True]
     return {
-        "households": households,
-        "persons": persons,
-        "days": days,
-        "unlinked_trips": unlinked_trips,
-        "linked_trips": linked_trips,
+        "households": pl.DataFrame({"hh_id": [1], "hh_weight": [30.0], "usable": [True]}),
+        "persons": pl.DataFrame({"person_id": [1, 2], "hh_id": [1, 1], "usable": both}),
+        "person_days": pl.DataFrame(
+            {
+                "person_day_id": [10, 11, 20],
+                "person_id": [1, 1, 2],
+                "hh_id": [1, 1, 1],
+                "usable": [True, True, True],
+            }
+        ),
+        "unlinked_trips": pl.DataFrame(
+            {
+                "unlinked_trip_id": [100, 200],
+                "person_day_id": [10, 20],
+                "linked_trip_id": [1, 2],
+                "usable": both,
+            }
+        ),
+        "linked_trips": pl.DataFrame(
+            {
+                "linked_trip_id": [1, 2],
+                "person_day_id": [10, 20],
+                "tour_id": [1, 2],
+                "joint_trip_id": [500, 500],
+                "usable": both,
+            }
+        ),
         "joint_trips": pl.DataFrame({"joint_trip_id": [500], "usable": [True]}),
-        "tours": tours,
+        "tours": pl.DataFrame(
+            {
+                "tour_id": [1, 2],
+                "person_day_id": [10, 20],
+                "joint_tour_id": [900, 900],
+                "usable": both,
+            }
+        ),
         "joint_tours": pl.DataFrame({"joint_tour_id": [900], "usable": [True]}),
     }
 
 
-class TestJointLevelsSum:
-    """The joint levels carry person-trips, not events."""
+class TestJointWeights:
+    """A joint trip or tour weighs the sum of its kept members."""
 
-    def test_joint_weight_is_the_sum_of_its_members(self):
-        """joint_trip_weight equals the total of the member linked_trip_weights."""
-        tables = _make_tables_with_joints()
-        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
-
-        members = tables["linked_trips"]["linked_trip_weight"].sum()
-        assert tables["joint_trips"]["joint_trip_weight"][0] == pytest.approx(members)
-        # Only one member carried weight here, so this case cannot tell the sum
-        # from the mean -- zero-weight members are dropped before either runs.
-        # TestUnequalJointMembers separates them.
-        assert tables["joint_trips"]["joint_trip_weight"][0] == pytest.approx(10.0)
-
-    def test_joint_tour_weight_is_the_sum_of_its_members(self):
-        """joint_tour_weight equals the total of the member tour_weights."""
-        tables = _make_tables_with_joints()
-        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
-
-        members = tables["tours"]["tour_weight"].sum()
-        assert tables["joint_tours"]["joint_tour_weight"][0] == pytest.approx(members)
-
-    def test_no_member_count_is_published(self):
-        """The weight is the only column an UP level adds; counts stay derivable."""
-        tables = _make_tables_with_joints()
-        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
-
-        assert "num_represented_members" not in tables["joint_trips"].columns
-        assert "num_represented_members" not in tables["joint_tours"].columns
-
-    def test_dividing_by_the_member_count_recovers_the_event_weight(self):
-        """Sum / count == mean, with the count taken from the member table."""
-        tables = _make_tables_with_joints()
-        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
-
-        weighted_members = tables["linked_trips"].filter(pl.col("linked_trip_weight") != 0)
-        events = tables["joint_trips"]["joint_trip_weight"][0] / len(weighted_members)
-        assert events == pytest.approx(weighted_members["linked_trip_weight"].mean())
-
-    def test_mean_levels_are_untouched(self):
-        """Only the joint levels sum; tours and linked trips still average."""
-        tables = _make_tables_with_joints()
-        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
-
-        # Tour 1 holds a single linked trip, so its mean is that trip's weight.
-        tour = tables["tours"].filter(pl.col("tour_id") == 1)
-        trip = tables["linked_trips"].filter(pl.col("linked_trip_id") == 1)
-        assert tour["tour_weight"][0] == pytest.approx(trip["linked_trip_weight"][0])
-
-
-def _make_tables_with_unequal_joint_members():
-    """Two members of one joint grouping carrying *different* weights.
-
-    Person 1 reports two usable days and person 2 only one, so the average-day
-    split leaves them on 15 and 30. Equal member weights would let the mean, the
-    first and the max all coincide with the sum or half of it; unequal ones
-    separate every candidate: sum 45, mean 22.5, first 15, max 30.
-    """
-    households = pl.DataFrame({"hh_id": [1], "hh_weight": [30.0], "usable": [True]})
-    persons = pl.DataFrame({"person_id": [1, 2], "hh_id": [1, 1], "usable": [True, True]})
-    days = pl.DataFrame(
-        {
-            "day_id": [10, 11, 20],
-            "person_id": [1, 1, 2],
-            "hh_id": [1, 1, 1],
-            "usable": [True, True, True],
-        }
+    @pytest.mark.parametrize(
+        ("joint_table", "joint_weight", "member_table", "member_id", "member_weight"),
+        [
+            pytest.param(
+                "joint_trips",
+                "joint_trip_weight",
+                "linked_trips",
+                "linked_trip_id",
+                "linked_trip_weight",
+                id="trips",
+            ),
+            pytest.param(
+                "joint_tours",
+                "joint_tour_weight",
+                "tours",
+                "tour_id",
+                "tour_weight",
+                id="tours",
+            ),
+        ],
     )
-    unlinked_trips = pl.DataFrame(
-        {
-            "unlinked_trip_id": [100, 200],
-            "day_id": [10, 20],
-            "linked_trip_id": [1, 2],
-            "usable": [True, True],
-        }
-    )
-    linked_trips = pl.DataFrame(
-        {
-            "linked_trip_id": [1, 2],
-            "day_id": [10, 20],
-            "tour_id": [1, 2],
-            "joint_trip_id": [500, 500],
-            "usable": [True, True],
-        }
-    )
-    tours = pl.DataFrame(
-        {
-            "tour_id": [1, 2],
-            "day_id": [10, 20],
-            "joint_tour_id": [900, 900],
-            "usable": [True, True],
-        }
-    )
-    return {
-        "households": households,
-        "persons": persons,
-        "days": days,
-        "unlinked_trips": unlinked_trips,
-        "linked_trips": linked_trips,
-        "joint_trips": pl.DataFrame({"joint_trip_id": [500], "usable": [True]}),
-        "tours": tours,
-        "joint_tours": pl.DataFrame({"joint_tour_id": [900], "usable": [True]}),
-    }
-
-
-class TestUnequalJointMembers:
-    """Members on different weights, so no other combination can imitate the sum."""
-
-    def test_members_carry_the_expected_unequal_weights(self):
-        """The premise: the split really does leave the two members apart."""
-        tables = _make_tables_with_unequal_joint_members()
-        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
-
-        members = tables["linked_trips"].sort("linked_trip_id")["linked_trip_weight"].to_list()
-        assert members == pytest.approx([15.0, 30.0])
-
-    def test_joint_trip_weight_is_the_sum_and_nothing_else(self):
+    def test_joint_weight_is_the_sum_and_nothing_else(
+        self, joint_table, joint_weight, member_table, member_id, member_weight
+    ):
         """45 is the sum; the mean, the first and the max are 22.5, 15 and 30."""
-        tables = _make_tables_with_unequal_joint_members()
-        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
+        tables = _make_tables_with_joints()
+        propagate_weights(tables, dict(HH_ONLY), usability_flag_col="usable")
 
-        weight = tables["joint_trips"]["joint_trip_weight"][0]
+        members = tables[member_table].sort(member_id)[member_weight].to_list()
+        assert members == pytest.approx([15.0, 30.0])
+        weight = tables[joint_table][joint_weight][0]
         assert weight == pytest.approx(45.0)
         for imitation in (22.5, 15.0, 30.0):
             assert weight != pytest.approx(imitation)
-
-    def test_joint_tour_weight_is_the_sum_and_nothing_else(self):
-        """The same separation on the tour side."""
-        tables = _make_tables_with_unequal_joint_members()
-        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
-
-        weight = tables["joint_tours"]["joint_tour_weight"][0]
-        assert weight == pytest.approx(45.0)
-        for imitation in (22.5, 15.0, 30.0):
-            assert weight != pytest.approx(imitation)
-
-
-class TestJointEdgeCases:
-    """Awkward joint groupings that the sum convention has to survive."""
-
-    def test_members_on_different_days_still_sum(self):
-        """The sum crosses the day scope: a grouping is not confined to one day.
-
-        ``scope`` bounds where an unusable record's claim is *re-homed*, not what a
-        grouping may span. Two members reporting on different days is ordinary --
-        household members are surveyed on their own day rows.
-        """
-        tables = _make_tables_with_joints()
-        # Member 2 becomes usable, so both members carry weight on their own days.
-        tables["unlinked_trips"] = tables["unlinked_trips"].with_columns(
-            pl.lit(value=True).alias("usable")
-        )
-        tables["linked_trips"] = tables["linked_trips"].with_columns(
-            pl.lit(value=True).alias("usable")
-        )
-        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
-
-        members = tables["linked_trips"]
-        assert members["day_id"].n_unique() == 2
-        assert tables["joint_trips"]["joint_trip_weight"][0] == pytest.approx(
-            members["linked_trip_weight"].sum()
-        )
-
-    def test_unusable_member_contributes_nothing(self):
-        """A member the weighting excluded is absent from the sum, not zero-padded."""
-        tables = _make_tables_with_joints()
-        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
-
-        weighted = tables["linked_trips"].filter(pl.col("linked_trip_weight") != 0)
-        assert len(weighted) == 1
-        assert tables["joint_trips"]["joint_trip_weight"][0] == pytest.approx(
-            weighted["linked_trip_weight"].sum()
-        )
-
-    def test_unusable_grouping_carries_no_weight(self):
-        """A grouping is never more usable than its members allow."""
-        tables = _make_tables_with_joints()
-        tables["joint_trips"] = tables["joint_trips"].with_columns(
-            pl.lit(value=False).alias("usable")
-        )
-        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
-
-        assert tables["joint_trips"]["joint_trip_weight"][0] == 0.0
 
     def test_a_grouping_with_no_weighted_member_is_zero_not_null(self):
         """Zero is a weight; null would silently drop out of downstream sums."""
         tables = _make_tables_with_joints()
-        tables["unlinked_trips"] = tables["unlinked_trips"].with_columns(
-            pl.lit(value=False).alias("usable")
-        )
-        tables["linked_trips"] = tables["linked_trips"].with_columns(
-            pl.lit(value=False).alias("usable")
-        )
-        propagate_weights(tables, {"households": "hh_weight"}, usability_flag_col="usable")
+        for name in ("unlinked_trips", "linked_trips"):
+            tables[name] = tables[name].with_columns(pl.lit(value=False).alias("usable"))
+        propagate_weights(tables, dict(HH_ONLY), usability_flag_col="usable")
 
         weight = tables["joint_trips"]["joint_trip_weight"][0]
         assert weight is not None
         assert weight == 0.0
+
+
+def _make_tables_with_a_tour_off_its_joint_tour():
+    """Three tours the survey grouped; under profile ``p`` only two are on it.
+
+    Every record is usable and the household's 10 reaches every tour unsplit,
+    so only summing by ``joint_tour_id_p`` makes the joint weight 20, not 30.
+    """
+    flag = "usable_p"
+    three = [True, True, True]
+    return {
+        "households": pl.DataFrame({"hh_id": [1], "hh_weight": [10.0], flag: [True]}),
+        "persons": pl.DataFrame({"person_id": [1, 2, 3], "hh_id": [1, 1, 1], flag: three}),
+        "person_days": pl.DataFrame(
+            {"person_day_id": [10, 20, 30], "person_id": [1, 2, 3], "hh_id": [1, 1, 1], flag: three}
+        ),
+        "unlinked_trips": pl.DataFrame(
+            {
+                "unlinked_trip_id": [100, 200, 300],
+                "person_day_id": [10, 20, 30],
+                "linked_trip_id": [1, 2, 3],
+                flag: three,
+            }
+        ),
+        "linked_trips": pl.DataFrame(
+            {
+                "linked_trip_id": [1, 2, 3],
+                "person_day_id": [10, 20, 30],
+                "tour_id": [1, 2, 3],
+                "joint_trip_id": [500, 500, 500],
+                "joint_trip_id_p": [500, 500, None],
+                flag: three,
+            }
+        ),
+        "tours": pl.DataFrame(
+            {
+                "tour_id": [1, 2, 3],
+                "person_day_id": [10, 20, 30],
+                "joint_tour_id": [900, 900, 900],
+                "joint_tour_id_p": [900, 900, None],
+                flag: three,
+            }
+        ),
+        "joint_trips": pl.DataFrame({"joint_trip_id": [500], flag: [True]}),
+        "joint_tours": pl.DataFrame({"joint_tour_id": [900], flag: [True]}),
+    }
+
+
+class TestJointWeightsFollowTheProfilesJointIds:
+    """A tour the profile took off its joint tour is not in that tour's weight."""
+
+    def test_the_sum_and_the_check_cover_only_the_tours_on_it(self):
+        """Three tours of 10 in the survey's group; the profile keeps two: 20, and it reconciles."""
+        tables = _make_tables_with_a_tour_off_its_joint_tour()
+        propagate_weights(tables, dict(HH_ONLY), usability_flag_col="usable_p")
+
+        assert tables["tours"]["tour_weight"].to_list() == pytest.approx([10.0, 10.0, 10.0])
+        assert tables["joint_tours"]["joint_tour_weight"][0] == pytest.approx(20.0)
+        assert tables["joint_trips"]["joint_trip_weight"][0] == pytest.approx(20.0)
+        _check_joint_sums(tables, "usable_p")
+
+    def test_without_a_profile_copy_the_bare_id_is_summed(self):
+        """A flag outside the family has no copy to read, so the survey's group is the sum."""
+        tables = _make_tables_with_a_tour_off_its_joint_tour()
+        tables["tours"] = tables["tours"].drop("joint_tour_id_p")
+        tables["linked_trips"] = tables["linked_trips"].drop("joint_trip_id_p")
+        propagate_weights(tables, dict(HH_ONLY), usability_flag_col="usable_p")
+        assert tables["joint_tours"]["joint_tour_weight"][0] == pytest.approx(30.0)
+
+
+class TestTheSeedGate:
+    """``seed_admits``: who the balancer fits. Both conditions must hold; a null is not a yes."""
+
+    @staticmethod
+    def _admitted(flag: str = "profile") -> list[str]:
+        return GATE_FRAME.filter(seed_admits(flag))["case"].to_list()
+
+    def test_only_the_fully_qualified_case_is_admitted(self):
+        """Stated as the whole set, so a new admission cannot slip in unnoticed."""
+        assert self._admitted() == ["both"]
+
+    def test_gating_on_survey_complete_seeds_every_complete_household(self):
+        """Including ones no profile admits; a null profile flag does not matter here."""
+        assert self._admitted("survey_complete") == ["both", "complete only", "null flag"]
+
+    def test_survey_complete_does_not_require_a_profile_column(self):
+        """A survey-analysis run may have no profile columns at all."""
+        frame = pl.DataFrame({"survey_complete": [True, False]})
+        assert frame.filter(seed_admits("survey_complete")).height == 1
+
+    def test_everything_it_admits_is_also_usable(self):
+        """So a seeded household is never zeroed by the propagation that follows."""
+        usable = GATE_FRAME.filter(is_usable("profile"))["case"].to_list()
+        assert set(self._admitted()) <= set(usable)
+
+
+def _empty_totals() -> ControlTotals:
+    """Controls with nothing to compare, so only the hierarchy checks run."""
+    return ControlTotals(
+        totals=pl.DataFrame(
+            schema={
+                "zone_group_id": pl.String,
+                "control_name": pl.String,
+                "category": pl.String,
+                "target_total": pl.Float64,
+            }
+        ),
+        pums_hh_count=0,
+        pums_person_count=0,
+        zone_group_ids=[],
+    )
+
+
+def _weighted(
+    person_weight: list[float], day_weight: list[float], usable: list[bool]
+) -> dict[str, pl.DataFrame]:
+    """One household of 100; its persons carry *person_weight*; person 1 has two days."""
+    person_ids = list(range(1, len(person_weight) + 1))
+    return {
+        "households": pl.DataFrame(
+            {"hh_id": [1], "hh_weight": [100.0], "zone_group_id": ["a"], "base_weight": [100.0]}
+        ),
+        "persons": pl.DataFrame(
+            {
+                "person_id": person_ids,
+                "hh_id": [1] * len(person_ids),
+                "person_weight": person_weight,
+                FLAG: [True] * len(person_ids),
+            }
+        ),
+        "person_days": pl.DataFrame(
+            {
+                "person_day_id": [1, 2],
+                "person_id": [1, 1],
+                "person_day_weight": day_weight,
+                FLAG: usable,
+            }
+        ),
+    }
+
+
+def _nothing_usable() -> dict[str, pl.DataFrame]:
+    """A person carrying weight whose every day was dropped.
+
+    Read through the flag this is a reported shortfall; read without it, every
+    day looks usable and the same data is a hierarchy failure.
+    """
+    return _weighted([100.0], [0.0, 0.0], [False, False])
+
+
+class TestWeightSanityChecks:
+    """``weight_sanity_checks`` runs, reads the flag, and still raises on a broken hierarchy."""
+
+    def test_coherent_weights_pass(self):
+        """Correct output must not raise."""
+        tables = _weighted([100.0, 100.0], [50.0, 50.0], [True, True])
+        weight_sanity_checks(tables, _empty_totals(), [], FLAG)
+
+    def test_the_flag_reaches_the_hierarchy_check(self):
+        """The one shape whose verdict depends on the flag passes, so the flag arrived."""
+        weight_sanity_checks(_nothing_usable(), _empty_totals(), [], FLAG)
+
+    def test_a_broken_hierarchy_still_raises(self):
+        """A person who does not carry their household's weight is refused."""
+        tables = _weighted([100.0, 7.0], [50.0, 50.0], [True, True])
+
+        with pytest.raises(ValueError, match="Weight cascade broken"):
+            weight_sanity_checks(tables, _empty_totals(), [], FLAG)
+
+    def test_missing_tables_are_skipped_not_crashed(self):
+        """A partial run is legitimate; the checks log and return."""
+        weight_sanity_checks(
+            {"households": pl.DataFrame({"hh_id": [1]})}, _empty_totals(), [], FLAG
+        )
+
+    def test_the_same_data_fails_when_the_flag_is_not_found(self):
+        """Every record then looks usable, so the shortfall reads as a broken sum.
+
+        Naming a column no table carries is not itself an error, which is why the
+        caller has to pass the column the propagation actually used.
+        """
+        with pytest.raises(ValueError, match="Weight cascade broken"):
+            _check_hierarchy(_nothing_usable(), "a_profile_nobody_stamped")
+
+
+def _joint_trip(weight: float, usable: bool) -> dict[str, pl.DataFrame]:
+    """Two linked trips of 5 on one joint trip of *weight*."""
+    return {
+        "linked_trips": pl.DataFrame(
+            {"linked_trip_id": [1, 2], "joint_trip_id": [10, 10], "linked_trip_weight": [5.0, 5.0]}
+        ),
+        "joint_trips": pl.DataFrame(
+            {"joint_trip_id": [10], "joint_trip_weight": [weight], FLAG: [usable]}
+        ),
+    }
+
+
+def test_joint_sums_skip_unusable_groupings():
+    """An unusable joint trip is zeroed regardless of its members, so it is not checked."""
+    _check_joint_sums(_joint_trip(0.0, usable=False), FLAG)
+
+
+def test_a_usable_grouping_that_does_not_reconcile_raises():
+    """A usable joint trip must equal the members it kept."""
+    with pytest.raises(ValueError, match="Joint weight is not its members"):
+        _check_joint_sums(_joint_trip(3.0, usable=True), FLAG)
+
+
+class TestNoCallerOmitsTheFlag:
+    """No call in src, tests, projects or scripts may drop a required ``usability_flag_col``.
+
+    A caller in a module the suite never enters would otherwise only fail on a
+    real run, so this walks the source instead of relying on coverage.
+    """
+
+    ROOTS = ("src", "tests", "projects", "scripts")
+    PARAM = "usability_flag_col"
+
+    def _functions_requiring_the_flag(self) -> dict[str, list[str]]:
+        """Map function name -> positional parameter names, for those requiring it."""
+        required: dict[str, list[str]] = {}
+        for path in pathlib.Path("src").rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                    continue
+                args = node.args
+                positional = [a.arg for a in args.posonlyargs + args.args]
+                n_defaults = len(args.defaults)
+                required_positional = positional[: len(positional) - n_defaults or None]
+                required_kwonly = [
+                    a.arg
+                    for a, d in zip(args.kwonlyargs, args.kw_defaults, strict=True)
+                    if d is None
+                ]
+                if self.PARAM in required_positional + required_kwonly:
+                    required[node.name] = positional
+        return required
+
+    def _calls_missing_the_flag(self, required: dict[str, list[str]]) -> list[str]:
+        misses = []
+        for root in self.ROOTS:
+            for path in pathlib.Path(root).rglob("*.py"):
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+                for node in ast.walk(tree):
+                    if not isinstance(node, ast.Call):
+                        continue
+                    func = node.func
+                    name = (
+                        func.id
+                        if isinstance(func, ast.Name)
+                        else func.attr
+                        if isinstance(func, ast.Attribute)
+                        else None
+                    )
+                    if name not in required:
+                        continue
+                    by_keyword = {kw.arg for kw in node.keywords if kw.arg}
+                    forwards_kwargs = any(kw.arg is None for kw in node.keywords)
+                    positional = required[name]
+                    index = positional.index(self.PARAM) if self.PARAM in positional else None
+                    by_position = index is not None and len(node.args) > index
+                    if self.PARAM in by_keyword or by_position or forwards_kwargs:
+                        continue
+                    misses.append(f"{path}:{node.lineno} {name}()")
+        return misses
+
+    def test_the_audit_finds_the_functions(self):
+        """A guard that finds nothing to guard would pass forever."""
+        required = self._functions_requiring_the_flag()
+
+        assert "_check_hierarchy" in required
+        assert "propagate_weights" in required
+
+    def test_every_call_passes_it(self):
+        """One entry per call site that dropped the argument."""
+        misses = self._calls_missing_the_flag(self._functions_requiring_the_flag())
+
+        assert misses == [], "call sites dropping a required usability_flag_col:\n" + "\n".join(
+            misses
+        )
+
+
+def test_the_computed_path_holds_its_targets():
+    """Propagation keeps the balanced household weights and the persons they represent.
+
+    Household 1 (weight 12) has persons 11 and 12 usable and 13 not, so 13's
+    share goes to 11 and 12 and the household still counts 3. Household 2 is
+    not usable.
+    """
+    tables = {
+        "households": pl.DataFrame(
+            {"hh_id": [1, 2], "hh_weight": [12.0, 0.0], "usable_p": [True, False]}
+        ),
+        "persons": pl.DataFrame(
+            {
+                "person_id": [11, 12, 13, 21],
+                "hh_id": [1, 1, 1, 2],
+                "usable_p": [True, True, False, False],
+            }
+        ),
+        "person_days": pl.DataFrame(
+            {
+                "person_day_id": [110, 120, 130, 210],
+                "person_id": [11, 12, 13, 21],
+                "hh_id": [1, 1, 1, 2],
+                "usable_p": [True, True, False, False],
+            }
+        ),
+        "unlinked_trips": None,
+        "linked_trips": None,
+        "joint_trips": None,
+        "tours": None,
+        "joint_tours": None,
+    }
+    propagate_weights(tables, dict(HH_ONLY), usability_flag_col="usable_p")
+
+    assert tables["households"]["hh_weight"].sum() == pytest.approx(12.0, rel=1e-6)
+    persons = tables["persons"].sort("person_id")
+    assert persons["person_weight"].to_list() == pytest.approx([18.0, 18.0, 0.0, 0.0])

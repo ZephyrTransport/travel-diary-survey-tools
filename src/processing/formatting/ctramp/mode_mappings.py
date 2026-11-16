@@ -9,10 +9,11 @@ from data_canon.codebook.trips import AccessEgressMode, Mode, ModeType, TNCType
 # When a transit tour/trip uses multiple submodes, the highest-ranked submode wins.
 TRANSIT_SUBMODE_NONE = 0
 TRANSIT_SUBMODE_LOCAL = 1
-TRANSIT_SUBMODE_LRF = 2  # light rail / ferry
-TRANSIT_SUBMODE_EXPRESS = 3
-TRANSIT_SUBMODE_HEAVY = 4
-TRANSIT_SUBMODE_COMMUTER = 5
+TRANSIT_SUBMODE_LR = 2  # light rail / streetcar
+TRANSIT_SUBMODE_FERRY = 3
+TRANSIT_SUBMODE_EXPRESS = 4
+TRANSIT_SUBMODE_HEAVY = 5
+TRANSIT_SUBMODE_COMMUTER = 6
 
 # Detailed Mode -> transit submode rank. Modes not listed have no transit submode.
 MODE_TO_TRANSIT_SUBMODE = {
@@ -21,13 +22,14 @@ MODE_TO_TRANSIT_SUBMODE = {
     Mode.BUS_LOCAL_PUBLIC.value: TRANSIT_SUBMODE_LOCAL,
     Mode.BUS_OTHER.value: TRANSIT_SUBMODE_LOCAL,
     Mode.PARATRANSIT.value: TRANSIT_SUBMODE_LOCAL,
-    # Light rail / streetcar / ferry
-    Mode.LIGHT_RAIL.value: TRANSIT_SUBMODE_LRF,
-    Mode.MUNI_METRO.value: TRANSIT_SUBMODE_LRF,
-    Mode.STREETCAR.value: TRANSIT_SUBMODE_LRF,
-    Mode.FERRY.value: TRANSIT_SUBMODE_LRF,
-    Mode.WATER.value: TRANSIT_SUBMODE_LRF,
-    Mode.BOAT.value: TRANSIT_SUBMODE_LRF,
+    # Light rail / streetcar
+    Mode.LIGHT_RAIL.value: TRANSIT_SUBMODE_LR,
+    Mode.MUNI_METRO.value: TRANSIT_SUBMODE_LR,
+    Mode.STREETCAR.value: TRANSIT_SUBMODE_LR,
+    # Ferry
+    Mode.FERRY.value: TRANSIT_SUBMODE_FERRY,
+    Mode.WATER.value: TRANSIT_SUBMODE_FERRY,
+    Mode.BOAT.value: TRANSIT_SUBMODE_FERRY,
     # Express / bus rapid transit
     Mode.BUS_EXPRESS.value: TRANSIT_SUBMODE_EXPRESS,
     Mode.BUS_BRT.value: TRANSIT_SUBMODE_EXPRESS,
@@ -40,11 +42,21 @@ MODE_TO_TRANSIT_SUBMODE = {
 }
 
 
+def tnc_type_agg() -> pl.Expr:
+    """A group's TNC type: ``POOLED`` if any segment was pooled, else the lowest."""
+    return (
+        pl.when((pl.col("tnc_type") == TNCType.POOLED.value).any())
+        .then(pl.lit(TNCType.POOLED.value))
+        .otherwise(pl.col("tnc_type").min())
+        .alias("tnc_type")
+    )
+
+
 def aggregate_transit_submode(unlinked_trips: pl.DataFrame, group_col: str) -> pl.DataFrame:
     """Aggregate the highest transit submode and the TNC type within each group.
 
     Uses the detailed ``mode_1``-``mode_4`` columns on unlinked trips to detect
-    the transit submode (local bus, light rail/ferry, express bus, heavy rail,
+    the transit submode (local bus, light rail, ferry, express bus, heavy rail,
     commuter rail) and returns the highest-ranked submode present per group.
     Also aggregates ``tnc_type`` across the group's TNC segments: ``POOLED`` wins
     if any TNC segment is pooled, otherwise the lowest ``tnc_type`` present
@@ -86,19 +98,13 @@ def aggregate_transit_submode(unlinked_trips: pl.DataFrame, group_col: str) -> p
         .agg(pl.col("_submode_rank").max().alias("transit_submode"))
     )
 
-    # Aggregate TNC type across the group's TNC segments (POOLED wins, else min).
     if "tnc_type" in unlinked_trips.columns and "mode_type" in unlinked_trips.columns:
         tnc = (
             unlinked_trips.filter(
                 pl.col(group_col).is_not_null() & (pl.col("mode_type") == ModeType.TNC.value)
             )
             .group_by(group_col)
-            .agg(
-                pl.when((pl.col("tnc_type") == TNCType.POOLED.value).any())
-                .then(pl.lit(TNCType.POOLED.value))
-                .otherwise(pl.col("tnc_type").min())
-                .alias("tnc_type")
-            )
+            .agg(tnc_type_agg())
         )
         submode = submode.join(tnc, on=group_col, how="full", coalesce=True)
     else:
@@ -126,17 +132,18 @@ def ctramp_mode_expression(
         transit_submode: Optional polars expression for the transit submode rank
             (see ``TRANSIT_SUBMODE_*`` and :func:`aggregate_transit_submode`). When
             provided, transit trips are mapped to the matching CT-RAMP submode code
-            (local/express/light rail-ferry/heavy rail/commuter rail) instead of
+            (local/express/light rail/ferry/heavy rail/commuter rail) instead of
             always defaulting to local bus.
         tnc_type: Optional polars expression for determining TNC type
 
     Returns:
-        Polars expression resolving to CTRAMPModeType integer code (21 codes)
+        Polars expression resolving to CTRAMPModeType integer code
 
     Notes:
         - Walk=7, Bike=8
         - Transit walk-access codes: LOC=9, LRF=10, EXP=11, HVY=12, COM=13
         - Transit drive-access codes: LOC=14, LRF=15, EXP=16, HVY=17, COM=18
+        - Ferry (calibration only, not standard CT-RAMP): WLK=22, DRV=23
           Uses access_mode/egress_mode to detect drive-to-transit and
           transit_submode to pick the submode; defaults to local bus.
         - Personal vehicle by occupancy: DA=1, SR2=3, SR3=5 (non-toll)
@@ -189,8 +196,10 @@ def ctramp_mode_expression(
             .then(pl.lit(CTRAMPModeType.WLK_COM_WLK.value))
             .when(transit_submode == TRANSIT_SUBMODE_HEAVY)
             .then(pl.lit(CTRAMPModeType.WLK_HVY_WLK.value))
-            .when(transit_submode == TRANSIT_SUBMODE_LRF)
+            .when(transit_submode == TRANSIT_SUBMODE_LR)
             .then(pl.lit(CTRAMPModeType.WLK_LRF_WLK.value))
+            .when(transit_submode == TRANSIT_SUBMODE_FERRY)
+            .then(pl.lit(CTRAMPModeType.WLK_FERRY_WLK.value))
             .when(transit_submode == TRANSIT_SUBMODE_EXPRESS)
             .then(pl.lit(CTRAMPModeType.WLK_EXP_WLK.value))
             .otherwise(pl.lit(CTRAMPModeType.WLK_LOC_WLK.value))
@@ -200,8 +209,10 @@ def ctramp_mode_expression(
             .then(pl.lit(CTRAMPModeType.DRV_COM_WLK.value))
             .when(transit_submode == TRANSIT_SUBMODE_HEAVY)
             .then(pl.lit(CTRAMPModeType.DRV_HVY_WLK.value))
-            .when(transit_submode == TRANSIT_SUBMODE_LRF)
+            .when(transit_submode == TRANSIT_SUBMODE_LR)
             .then(pl.lit(CTRAMPModeType.DRV_LRF_WLK.value))
+            .when(transit_submode == TRANSIT_SUBMODE_FERRY)
+            .then(pl.lit(CTRAMPModeType.DRV_FERRY_WLK.value))
             .when(transit_submode == TRANSIT_SUBMODE_EXPRESS)
             .then(pl.lit(CTRAMPModeType.DRV_EXP_WLK.value))
             .otherwise(pl.lit(CTRAMPModeType.DRV_LOC_WLK.value))

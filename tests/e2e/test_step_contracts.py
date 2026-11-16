@@ -1,43 +1,30 @@
-"""Enforce that each step's declared ``requires`` contract matches reality.
+"""Each step's ``requires`` contract names only columns that exist and that the step reads.
 
-The pipeline only checks ``requires`` when a project config opts in with
-``validate_input: true``. No config in this repo did, so the contracts were never
-exercised and silently rotted: ``format_ctramp`` declared ``tours.num_travelers``,
-a column no step produces, while omitting the ~40 columns it genuinely reads.
-
-These tests check the contracts directly, independent of any config, so a stale
-declaration fails here rather than at the first site that turns validation on.
+The step decorator checks ``requires`` on every call, so the e2e run itself checks the
+steps it executes; these cover the steps it does not run, and over-declaration.
 """
 
 import polars as pl
 import pytest
 
 import processing  # noqa: F401  # triggers @step registration
-from pipeline.step_registry import STEP_REGISTRY
-
-# Zone columns are named from the `taz_field` param (e.g. `o_TAZ1454`), so they
-# cannot appear in a static contract and are excluded from these checks.
-_DYNAMIC_SUFFIXES = ("_taz", "_maz", "_TAZ1454")
+from pipeline.decoration import Tables
+from pipeline.step_registry import STEP_REGISTRY, is_config_named
+from tests.e2e.conftest import STEP_ORDER
 
 _CONTRACTS = [
     (step, table, sorted(tc.requires))
     for step, contract in sorted(STEP_REGISTRY.items())
+    if step not in STEP_ORDER
     for table, tc in sorted(contract.tables.items())
     if tc.requires
 ]
 
 
 @pytest.mark.parametrize(("step", "table", "columns"), _CONTRACTS, ids=lambda v: str(v)[:40])
-def test_required_columns_are_present(full_result, step, table, columns):
-    """Every column a step requires must exist on the table the pipeline builds.
-
-    Catches the ``tours.num_travelers`` class of defect: a requirement that no
-    step anywhere produces, which makes the step unrunnable under validation.
-    """
-    tables = full_result.as_dict_non_null()
-    if table not in tables:
-        pytest.skip(f"{table} not produced by the e2e profile")
-    missing = [c for c in columns if c not in tables[table].columns]
+def test_required_columns_are_present(full_tables, step, table, columns):
+    """Every column a step requires exists on the table the pipeline builds."""
+    missing = [c for c in columns if c not in full_tables[table].columns and not is_config_named(c)]
     assert not missing, (
         f"Step '{step}' requires {table} columns that the pipeline never produces: "
         f"{missing}. Either the step no longer reads them (drop from `requires`) "
@@ -48,54 +35,41 @@ def test_required_columns_are_present(full_result, step, table, columns):
 def _is_required(fn, probe, params, baseline, fingerprint):
     """Whether dropping a column changed the outcome. A raise proves it was required."""
     try:
-        return fingerprint(fn(**probe, **params)) != baseline
+        return fingerprint(fn(probe, params)) != baseline
     except Exception:  # noqa: BLE001  # any failure means the column was load-bearing
         return True
 
 
-def test_format_ctramp_requires_nothing_it_does_not_read(full_result):
-    """Dropping any required column must actually break ``format_ctramp``.
+def test_format_ctramp_requires_nothing_it_does_not_read(full_tables, standard_config):
+    """Dropping any required column changes ``format_ctramp``'s output or makes it fail.
 
-    Guards against over-declaration. A column that can be removed with no effect
-    on the formatted output is not a requirement, and declaring it makes the step
-    fail for datasets that legitimately lack it.
+    A column that can be removed with no effect is not a requirement, and declaring it
+    rejects datasets that legitimately lack it.
     """
     from processing.formatting.ctramp.format_ctramp import format_ctramp
 
-    fn = getattr(format_ctramp, "__wrapped__", format_ctramp)
-    tables = full_result.as_dict_non_null()
-    params = {
-        # The e2e stamps ctramp; the step now requires the profile it
-        # gates on rather than assuming a conventional name.
-        "usability_profile": "ctramp",
-        "income_low_threshold": 30000,
-        "income_med_threshold": 60000,
-        "income_high_threshold": 100000,
-        "income_survey_year_to_ctramp_year": 0.5319148936,
-    }
-    inputs = {
-        name: tables.get(name, pl.DataFrame())
-        for name in (
-            "persons",
-            "households",
-            "unlinked_trips",
-            "linked_trips",
-            "tours",
-            "joint_trips",
-            "joint_tours",
-            "days",
+    contract = STEP_REGISTRY["format_ctramp"]
+
+    # The body itself, past the decorator's presence check, so a dropped column
+    # shows whether the step reads it.
+    def fn(probe, params):
+        return format_ctramp.__wrapped__(
+            tables=Tables("format_ctramp", set(probe), probe), **params
         )
-    }
+
+    # The e2e stamps the ctramp profile, and the step requires the one it gates on.
+    params = {"ctramp": standard_config.model_copy(update={"usability_profile": "ctramp"})}
+    inputs = {name: full_tables.get(name, pl.DataFrame()) for name in contract.taken}
 
     def fingerprint(result):
         return {k: (v.height, sorted(v.columns)) for k, v in result.items()}
 
-    baseline = fingerprint(fn(**inputs, **params))
+    baseline = fingerprint(fn(inputs, params))
 
     unused = []
-    for table, tc in sorted(STEP_REGISTRY["format_ctramp"].tables.items()):
+    for table, tc in sorted(contract.taken.items()):
         for col in sorted(tc.requires):
-            if col.endswith(_DYNAMIC_SUFFIXES) or col not in inputs[table].columns:
+            if is_config_named(col) or col not in inputs[table].columns:
                 continue
             if not _is_required(
                 fn, {**inputs, table: inputs[table].drop(col)}, params, baseline, fingerprint

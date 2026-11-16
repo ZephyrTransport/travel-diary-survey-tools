@@ -26,3 +26,9 @@ repos:
         language: system
         files: ^src/data_canon/
         pass_filenames: false
+      - id: check-module-length
+        name: Check module length (src)
+        entry: uv run python scripts/check_module_length.py
+        language: system
+        files: ^(src/.*\.py|pyproject\.toml)$
+        pass_filenames: false

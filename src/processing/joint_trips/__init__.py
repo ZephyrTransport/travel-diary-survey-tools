@@ -6,13 +6,9 @@ graph-based clique detection.
 """
 
 from .detect_joint_trips import detect_joint_trips
-from .joint_trip_configs import (
-    JointTripConfig,
-    estimate_covariance_from_detected_pairs,
-)
+from .joint_trip_configs import JointTripConfig
 
 __all__ = [
     "JointTripConfig",
     "detect_joint_trips",
-    "estimate_covariance_from_detected_pairs",
 ]

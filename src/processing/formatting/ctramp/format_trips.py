@@ -1,35 +1,19 @@
-"""Trip formatting for CT-RAMP.
-
-Transforms canonical trip data into CT-RAMP model format, including:
-
-- Individual trips (trips on individual tours)
-- Joint trips (trips on joint tours)
-"""
+"""Individual trip formatting for CT-RAMP (joint trips: ``format_joint_trips``)."""
 
 import logging
 
 import polars as pl
 
-from data_canon.codebook.ctramp import (
-    CTRAMPEmploymentCategory,
-)
 from data_canon.codebook.tours import TourDirection
 from data_canon.codebook.trips import Purpose
+from utils.helpers import METERS_PER_MILE
 
 from .ctramp_config import CTRAMPConfig
-from .format_joint_trips import format_joint_trip
-from .format_persons import enrich_persons_with_person_type
-from .mode_mappings import (
-    aggregate_transit_submode,
-    ctramp_mode_expression,
-)
-from .person_mappings import EMPLOYMENT_TO_CTRAMP
+from .mode_mappings import aggregate_transit_submode, ctramp_mode_expression
+from .output_columns import add_inbound_and_stop_id, sample_rate
 from .purpose_mappings import ctramp_purpose_category_expression
-from .student_mappings import ctramp_student_category_expression
 
 logger = logging.getLogger(__name__)
-
-__all__ = ["format_individual_trip", "format_joint_trip"]
 
 
 def _log_purpose_mapping_counts(
@@ -86,7 +70,8 @@ def format_individual_trip(
         tours_ctramp: Formatted CT-RAMP individual tours DataFrame (already filtered to
             individual tours only, without joint_tour_id). Contains tour_id,
             tour_purpose, tour_mode, tour_category
-        persons_canonical: Canonical persons DataFrame with person_id, person_num, school_type
+        persons_canonical: Canonical persons DataFrame with person_id, person_num,
+            school_type and employment
         households_ctramp: Formatted CT-RAMP households DataFrame with hh_id, income
         config: CT-RAMP configuration with income thresholds
         unlinked_trips_canonical: Canonical unlinked trips DataFrame with
@@ -98,48 +83,26 @@ def format_individual_trip(
 
     Notes:
         - Excludes trips on joint tours
-        - Creates stop_id sequence starting at 1 per half-tour
+        - stop_id numbers each half-tour leg's trips from 0, or -1 for a leg of
+          one trip (see ``add_inbound_and_stop_id``)
         - Excludes model-only fields (parking costs, value of time, etc.)
     """
     logger.info("Formatting individual trip data for CT-RAMP")
 
-    # Derive/validate person_type before purpose mapping.
-    if "person_type" not in persons_canonical.columns or "type" not in persons_canonical.columns:
-        logger.info("Deriving person_type for trip formatting")
-        if "student_category" not in persons_canonical.columns:
-            persons_canonical = persons_canonical.with_columns(
-                ctramp_student_category_expression(school_taz_col="school_taz").alias(
-                    "student_category"
-                )
-            )
-        if "employment_category" not in persons_canonical.columns:
-            persons_canonical = persons_canonical.with_columns(
-                pl.col("employment")
-                .replace_strict(
-                    EMPLOYMENT_TO_CTRAMP,
-                    default=CTRAMPEmploymentCategory.NOT_EMPLOYED.value,
-                )
-                .alias("employment_category")
-            )
-        persons_canonical = enrich_persons_with_person_type(persons_canonical)
-
-    # Handle empty input DataFrames
     if len(tours_ctramp) == 0 or len(linked_trips_canonical) == 0:
         logger.info("No tours or trips provided")
         return pl.DataFrame()
 
-    # Filter to trips on individual tours only
-    # tours_ctramp has _tour_id_canonical for matching with canonical trip tour_ids
+    # tours_ctramp keeps the canonical tour id as _tour_id_canonical.
     individual_trips = linked_trips_canonical.filter(
         pl.col("tour_id").is_in(tours_ctramp["_tour_id_canonical"].implode())
     )
 
-    # Get conflicting fields between tours and trips, drop from trips
+    # The tour fields come from tours_ctramp, already formatted; the canonical
+    # tour_id is renamed so the CT-RAMP one can take its name.
     conflicting_fields = set(individual_trips.columns).intersection(
         {"tour_purpose", "tour_mode", "tour_category"}
     )
-    # Join with tour context (tour fields are already CTRAMP formatted)
-    # Rename canonical tour_id temporarily to avoid collision, then join
     individual_trips = (
         individual_trips.drop(conflicting_fields)
         .rename({"tour_id": "_canonical_tour_id"})
@@ -153,9 +116,8 @@ def format_individual_trip(
         )
     )
 
-    # Join with persons and households
     individual_trips = individual_trips.join(
-        persons_canonical.select(["person_id", "person_num", "school_type", "person_type"]),
+        persons_canonical.select(["person_id", "person_num", "school_type", "employment"]),
         on="person_id",
         how="left",
     ).join(
@@ -164,84 +126,37 @@ def format_individual_trip(
         how="left",
     )
 
-    # Create stop_id: trips within each half-tour leg (outbound/inbound/subtour)
-    # are numbered 0-based in order of departure. A leg that consists of a single
-    # trip (i.e. no intermediate stop) is assigned -1.
-    # Group by the globally-unique canonical tour id so tours from different
-    # persons/days are never combined.
-    individual_trips = (
-        individual_trips.with_columns(
-            pl.when(pl.col("tour_direction") == TourDirection.INBOUND.value)
-            .then(pl.lit("inbound"))
-            .otherwise(pl.lit("outbound"))
-            .alias("tour_direction_str")
-        )
-        .sort(["_canonical_tour_id", "tour_direction_str", "depart_time", "arrive_time"])
-        .with_columns(
-            (
-                pl.col("depart_time")
-                .rank("ordinal")
-                .over(["_canonical_tour_id", "tour_direction_str"])
-                - 1
-            )
-            .cast(pl.Int64)
-            .alias("_stop_seq")
-        )
-        .with_columns(
-            # Single-trip leg (max 0-based sequence is 0) has no intermediate stop
-            # and is assigned -1; otherwise keep the 0-based sequence.
-            pl.when(
-                pl.col("_stop_seq").max().over(["_canonical_tour_id", "tour_direction_str"]) == 0
-            )
-            .then(pl.lit(-1))
-            .otherwise(pl.col("_stop_seq"))
-            .cast(pl.Int64)
-            .alias("stop_id")
-        )
-        .drop("_stop_seq")
-    )
-
-    # Map inbound flag (0=outbound, 1=inbound)
-    individual_trips = individual_trips.with_columns(
+    # Subtour trips are numbered with the outbound leg. The canonical tour id is
+    # unique across persons and days, so no two tours are numbered together.
+    individual_trips = add_inbound_and_stop_id(
+        individual_trips,
+        "_canonical_tour_id",
         pl.when(pl.col("tour_direction") == TourDirection.INBOUND.value)
-        .then(pl.lit(1))
-        .otherwise(pl.lit(0))
-        .alias("inbound")
+        .then(pl.lit("inbound"))
+        .otherwise(pl.lit("outbound")),
     )
 
-    # Map origin and destination purposes
     individual_trips = individual_trips.with_columns(
-        [
-            ctramp_purpose_category_expression(
-                pl.col("o_purpose_category"),
-                pl.col("income"),
-                pl.col("school_type"),
-                pl.col("person_type"),
-                config.income_low_threshold,
-                config.income_med_threshold,
-                config.income_high_threshold,
-                purpose_kind="trip",
-            ).alias("orig_purpose"),
-            ctramp_purpose_category_expression(
-                pl.col("d_purpose_category"),
-                pl.col("income"),
-                pl.col("school_type"),
-                pl.col("person_type"),
-                config.income_low_threshold,
-                config.income_med_threshold,
-                config.income_high_threshold,
-                purpose_kind="trip",
-            ).alias("dest_purpose"),
-            # tour_purpose is already CTRAMP formatted from join, no need to remap
-        ]
+        ctramp_purpose_category_expression(
+            pl.col("o_purpose_category"),
+            pl.col("income"),
+            pl.col("school_type"),
+            pl.col("employment"),
+            config,
+            purpose_kind="trip",
+        ).alias("orig_purpose"),
+        ctramp_purpose_category_expression(
+            pl.col("d_purpose_category"),
+            pl.col("income"),
+            pl.col("school_type"),
+            pl.col("employment"),
+            config,
+            purpose_kind="trip",
+        ).alias("dest_purpose"),
     )
-
-    # Log how detailed survey purposes collapse into CT-RAMP trip purposes.
     _log_purpose_mapping_counts(individual_trips, "o_purpose", "orig_purpose", "origin")
     _log_purpose_mapping_counts(individual_trips, "d_purpose", "dest_purpose", "destination")
 
-    # Map trip mode (tour_mode already formatted from join)
-    # Derive the transit submode per linked trip from detailed unlinked-trip modes
     if not unlinked_trips_canonical.is_empty():
         submode_by_trip = aggregate_transit_submode(unlinked_trips_canonical, "linked_trip_id")
         individual_trips = individual_trips.join(submode_by_trip, on="linked_trip_id", how="left")
@@ -262,46 +177,21 @@ def format_individual_trip(
         ).alias("trip_mode")
     )
 
-    # Convert times to minutes after midnight and extract hours
     individual_trips = individual_trips.with_columns(
-        [
-            (pl.col("depart_time").dt.hour() * 60 + pl.col("depart_time").dt.minute()).alias(
-                "depart_minutes"
-            ),
-            (pl.col("arrive_time").dt.hour() * 60 + pl.col("arrive_time").dt.minute()).alias(
-                "arrive_minutes"
-            ),
-            pl.col("depart_time").dt.hour().alias("depart_hour"),
-        ]
-    )
+        pl.col("depart_time").dt.hour().alias("depart_hour")
+    ).with_columns((pl.col("distance_meters") / METERS_PER_MILE).alias("distance_survey"))
 
-    # Add survey distance
-    individual_trips = individual_trips.with_columns(
-        (pl.col("distance_meters") / 1609.34).alias("distance_survey")
-    )
-
-    # Ensure required columns are formatted and cast to correct types
     individual_trips_ctramp = individual_trips.with_columns(
-        [
-            pl.col(f"o_{config.taz_field}").cast(pl.Int64).alias("orig_taz"),
-            pl.col(f"d_{config.taz_field}").cast(pl.Int64).alias("dest_taz"),
-            pl.lit(0).cast(pl.Int64).alias("parking_taz"),  # Default 0 (no parking)
-            pl.col("depart_hour").cast(pl.Int64),
-            pl.col("depart_minutes").cast(pl.Int64),
-            pl.col("arrive_minutes").cast(pl.Int64),
-        ]
+        pl.col(f"o_{config.taz_field}").cast(pl.Int64).alias("orig_taz"),
+        pl.col(f"d_{config.taz_field}").cast(pl.Int64).alias("dest_taz"),
+        pl.lit(0).cast(pl.Int64).alias("parking_taz"),  # no parking zone
+        pl.col("depart_hour").cast(pl.Int64),
     )
 
-    # Add weight and sampleRate if linked_trip_weight exists
     if "linked_trip_weight" in individual_trips_ctramp.columns:
         individual_trips_ctramp = individual_trips_ctramp.with_columns(
-            [
-                pl.col("linked_trip_weight").alias("trip_weight"),
-                pl.when(pl.col("linked_trip_weight") > 0)
-                .then(pl.col("linked_trip_weight").pow(-1))
-                .otherwise(None)
-                .alias("sampleRate"),
-            ]
+            pl.col("linked_trip_weight").alias("trip_weight"),
+            sample_rate("linked_trip_weight"),
         )
 
     logger.info("Formatted %d individual trip records", len(individual_trips_ctramp))

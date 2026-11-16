@@ -12,6 +12,8 @@ controls) and [`add_existing_weights`][processing.weighting.existing_weights]
 * [`specs`][processing.weighting.core.specs] -- configuration and result types.
 * [`pipeline`][processing.weighting.core.pipeline] -- orchestration for the
   computed path.
+* [`run_report`][processing.weighting.core.run_report] -- the computed path's
+  HTML report.
 
 Kept import-free so it cannot close a cycle with the sub-packages that read it.
 """

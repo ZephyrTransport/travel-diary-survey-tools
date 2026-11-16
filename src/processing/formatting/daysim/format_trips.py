@@ -18,11 +18,19 @@ from data_canon.codebook.trips import (
 
 from .mappings import (
     DROVE_ACCESS_EGRESS,
-    PURPOSE_MAP,
+    daysim_purpose,
     daysim_tour_number,
+    minutes_after_midnight,
 )
 
 logger = logging.getLogger(__name__)
+
+# Mode types that make a linked trip a transit trip whichever segment carries them.
+_TRANSIT_MODE_TYPES = [
+    ModeType.FERRY.value,
+    ModeType.TRANSIT.value,
+    ModeType.LONG_DISTANCE.value,
+]
 
 
 def _determine_linked_trip_mode_type(
@@ -62,28 +70,12 @@ def _determine_linked_trip_mode_type(
             [
                 # Transit mode if any segment is transit
                 pl.col("mode_type")
-                .filter(
-                    pl.col("mode_type").is_in(
-                        [
-                            ModeType.FERRY.value,
-                            ModeType.TRANSIT.value,
-                            ModeType.LONG_DISTANCE.value,
-                        ]
-                    )
-                )
+                .filter(pl.col("mode_type").is_in(_TRANSIT_MODE_TYPES))
                 .first()
                 .alias("mode_transit"),
                 # Longest non-transit segment (already sorted by duration)
                 pl.col("mode_type")
-                .filter(
-                    ~pl.col("mode_type").is_in(
-                        [
-                            ModeType.FERRY.value,
-                            ModeType.TRANSIT.value,
-                            ModeType.LONG_DISTANCE.value,
-                        ]
-                    )
-                )
+                .filter(~pl.col("mode_type").is_in(_TRANSIT_MODE_TYPES))
                 .first()
                 .alias("mode_non_transit"),
                 # Transit access/egress (first non-null value)
@@ -198,17 +190,10 @@ def _aggregate_transit_path_flags(unlinked_trips: pl.DataFrame) -> pl.DataFrame:
     # Ensure all linked_trip_ids have entries (fill missing with False)
     all_linked_trips = unlinked_trips.select("linked_trip_id").unique()
 
-    result = all_linked_trips.join(transit_flags, on="linked_trip_id", how="left").with_columns(
-        [
-            pl.col("has_ferry").fill_null(value=False),
-            pl.col("has_bart").fill_null(value=False),
-            pl.col("has_premium").fill_null(value=False),
-            pl.col("has_lrt").fill_null(value=False),
-            pl.col("has_intercity_rail").fill_null(value=False),
-        ]
+    flags = ["has_ferry", "has_bart", "has_premium", "has_lrt", "has_intercity_rail"]
+    return all_linked_trips.join(transit_flags, on="linked_trip_id", how="left").with_columns(
+        pl.col(flags).fill_null(value=False)
     )
-
-    return result
 
 
 def _compute_daysim_mode_expr() -> pl.Expr:
@@ -415,7 +400,7 @@ def _prepare_basic_fields(linked_trips: pl.DataFrame, persons: pl.DataFrame) -> 
     """
     # Join person_num to linked trips
     trips = linked_trips.join(
-        persons.select(["person_id", "person_num"]),
+        persons.select(["person_id", "person_num", "employment"]),
         on=["person_id"],
         how="left",
     )
@@ -426,11 +411,7 @@ def _prepare_basic_fields(linked_trips: pl.DataFrame, persons: pl.DataFrame) -> 
     # - tseg: trip sequence within half-tour (ranked by departure then arrival)
     # - tsvid: travel survey trip ID (use linked_trip_id)
     # - tripno: sequential trip number per person-day (bonus field)
-    #
-    # tour and tseg key off tour_id, not tour_num: a work-based subtour shares
-    # its parent's tour_num, so numbering trips by tour_num filed every subtour
-    # trip under its parent's tour -- leaving the subtour's own tour record with
-    # no trips, and double-counting the parent's half-tours.
+    # tour and tseg key off tour_id: a subtour shares its parent's tour_num.
     trips = trips.with_columns(
         [
             daysim_tour_number().alias("tour")
@@ -440,15 +421,11 @@ def _prepare_basic_fields(linked_trips: pl.DataFrame, persons: pl.DataFrame) -> 
             pl.col("tour_direction").alias("half")
             if "tour_direction" in linked_trips.columns
             else pl.lit(1).alias("half"),
-            # Compute trip sequence within half-tour
-            # CRITICAL: rank() with method="ordinal"
-            # and sort by depart_time, arrive_time
-            # This ensures tseg follows temporal order and
-            # handles tied departure times
+            # Trip sequence within the half-tour, in time order; ties broken by arrival.
             pl.col("depart_time")
             .rank(method="ordinal")
             .over(
-                ["hh_id", "person_id", "day_id", "tour_id", "tour_direction"],
+                ["hh_id", "person_id", "person_day_id", "tour_id", "tour_direction"],
                 order_by=["depart_time", "arrive_time"],
             )
             .alias("tseg")
@@ -456,7 +433,7 @@ def _prepare_basic_fields(linked_trips: pl.DataFrame, persons: pl.DataFrame) -> 
             else pl.col("depart_time")
             .rank(method="ordinal")
             .over(
-                ["hh_id", "person_id", "day_id"],
+                ["hh_id", "person_id", "person_day_id"],
                 order_by=["depart_time", "arrive_time"],
             )
             .alias("tseg"),
@@ -465,7 +442,7 @@ def _prepare_basic_fields(linked_trips: pl.DataFrame, persons: pl.DataFrame) -> 
             # Bonus: sequential trip number per person-day
             pl.col("depart_time")
             .rank("ordinal")
-            .over(["hh_id", "person_id", "day_id"])
+            .over(["hh_id", "person_id", "person_day_id"])
             .alias("tripno"),
             # Add default address types (3 = other)
             pl.lit(3).alias("oadtyp"),
@@ -495,33 +472,16 @@ def _prepare_basic_fields(linked_trips: pl.DataFrame, persons: pl.DataFrame) -> 
     # Apply basic transformations
     trips = trips.with_columns(
         [
-            # Fill null coordinates with -1
-            pl.col("oxco").fill_null(value=-1),
-            pl.col("oyco").fill_null(value=-1),
-            pl.col("dxco").fill_null(value=-1),
-            pl.col("dyco").fill_null(value=-1),
-            # Convert datetime to minutes after midnight (0-1439)
-            (
-                pl.col("depart_time").dt.hour().cast(pl.Int16) * 60
-                + pl.col("depart_time").dt.minute()
-            ).alias("deptm"),
-            (
-                pl.col("arrive_time").dt.hour().cast(pl.Int16) * 60
-                + pl.col("arrive_time").dt.minute()
-            ).alias("arrtm"),
-            # Compute end activity time (same as arrival for now)
-            (
-                pl.col("arrive_time").dt.hour().cast(pl.Int16) * 60
-                + pl.col("arrive_time").dt.minute()
-            ).alias("endacttm"),
+            pl.col(["oxco", "oyco", "dxco", "dyco"]).fill_null(value=-1),
+            minutes_after_midnight("depart_time").alias("deptm"),
+            minutes_after_midnight("arrive_time").alias("arrtm"),
+            # End of activity: the arrival time, for now
+            minutes_after_midnight("arrive_time").alias("endacttm"),
             # Map purposes
-            pl.col("opurp").replace(PURPOSE_MAP).alias("opurp"),
-            pl.col("dpurp").replace(PURPOSE_MAP).alias("dpurp"),
-            # Fill the usual nulls when zones are not matched (out of area, missing data, etc.)
-            pl.col("otaz").fill_null(-1),
-            pl.col("opcl").fill_null(-1),
-            pl.col("dtaz").fill_null(-1),
-            pl.col("dpcl").fill_null(-1),
+            daysim_purpose(pl.col("opurp"), pl.col("employment"), strict=False).alias("opurp"),
+            daysim_purpose(pl.col("dpurp"), pl.col("employment"), strict=False).alias("dpurp"),
+            # Zones not matched (out of area, missing data, etc.)
+            pl.col(["otaz", "opcl", "dtaz", "dpcl"]).fill_null(-1),
         ]
     )
 
@@ -594,10 +554,7 @@ def format_linked_trips(
         travdist=pl.lit(-1.0),
     )
 
-    # Step 5: Add trip weight from linked trips, assign 1.0 if missing
-    if "linked_trip_weight" not in linked_trips.columns:
-        trips_daysim = trips_daysim.with_columns(pl.lit(1.0).alias("trexpfac"))
-
+    # Step 5: Add trip weight from linked trips
     trips_daysim = trips_daysim.with_columns(
         pl.col("linked_trip_weight").fill_null(value=0).alias("trexpfac"),
     )

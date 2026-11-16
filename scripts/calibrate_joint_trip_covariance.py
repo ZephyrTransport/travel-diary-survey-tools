@@ -14,6 +14,7 @@ import polars as pl
 
 from pipeline.pipeline import Pipeline
 from processing.joint_trips.detect_joint_trips import detect_joint_trips
+from processing.joint_trips.joint_trip_configs import JointTripConfig
 from processing.joint_trips.similarity import compute_pairwise_distances
 
 # Constants for candidate filtering
@@ -204,9 +205,11 @@ if __name__ == "__main__":
     result = detect_joint_trips(
         linked_trips=linked_trips,
         households=households,
-        method="buffer",
-        time_threshold_minutes=float(MAX_TIME_THRESHOLD_MIN),
-        space_threshold_meters=float(MAX_SPACE_THRESHOLD_M),
+        matching=JointTripConfig(
+            method="buffer",
+            time_threshold_minutes=float(MAX_TIME_THRESHOLD_MIN),
+            space_threshold_meters=float(MAX_SPACE_THRESHOLD_M),
+        ),
     )
 
     n_joint_trips = len(result["joint_trips"])

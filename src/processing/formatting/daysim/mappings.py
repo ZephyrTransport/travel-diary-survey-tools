@@ -9,7 +9,6 @@ from data_canon.codebook.daysim import (
     DaysimGender,
     DaysimMode,
     DaysimPaidParking,
-    DaysimPathType,
     DaysimPurpose,
     DaysimResidenceOwnership,
     DaysimResidenceType,
@@ -20,14 +19,15 @@ from data_canon.codebook.households import (
     ResidenceType,
 )
 from data_canon.codebook.persons import (
+    EMPLOYED,
     AgeCategory,
     Gender,
     Student,
     WorkParking,
 )
 from data_canon.codebook.trips import (
+    WORK_PURPOSE_CATEGORIES,
     AccessEgressMode,
-    Mode,
     ModeType,
     PurposeCategory,
 )
@@ -145,18 +145,6 @@ PURPOSE_TO_DAYSIM = {
     PurposeCategory.NOT_IMPUTABLE: DaysimPurpose.OTHER,
 }
 
-# Transit mode to DaySim path type mapping
-TRANSIT_MODE_TO_PATH_TYPE = {
-    Mode.FERRY: DaysimPathType.FERRY,
-    Mode.BART: DaysimPathType.BART,
-    Mode.RAIL_INTERCITY: DaysimPathType.PREMIUM,
-    Mode.RAIL_OTHER: DaysimPathType.PREMIUM,
-    Mode.BUS_EXPRESS: DaysimPathType.PREMIUM,
-    Mode.MUNI_METRO: DaysimPathType.LRT,
-    Mode.RAIL: DaysimPathType.LRT,
-    Mode.STREETCAR: DaysimPathType.LRT,
-}
-
 # Mode to DaySim mode codes
 MODE_TYPE_TO_DAYSIM = {
     ModeType.WALK: DaysimMode.WALK,
@@ -174,25 +162,6 @@ MODE_TYPE_TO_DAYSIM = {
     ModeType.LONG_DISTANCE: DaysimMode.OTHER,
     ModeType.OTHER: DaysimMode.OTHER,
     ModeType.MISSING: DaysimMode.OTHER,
-}
-
-# ModeType to AccessEgressMode mapping
-MODE_TYPE_TO_ACCESS_EGRESS = {
-    ModeType.WALK: AccessEgressMode.WALK,
-    ModeType.BIKE: AccessEgressMode.BICYCLE,
-    ModeType.BIKESHARE: AccessEgressMode.BICYCLE,
-    ModeType.SCOOTERSHARE: AccessEgressMode.MICROMOBILITY,
-    ModeType.TAXI: AccessEgressMode.TNC,
-    ModeType.TNC: AccessEgressMode.TNC,
-    ModeType.CAR: AccessEgressMode.CAR_HOUSEHOLD,
-    ModeType.CARSHARE: AccessEgressMode.CAR_OTHER,
-    ModeType.SCHOOL_BUS: AccessEgressMode.TRANSFER_BUS,
-    ModeType.SHUTTLE: AccessEgressMode.TRANSFER_BUS,
-    ModeType.FERRY: AccessEgressMode.TRANSFER_OTHER,
-    ModeType.TRANSIT: AccessEgressMode.TRANSFER_OTHER,
-    ModeType.LONG_DISTANCE: AccessEgressMode.TRANSFER_OTHER,
-    ModeType.OTHER: AccessEgressMode.OTHER,
-    ModeType.MISSING: AccessEgressMode.MISSING,
 }
 
 # Access/egress mode codes that indicate drove to transit
@@ -216,14 +185,42 @@ STUDENT_MAP = {k.value: v.value for k, v in STUDENT_TO_DAYSIM.items()}
 WORK_PARK_MAP = {k.value: v.value for k, v in WORK_PARK_TO_DAYSIM.items()}
 PURPOSE_MAP = {k.value: v.value for k, v in PURPOSE_TO_DAYSIM.items()}
 MODE_TYPE_MAP = {k.value: v.value for k, v in MODE_TYPE_TO_DAYSIM.items()}
-MODE_TYPE_TO_ACCESS_EGRESS_MAP = {k.value: v.value for k, v in MODE_TYPE_TO_ACCESS_EGRESS.items()}
 RENTOWN_MAP = {k.value: v.value for k, v in RENTOWN_TO_DAYSIM.items()}
 RESTYPE_MAP = {k.value: v.value for k, v in RESIDENCE_TYPE_TO_DAYSIM.items()}
 
 
-# =============================================================================
-# Custom Step Functions
-# =============================================================================
+def daysim_purpose(purpose: pl.Expr, employment: pl.Expr, *, strict: bool = True) -> pl.Expr:
+    """DaySim purpose code for a canonical purpose category.
+
+    An employed person's work-related purpose is work: DaySim does not separate
+    the workplace from a meeting, jobsite or volunteering. Employment decides,
+    not person type, so a student with a job counts too. Anyone else's keeps
+    the table's personal business -- a retiree's is volunteering, a child's a
+    parent's purpose copied onto a shared trip. Every other purpose maps through
+    ``PURPOSE_MAP``.
+
+    Args:
+        purpose: Canonical purpose category.
+        employment: The person's canonical employment code (see ``EMPLOYED``).
+        strict: Raise on a purpose ``PURPOSE_MAP`` does not hold, rather than
+            passing it through.
+    """
+    mapped = purpose.replace_strict(PURPOSE_MAP) if strict else purpose.replace(PURPOSE_MAP)
+    return (
+        pl.when(
+            purpose.is_in([p.value for p in WORK_PURPOSE_CATEGORIES])
+            & employment.is_in([e.value for e in EMPLOYED]).fill_null(value=False)
+        )
+        .then(pl.lit(DaysimPurpose.WORK.value))
+        .otherwise(mapped)
+    )
+
+
+def minutes_after_midnight(col: str) -> pl.Expr:
+    """Minutes after midnight (0-1439) of the datetime column *col*, as Int16."""
+    return pl.col(col).dt.hour().cast(pl.Int16) * 60 + pl.col(col).dt.minute().cast(pl.Int16)
+
+
 def determine_tour_mode(tours: pl.DataFrame, linked_trips: pl.DataFrame) -> pl.DataFrame:
     """Determine DaySim tour mode from mode_type, passengers, and access mode.
 
@@ -294,7 +291,7 @@ def daysim_tour_number() -> pl.Expr:
 
     The tours file and the trips file must agree on this number or trips point
     at a tour record they do not belong to, so both derive it from here rather
-    than restating the rule. Both frames are filtered by the same drop cascade
-    before formatting, so they rank over the same set of tours.
+    than restating the rule. Both are gated on the same usability profile before
+    formatting, so they rank over the same set of tours.
     """
-    return pl.col("tour_id").rank("dense").over(["person_id", "day_id"]).cast(pl.Int16)
+    return pl.col("tour_id").rank("dense").over(["person_id", "person_day_id"]).cast(pl.Int16)

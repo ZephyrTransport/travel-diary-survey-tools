@@ -20,33 +20,47 @@
 #   ENVS:
 #     SOME_SHARED_ROOT: "/opt/shared"
 #
-survey_dir: "{{ MTC_DATA }}/Data/HomeInterview/Bay Area Travel Study 2023/Data/Full Weighted 2023 Dataset/WeightedDataset_02212025"
-weights_dir: "{{ MODEL3A_SHARE }}/survey_repos/ProjRoot_Mon-Thu20251201/WgtRoot_Mon-Thu20251201_nocommutemode/output/"
-pums_dir: "{{ MTC_DATA }}/Data/Census/PUMS/2023_1yr"
-output_dir: "{{ BOX_DIR }}/Surveys/Travel Diary Survey/BATS_across_years/20260327"
+# -- Inputs (read only) ---------------------------------------------------------
+survey_dir: "{{ BOX_DIR }}/Surveys/Travel Diary Survey/BATS_2023/Versioned_Data/PreWeight_PreLink_MonToSun_20250610"
+weights_dir: "{{ MODEL3A_SHARE }}/survey_repos/ProjRoot_Mon-Thu20251201/WgtRoot_Mon-Thu20251201_nocommutemode/output/"  # the vendor's weights
+census_dir: "{{ MTC_DATA }}/Data/Census/BATS Weighting"  # PUMS and Census geography
 TM1_shapefile_dir: "{{ TM1_CLONE }}/utilities/geographies"
 TM2_shapefile_dir: "{{ TM2PY_UTILS_CLONE }}/tm2py_utils/inputs/maz_taz/shapefiles"
-log_file: "{{ output_dir }}/pipeline_2023.log" # If not set, logs just to console, if not absolute saves to .cache directory
+
+# -- Outputs ------------------------------------------------------------------
+output_dir: "{{ BOX_DIR }}/Surveys/Travel Diary Survey/BATS_across_years/20260327"
+log_file: "{{ output_dir }}/pipeline_2023.log"  # If not set, logs just to console
+# Distance within which a trip end is at a habitual location (home, work,
+# school). detect_habitual_locations and extract_tours each have their own
+# buffer_meters setting; both use this value here.
+habitual_buffer_meters: "300"
 
 # Pipeline configuration
 steps:
   - name: load_data
-    validate_input: false # This will override @step(validate=True/False) in the function definition
-    cache: true
+    validate_input: false  # overrides the step's @step() value; leave it out to keep that
     params:
       input_paths:
         households: "{{ survey_dir }}/hh.csv"
         persons: "{{ survey_dir }}/person.csv"
-        days: "{{ survey_dir }}/day.csv"
+        person_days: "{{ survey_dir }}/day.csv"
         unlinked_trips: "{{ survey_dir }}/trip.csv"
 
   - name: clean_2023_bats
     validate_input: false
-    cache: true
+    params:
+      # How a child's day counts as complete. "vendor": only with the adult's proxy
+      # report, as the vendor decides. "observed_trips": also from the trips copied
+      # from an adult they travelled with (see day_survey_complete).
+      child_day_complete: vendor
+      # Survey technologies whose persons are dropped from every usability
+      # profile: call_center, browser, gps (phone app),
+      # missing. Recall-based reports are not used until their reporting bias
+      # against GPS-tracked travel is corrected for.
+      exclude_survey_tech: [call_center, browser]
 
   - name: imputation
     validate_input: false
-    cache: false
     params:
       impute_columns:
         # KNN/RF: impute single columns using similar records
@@ -64,7 +78,7 @@ steps:
         persons:
           - column: gender
             method: rf
-            missing_values: [TRANS, NON_BINARY, MISSING, OTHER, PNTA]  # Must conform to M/F for weighting (ACS only includes male/female, so the weighting approachreflects this constraint)
+            missing_values: [TRANS, NON_BINARY, MISSING, OTHER, PNTA]
             join_tables: [households]
             # numeric_features: [age] # Optional if you have them.
             numeric_features: [num_trips]
@@ -95,7 +109,8 @@ steps:
           #   categorical_features: [age, relationship, employment, occupation, education, industry, student, can_drive, work_mode, income_bin, residence_type, residence_rent_own]
           #   max_iter: 10
 
-      # Optional: create diagnostic flags (default: true)
+      # Keep each imputed column's original values in <column>_preimputed.
+      # Required while compute_weights has use_imputed_values: false.
       stash_preimputed: true
       random_state: 42     # For reproducibility
 
@@ -110,7 +125,6 @@ steps:
 
   - name: link_trips
     validate_input: false
-    cache: true
     params:
       change_mode_enum: CHANGE_MODE
       transit_mode_enums: [FERRY, TRANSIT, LONG_DISTANCE]
@@ -121,29 +135,36 @@ steps:
       # rather than transferring. No default: state the choice explicitly.
       split_on_occupancy: false
 
+  - name: detect_habitual_locations
+    validate_input: false
+    params:
+      buffer_meters: "{{ habitual_buffer_meters }}"
+      # Also add homes found where days were said to begin or end, beside the
+      # reported ones. A "home" answer away from the reported home then counts
+      # as another home. No default: state the choice.
+      include_observed_homes: true
+
   - name: detect_joint_trips
     validate_input: false
-    cache: true
     params:
-      config:
-        method: "mahalanobis"
-        # Covariance for Mahalanobis distance calculation
-        # Think of this as the standard deviation of measurement noise in each dimension
-        # Diagonal: [origin_var_m^2, dest_var_m^2, depart_var_min^2, arrive_var_min^2]
-        # Default [10000, 10000, 100, 100] = 100m, 100m, 10min, 10min std devs
-        covariance: [10000, 10000, 100, 100]
-        # Confidence level: Higher = stricter matching (fewer detections)
-        # 0.90 = 90% confidence (strict), 0.75 = moderate, 0.50 = permissive
-        confidence_level: 0.90
+      method: "mahalanobis"
+      # Covariance for Mahalanobis distance calculation
+      # Think of this as the standard deviation of measurement noise in each dimension
+      # Diagonal: [origin_var_m^2, dest_var_m^2, depart_var_min^2, arrive_var_min^2]
+      # [10000, 10000, 100, 100] = 100m, 100m, 10min, 10min std devs
+      covariance: [10000, 10000, 100, 100]
+      # Confidence level: higher = stricter. It reads backward and is not the
+      # share of joint pairs kept. With this covariance, 0.90 closely matches
+      # the buffer method below (see JointTripConfig.get_distance_threshold).
+      confidence_level: 0.90
 
-        # Alternative: simpler buffer method with time/space thresholds
-        # method: "buffer"
-        # time_threshold_minutes: 15.0
-        # space_threshold_meters: 100.0
+      # Alternative: simpler buffer method with time/space thresholds
+      # method: "buffer"
+      # time_threshold_minutes: 15.0
+      # space_threshold_meters: 100.0
 
   - name: extract_tours
     validate_input: false
-    cache: true
     params:
       # A tour is flagged SPATIAL_GAP (and dropped by the formatters) when any
       # internal junction jumps more than this many meters between one trip's
@@ -151,18 +172,18 @@ steps:
       # would otherwise weld into one "survey_complete" tour. 1 km catches genuine
       # teleports while ignoring same-place geocoding jitter.
       spatial_gap_threshold_meters: 1000.0
+      buffer_meters: "{{ habitual_buffer_meters }}"
 
   - name: add_zone_ids
     validate_input: false
-    cache: true
     params:
       projected_crs: "EPSG:26910"  # UTM Zone 10N (Bay Area metric CRS for nearest-zone fallback)
       max_snap_distance: 500  # metres; points farther from all zone boundaries remain null (out-of-region)
       zone_geographies:
-        - zone_name: "taz"  # Primary TAZ for DaySim (TM1)
+        - zone_name: "taz"  # TM2 TAZ, used by DaySim
           shapefile: "{{ TM2_shapefile_dir }}/tazs_TM2_2_5.shp"
           zone_id_field: "TAZ_NODE"
-        - zone_name: "maz"  # Primary MAZ for DaySim (TM2)
+        - zone_name: "maz"  # TM2 MAZ, used by DaySim
           shapefile: "{{ TM2_shapefile_dir }}/mazs_TM2_2_5.shp"
           zone_id_field: "MAZ_NODE"
         # Add additional zone geographies as needed:
@@ -173,12 +194,11 @@ steps:
   # Cascade `survey_complete` (survey reporting) through hh <-> person <-> day <->
   # trip/tour so it is consistent with any upstream adjustments, then stamp one
   # usability column per profile declared below.
-  - name: cascade_completeness
+  - name: cascade_usability
     validate_input: false
-    cache: true
     params:
-      # One boolean column per profile. A profile states its standard on two
-      # axes, and every profile answers both, so a column's meaning reads off
+      # One boolean column per profile. A profile states its standard on five
+      # axes, and every profile answers all of them, so a column's meaning reads off
       # this block without knowing a base rule. Consumers then name the profile
       # they read (usability_profile, below). `survey_complete` -- what the survey
       # collected -- is always available as the floor beneath all of them.
@@ -210,33 +230,99 @@ steps:
       #                                      would already have counted it
       #                        none          no geographic requirement
       #
+      #   joint_tours:         fully_joint   a joint tour is only the members who
+      #                                      share every leg of it, and never a
+      #                                      work, work-related, school or escort
+      #                                      tour -- the models draw a joint
+      #                                      tour's trips once for everyone on
+      #                                      it. A member who
+      #                                      leaves for a leg travels alone, as
+      #                                      an individual tour
+      #                        partial       the joint groups the survey detected,
+      #                                      as they are
+      #
+      #   travel_days:         a list of day names, monday to sunday. A day on
+      #                        any other day of the week is unusable, and its
+      #                        tours and trips with it. Only the weights of the
+      #                        days a profile takes are fitted, so a weekday
+      #                        model's profile says so here
+      #
       # No setting admits a tour with a missing leg or no activity to anchor on.
       # Those are missing data, not an open end.
       usability_profiles:
-        ctramp:
-          tour_closes_at: primary_home
-          household_day_needs: all_members
-          zone_coverage: TAZ1454
-        daysim:
-          tour_closes_at: primary_home
-          household_day_needs: all_members
-          zone_coverage: taz
         analysis:
           tour_closes_at: anywhere
           household_day_needs: nothing
           zone_coverage: none
+          joint_tours: partial
+          travel_days: [tuesday, wednesday, thursday]
+        ctramp:
+          tour_closes_at: primary_home
+          household_day_needs: all_members
+          zone_coverage: TAZ1454
+          joint_tours: fully_joint
+          travel_days: [tuesday, wednesday, thursday]
+        daysim:
+          tour_closes_at: primary_home
+          household_day_needs: all_members
+          zone_coverage: taz
+          joint_tours: fully_joint
+          travel_days: [tuesday, wednesday, thursday]
+        # Placeholder profile for vendor weights -- Same profile, just repeated under a different key to receive the pre-computed weights
+        ctramp_rsg:
+          tour_closes_at: primary_home
+          household_day_needs: all_members
+          zone_coverage: TAZ1454
+          joint_tours: fully_joint
+          travel_days: [tuesday, wednesday, thursday]
+        analysis_rsg:
+          tour_closes_at: anywhere
+          household_day_needs: all_members  # the vendor weighted only complete household-days
+          zone_coverage: none
+          joint_tours: partial
+          travel_days: [tuesday, wednesday, thursday]
+
+# -- Existing weights ----------
+  - name: add_existing_weights
+    validate_input: false
+    params:
+      # Required. true: a kept day's dropped trips hand their weight to its kept
+      # trips. false: kept trips keep their own. Trips always follow their day.
+      preserve_travel_totals: true
+      # Required. Households scale by one factor per size (number of persons);
+      # sizes from this one up share a factor.
+      household_size_top_group: 6
+      # Optional. The most a record may grow past its supplied weight, per table.
+      max_weight_factor:
+        households: 3.0
+      derive_missing_weights: true
+      # Supplied weights are redistributed onto each profile's usable records,
+      # holding the household total and each household's persons.
+      weight_profiles: [ctramp_rsg, analysis_rsg]
+      weights:
+        hh_weight:
+          weight_path: "{{ weights_dir }}/hh_weights.csv"
+        person_weight:
+          weight_path: "{{ weights_dir }}/person_weights.csv"
+        person_day_weight:
+          weight_id_col: "day_id"  # Weight file uses 'day_id' instead of canonical 'person_day_id'
+          weight_col: "day_weight"  # Weight file uses 'day_weight' instead of canonical 'person_day_weight'
+          weight_path: "{{ weights_dir }}/day_weights.csv"
+        unlinked_trip_weight:
+          weight_id_col: "trip_id"  # Weight file uses 'trip_id' instead of canonical 'unlinked_trip_id'
+          weight_col: "trip_weight"  # Weight file uses 'trip_weight' instead of canonical 'unlinked_trip_weight'
+          weight_path: "{{ weights_dir }}/trip_weights.csv"
 
   - name: compute_weights
     validate_input: false
-    cache: true
     params:
-      # -- PUMS 1-year microdata (California) ---------------------------
-      # (Optional) will download from Census if not provided
-      # pums_households: "{{ pums_dir }}/psam_h06.csv"
-      # pums_persons: "{{ pums_dir }}/psam_p06.csv"
-
-      state_fips: "06"
-      pums_year: 2023
+      # -- Census controls ---------------------------------------------
+      census:
+        state_fips: "06"
+        pums_year: 2023
+        pums_weights: independent
+        household_income: related_members  # the questionnaire leaves out roommates' income
+        census_dir: "{{ census_dir }}"
 
       # -- Sample Plan Path ------------------------------------------------
       sample_plan: "{{ survey_dir }}/prepared_sample_plan.csv"
@@ -253,32 +339,34 @@ steps:
         min_allocation: 0.01   # drop PUMA slivers below 1%
         # -- Zone groups (optional) ------------------------------------
         # Merge small zones for weighting.
-        # Keys are group names, values are lists of zones combined into a single balancing zone.
+        # Keys are group names, values are lists of zones combined into a single zone group.
         # Also useful for applying names to things.
         zone_groups:
           "Marin/Napa/Solano/Sonoma": ["041", "097", "095", "055"]
-          # "Contra Costa/Alameda": ["013", "001"]
-          "San Mateo/Santa Clara": ["085", "081"]
-          "Alameda": ["001"]
-          "Contra Costa": ["013"]
+          "Alameda/Contra Costa/San Mateo": ["001", "013", "081"]
+          # "Alameda": ["001"]
+          # "Contra Costa": ["013"]
           # "Marin": ["041"]
-          # "Sonoma": ["055"]
+          # "Sonoma": ["097"]
           "San Francisco": ["075"]
-          # "Santa Clara": ["081"]
-          # "San Mateo": ["085"]
+          "Santa Clara": ["085"]
+          # "San Mateo": ["081"]
           # "Solano": ["095"]
-          # "Napa": ["097"]
+          # "Napa": ["055"]
 
       # -- Balancer settings -------------------------------------------
-      max_expansion_factor: 5.0    # upper bound = initial_weight × factor
-      min_expansion_factor: 0.01  # lower bound = initial_weight × factor, OK to be low since we still have absolute floor of 1
-      min_weight: 1                # absolute floor (no weight < 1)
-      # max_weight:                # absolute ceiling (null = no ceiling)
-      max_iterations: 10000
-      n_workers: 8                 # parallel zone balancing (numba releases GIL)
-      default_importance: 100      # baseline importance for controls without an explicit override
-      # Lower importance when MOE is higher, to allow more deviation from controls with high sampling variability
-      moe_based_importance: true  # derive per-control importance from PUMS replicate-weight MOE
+      balancing:
+        max_expansion_factor: 6.0    # upper bound = base weight × factor
+        min_expansion_factor: 0.01   # lower bound = base weight × factor, OK to be low since we still have absolute floor of 1
+        max_base_weight_gap: 0.005   # stop if a zone's base weights miss its household target by more than this share
+        min_weight: 1                # absolute floor (no weight < 1)
+        # max_weight:                # absolute ceiling (null = no ceiling)
+        max_iterations: 10000
+        n_workers: 8                 # parallel zone balancing (numba releases GIL)
+        default_importance: 100      # baseline importance for controls without an explicit override
+        # Lower importance when MOE is higher, to allow more deviation from controls with high sampling variability
+        moe_based_importance: true  # derive per-control importance from PUMS replicate-weight MOE
+        min_survey_share_ratio: 0.125  # stop if a group's % of area's survey / % of area's PUMS is below this
 
       # -- One balancing run per profile -------------------------------
       # Each profile named here is fitted separately, and its own flag is the
@@ -290,40 +378,30 @@ steps:
       # Each parent's weight is spread across its usable children, so excluding a
       # record does not shrink the expansion. Name `survey_complete` here to weight the
       # whole valid survey, partial and overnight tours included.
-      #
-      # Mutually exclusive with usability_profile, which weights one profile and
-      # writes the un-suffixed columns.
       weight_profiles: [ctramp, daysim, analysis]
 
-      # Homes outside the control geography (region_county.shp, strict
+      # Homes outside the target zones (region_county.shp, strict
       # point-in-polygon -- no snap tolerance, unlike add_zone_ids) belong to no
-      # balancing zone and can carry no fitted weight. Error above this share
+      # zone group and can carry no fitted weight. Error above this share
       # rather than returning nulls quietly. Measured 0.00% on 2019 and 2023, so
       # this is a tripwire for a misconfigured geography, not a routine dial.
       max_unplaceable_share: 0.01
 
-      # -- EF grid search (optional) -----------------------------------
-      # Re-run balancing across a grid of max_expansion_factor values and
-      # add a diagnostic chart showing fit vs weight quality tradeoffs.
-      expansion_factor_grid: [2, 3, 4, 5, 7, 10, 15, 20]
+      use_imputed_values: false
 
       # -- Controls to balance against ---------------------------------
-      # Each name must match a key in the CONTROLS registry.
-      # Household-level: h_size, h_income, h_workers, h_vehicles, h_children
-      # Person-level:    p_gender, p_employment, p_commute_mode, p_student,
-      #                  p_education, p_race, p_ethnicity, p_age
+      # Each name must match a key in the CONTROLS registry; the docs' Controls
+      # page lists them all, with their categories.
       # Optional: merge granular categories before balancing.
       # We start with maximum granularity (e.g. 10 household size categories)
       # and merge up to a coarser set as necessary to achieve convergence.
       # The merge can be global (all zones) or zone-specific
       # merge:
-      #   merged_label: [category1, category2, ...]      #
+      #   merged_label: [category1, category2, ...]
       # For additional per-zone merges on top of the global merge, use
-      # zone_merges:
-      #   "06001":
+      # zone_merges:        # keyed by zone group name, or zone ID if in no group
+      #   "San Francisco":
       #     further_merged: [category_a, already_merged_label]
-      #   "06075":
-      #     another_merged: [category_b, already_merged_label]
       controls:
         # Structural controls, set importance very high to ensure totals are matched exactly (if possible)
         - name: h_total
@@ -333,45 +411,45 @@ steps:
 
         # Household level controls
         - name: h_size
+          importance: 200
           merge:
-            size_4_plus: [size_4, size_5, size_6, size_7, size_8, size_9, size_10_plus]
+            size_3_plus: [size_3, size_4, size_5, size_6, size_7, size_8, size_9, size_10_plus]
 
         # Household income controls
         - name: h_income
           merge:
             income_under_100:   [income_under25, income_25to50, income_50to75, income_75to100]
 
-        # Some places like SF have a hard time balancing on vehicles due to conflicting controls and sample-cell sparsity.
-        - name: h_vehicles
+        - name: h_vehicles_per_driver
           merge:
-            veh_2_plus: [veh_2, veh_3, veh_4, veh_5, veh_6_plus]
-          # zone_merges:
-          #   "San Francisco":
-          #     veh_1_plus: [veh_1, veh_2_plus]
+            one_or_more: [one_to_one, more_than_drivers]
 
-        # Turning these off because p_employment and p_age captures this already,
-        # just adds excess double constraints that make it hard to converge in places like SF.
-        # - name: h_workers
-        #   merge:
-        #     workers_2_plus: [workers_2, workers_3, workers_4, workers_5_plus]
-        #   zone_merges:
-        #     "San Francisco": # SF has very few households with 2+ workers. Note that p_employment still controls number of workers.
-        #       workers_1_plus: [workers_1, workers_2_plus]
+        # Households per target zone within each zone group, which in this case is a county
+        - name: h_target_zone
+        # - name: h_puma # Tends to be too granular and can make convergence difficult
 
-        # - name: h_children
-        #   merge:
-        #     children_2_plus: [children_2,children_3, children_4, children_5_plus]
-        #   zone_merges:
-        #     "San Francisco": # SF has very few households with 2+ children
-        #       children_1_plus: [children_1, children_2_plus]
+        # We might need to turn off h_worker because it might clash with person-level employment controls.
+        # Adds double constraints that make it hard to converge in places like SF.
+        - name: h_workers
+          merge:
+            workers_3_plus: [workers_3, workers_4, workers_5_plus]
 
-        # Person level controls (get's aggregated to household level, i.e., num age group per household)
+        - name: h_children
+          merge:
+            children_1_plus: [children_1, children_2, children_3, children_4, children_5_plus]
+
+        # Person level controls (gets aggregated to household level, i.e., num age group per household)
         - name: p_gender
         - name: p_employment
-        - name: p_commute_mode
+        - name: p_education
           merge:
-            car: ["carpool", "drive_alone"]
-            walk_bike: ["walk", "bike"]
+            no_college: [less_high_school, highschool, vocational]
+            college: [some_college, associate, bachelors, grad]
+
+        # - name: p_commute_mode
+        #   merge:
+        #     car: ["carpool", "drive_alone"]
+        #     walk_bike: ["walk", "bike"]
 
         - name: p_student
           # merge:
@@ -380,24 +458,20 @@ steps:
 
         - name: p_age
           merge:
+            age_5_to_17: [age_5_to_15, age_16_to_17]
             age_75_plus: [age_75_to_84, age_85_and_up]
 
-        # Just wait until we have imputation which handles this processing and more
-        # - name: p_race
-        #   merge:
-        #     "AAPI": [asian, pacific]
-        #     other:  [native, multi, other] # collapse small groups into "other"
-
-        # - name: p_ethnicity
-        #   merge:
-        #     hispanic: [mexican, puerto_rican, cuban, other]  # collapse Hispanic sub-groups
+        - name: p_race_ethnicity
+          merge:
+            AAPI: [asian, pacific]
+            other_multi:  [native, multi, other] # collapse small groups into "other/multi"
 
         # Cross-tab controls, these help ensure the joint distribution of two or more variables is preserved
-        # - name: p_gender_x_ethnicity
-        #   dimensions: [p_gender, p_ethnicity]  # Uses FULL 2×5 = 10 cells from originals
+        # - name: p_gender_x_race_ethnicity
+        #   dimensions: [p_gender, p_race_ethnicity]  # Uses FULL 2×8 = 16 cells from originals
         #   # Cross-tab applies its own coarser merges
         #   merges:
-        #     hispanic: [mexican, puerto_rican, cuban, other_hispanic]
+        #     other_multi: [native, multi, other]
 
         # Result: 3x3 = 9 cells
         # - name: h_size_by_income
@@ -412,66 +486,31 @@ steps:
       diagnostics:
         output_path: "{{ output_dir }}/weighting_diagnostics_2023.html"
 
-        # Weight sets that arrived with the survey, to compare our fits against
-        # in the report's comparer section. Named rather than discovered: a
-        # vendor suffix is indistinguishable from a profile suffix (a scan would
-        # read hh_weight_rmove_only as a profile called 'rmove_only'), and the
-        # vendor's trip column does not share the level's base name. The bare
-        # columns below are read before drop_unsuffixed_weights removes them.
-        #
+        # Re-run balancing across a grid of max_expansion_factor values and
+        # add a diagnostic chart showing fit vs weight quality tradeoffs.
+        expansion_factor_grid: [2, 3, 4, 5, 7, 10, 15, 20]
+
+        # Compare different weight sets, such as vendor supplied weights,
+        # to compare against our computed weights.
         # Comparing weight sets is not a validation: two methods can both be
         # correct and still disagree on nearly every record. See the caveat the
         # report prints above the plot.
         compare_weights:
-          vendor:
-            label: vendor
-            columns:
-              households: hh_weight
-              persons: person_weight
-              days: day_weight
-              unlinked_trips: trip_weight
           vendor_rmove:
             label: vendor rMove
             columns:
-              households: hh_weight_rmove_only
-              persons: person_weight_rmove_only
-              days: day_weight_rmove_only
-              unlinked_trips: trip_weight_rmove_only
-
-
-  # -- Existing weights (alternative to computing new weights) ----------
-  # Uncomment this block and comment out the 'weighting' step above
-  # to use pre-computed weights from an external source.
-  # - name: add_existing_weights
-  #   validate_input: false
-  #   cache: false
-  #   params:
-  #     derive_missing_weights: true
-  #     # Supplied weights are redistributed onto each profile's usable records,
-  #     # preserving each supplied total -- a vendor's anchor cannot be re-balanced.
-  #     weight_profiles: [ctramp, daysim, analysis]
-  #     weights:
-  #       hh_weight:
-  #         weight_path: "{{ weights_dir }}/hh_weights.csv"
-  #       person_weight:
-  #         weight_path: "{{ weights_dir }}/person_weights.csv"
-  #       day_weight:
-  #         weight_path: "{{ weights_dir }}/day_weights.csv"
-  #       unlinked_trip_weight:
-  #         weight_id_col: "trip_id"  # Weight file uses 'trip_id' instead of canonical 'unlinked_trip_id'
-  #         weight_col: "trip_weight"  # Weight file uses 'trip_weight' instead of canonical 'unlinked_trip_weight'
-  #         weight_path: "{{ weights_dir }}/trip_weights.csv"
-  #         keep_name: false # Defaults to false, but you could keep original name if desired
-
+              households: hh_weight_ctramp_rsg
+              persons: person_weight_ctramp_rsg
+              person_days: person_day_weight_ctramp_rsg
+              unlinked_trips: unlinked_trip_weight_ctramp_rsg
 
   # - name: final_check
   #   validate_input: true
 
   - name: format_ctramp
     validate_input: false
-    cache: false
     params:
-      usability_profile: ctramp
+      usability_profile: ctramp_rsg
       # Income thresholds (in year 2000 dollars, per CT-RAMP convention).
       # From MTC CT-RAMP INCOME_SEGMENT_DOLLAR_LIMITS = {30000, 60000, 100000, MAX}:
       # https://github.com/BayAreaMetro/travel-model-one/blob/a1c6cfb48ed3397a436170d810db91c5f9474c08/core/projects/mtc/src/java/com/pb/mtc/ctramp/MtcModelStructure.java#L14
@@ -497,7 +536,6 @@ steps:
   - name: format_daysim
     validate_input: false
     validate_output: true
-    cache: false
     params:
       # Which profile decides the tour universe. DaySim and CT-RAMP name their
       # own, so a project can let them differ -- but while both say the same
@@ -518,7 +556,8 @@ steps:
         # Standard Survey Formats
         households: "{{ output_dir }}/survey/households_2023.csv"
         persons: "{{ output_dir }}/survey/persons_2023.csv"
-        days: "{{ output_dir }}/survey/days_2023.csv"
+        household_days: "{{ output_dir }}/survey/household_days_2023.csv"
+        person_days: "{{ output_dir }}/survey/person_days_2023.csv"
         unlinked_trips: "{{ output_dir }}/survey/unlinked_trips_2023.csv"
         linked_trips: "{{ output_dir }}/survey/linked_trips_2023.csv"
         tours: "{{ output_dir }}/survey/tours_2023.csv"

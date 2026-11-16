@@ -1,7 +1,10 @@
-"""Validation sub-package (checksums, weight checks).
+"""Validation sub-package.
 
-* ``checksums`` — recode null detection and incidence-sum overcount checks
+* ``checksums`` — recode null detection and incidence-sum mismatch checks
   (pre-balancing).
-* ``weight_checks`` — post-balancing sanity checks comparing weighted totals
-  against PUMS-derived control targets.
+* ``control_validation`` — control configuration and cross-tab marginal
+  consistency (pre-balancing).
+* ``coverage`` — how much of a profile's universe the target zones can place.
+* ``weight_checks`` — post-balancing sanity checks: weighted totals against the
+  PUMS-derived control targets, and the hierarchy identities.
 """

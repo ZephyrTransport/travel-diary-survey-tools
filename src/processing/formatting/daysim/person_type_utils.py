@@ -7,6 +7,14 @@ from data_canon.codebook.persons import Employment, SchoolType, Student
 
 from .mappings import AgeThreshold
 
+# Student statuses that count as attending (in person or online, any load).
+_ACTIVE_STUDENT = (
+    Student.FULLTIME_INPERSON,
+    Student.PARTTIME_INPERSON,
+    Student.PARTTIME_ONLINE,
+    Student.FULLTIME_ONLINE,
+)
+
 
 def get_person_type_expr() -> pl.Expr:
     """Get Polars expression for deriving DaySim person type (pptyp).
@@ -14,17 +22,18 @@ def get_person_type_expr() -> pl.Expr:
     Person type cascading logic:
     - Age < 5: Child 0-4 (type 8)
     - Age < 16: Child 5-15 (type 7)
-    - Full-time employed: Full-time worker (type 1)
+    - Full-time, self-employed, furloughed or unpaid: Full-time worker (type 1)
     - Age 16-17 and student: High school 16+ (type 6)
     - Age 18-24 and high school: High school 16+ (type 6)
-    - Age >= 18 and student: University student (type 3)
-    - Part-time/self-employed: Part-time worker (type 2)
+    - Age >= 18 and student: University student (type 5)
+    - Part-time employed: Part-time worker (type 2)
     - Age < 65: Non-working adult (type 4)
-    - Age >= 65: Non-working senior (type 5)
+    - Age >= 65: Non-working senior (type 3)
 
     Returns:
         Polars expression that evaluates to DaysimPersonType values
     """
+    is_student = pl.col("student").is_in([s.value for s in _ACTIVE_STUDENT])
     return (
         pl.when(pl.col("pagey") < AgeThreshold.CHILD_PRESCHOOL)
         .then(pl.lit(DaysimPersonType.CHILD_UNDER_5.value))
@@ -45,16 +54,7 @@ def get_person_type_expr() -> pl.Expr:
         # Age >= 16 and not full-time employed:
         .when(
             (pl.col("pagey") < AgeThreshold.YOUNG_ADULT)  # 16-17
-            & (
-                pl.col("student").is_in(
-                    [
-                        Student.FULLTIME_INPERSON.value,
-                        Student.PARTTIME_INPERSON.value,
-                        Student.PARTTIME_ONLINE.value,
-                        Student.FULLTIME_ONLINE.value,
-                    ]
-                )
-            )
+            & (is_student)
         )
         .then(pl.lit(DaysimPersonType.CHILD_DRIVING_AGE.value))
         .when(
@@ -67,39 +67,13 @@ def get_person_type_expr() -> pl.Expr:
                     ]
                 )
             )
-            & (
-                pl.col("student").is_in(
-                    [
-                        Student.FULLTIME_INPERSON.value,
-                        Student.PARTTIME_INPERSON.value,
-                        Student.PARTTIME_ONLINE.value,
-                        Student.FULLTIME_ONLINE.value,
-                    ]
-                )
-            )
+            & (is_student)
         )
         .then(pl.lit(DaysimPersonType.CHILD_DRIVING_AGE.value))
         # Age >= 18:
-        .when(
-            pl.col("student").is_in(
-                [
-                    Student.FULLTIME_INPERSON.value,
-                    Student.PARTTIME_INPERSON.value,
-                    Student.PARTTIME_ONLINE.value,
-                    Student.FULLTIME_ONLINE.value,
-                ]
-            )
-        )
+        .when(is_student)
         .then(pl.lit(DaysimPersonType.UNIVERSITY_STUDENT.value))
-        .when(
-            pl.col("employment").is_in(
-                [
-                    Employment.EMPLOYED_PARTTIME.value,
-                    Employment.EMPLOYED_SELF.value,
-                    Employment.EMPLOYED_UNPAID.value,
-                ]
-            )
-        )
+        .when(pl.col("employment").is_in([Employment.EMPLOYED_PARTTIME.value]))
         .then(pl.lit(DaysimPersonType.PART_TIME_WORKER.value))
         .when(pl.col("pagey") < AgeThreshold.SENIOR)
         .then(pl.lit(DaysimPersonType.NON_WORKER.value))

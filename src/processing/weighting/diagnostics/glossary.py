@@ -42,8 +42,9 @@ GLOSSARY: tuple[Term, ...] = (
         "ef",
         "EF",
         "Expansion factor",
-        "EF = w / w<sub>0</sub>, where w<sub>0</sub> is the base weight: the zone target "
-        "divided by the number of responding households in the zone.",
+        "EF = w / w<sub>0</sub>, where w<sub>0</sub> is the base weight: Census households "
+        "in the sample segment divided by the responding households there. With no sample "
+        "plan, it is the zone target divided by the zone's responding households.",
         "How far weighting moved a household from its starting weight. Values at the "
         "configured limits mean weighting would have moved them further if allowed.",
         WEIGHTS,
@@ -152,7 +153,8 @@ GLOSSARY: tuple[Term, ...] = (
         "inherit",
         "Same as level above",
         "Share unchanged from level above",
-        "share of records with |w / w<sub>above</sub> &minus; 1| &le; 1%",
+        "share of records with |w / w<sub>above</sub> &minus; 1| &le; 10<sup>&minus;6</sup>, "
+        "equal but for floating-point error",
         "The share of records with the same weight as the record they belong to.",
         CASCADE,
     ),

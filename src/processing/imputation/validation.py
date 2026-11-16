@@ -99,10 +99,7 @@ def _run_kfold(
         ``(predictions, true_vals, n_sample)`` - dicts keyed by column name
         containing numpy arrays; *n_sample* is 0 when no complete rows exist.
     """
-    # Filter to rows where every target column is non-null
-    df_complete = df
-    for col in target_columns:
-        df_complete = df_complete.filter(pl.col(col).is_not_null())
+    df_complete = df.drop_nulls(target_columns)
 
     n_complete = len(df_complete)
     if n_complete == 0:
@@ -123,7 +120,7 @@ def _run_kfold(
     for _, test_idx in kf.split(df_sample.to_numpy()):
         # Mask test rows for every target column
         df_masked = df_sample.clone()
-        mask = pl.Series([i in test_idx for i in range(len(df_masked))])
+        mask = pl.Series(np.isin(np.arange(len(df_masked)), test_idx))
         for col in target_columns:
             df_masked = df_masked.with_columns(
                 pl.when(mask).then(None).otherwise(pl.col(col)).alias(col)
@@ -327,6 +324,58 @@ def validate_rf_imputation(
         column,
         n_sample,
         n_folds,
+    )
+
+
+def validate_method(
+    method: str,
+    df: pl.DataFrame,
+    columns: list[str],
+    n_folds: int,
+    sample_pct: float,
+    params: dict[str, Any],
+    random_state: int | None,
+    numeric_features: list[str] | None,
+    categorical_features: list[str] | None,
+) -> dict[str, Any]:
+    """Run the k-fold check for *method* with its hyperparameters *params*.
+
+    KNN and RF validate ``columns[0]``; MICE validates all of *columns* and
+    returns metrics keyed by column.
+    """
+    if method == "knn":
+        return validate_knn_imputation(
+            df,
+            columns[0],
+            n_folds,
+            sample_pct,
+            params["n_neighbors"],
+            params["neighbor_weights"],
+            random_state,
+            numeric_features,
+            categorical_features,
+        )
+    if method == "rf":
+        return validate_rf_imputation(
+            df,
+            columns[0],
+            n_folds,
+            sample_pct,
+            params["n_estimators"],
+            params["max_depth"],
+            random_state,
+            numeric_features,
+            categorical_features,
+        )
+    return validate_mice_imputation(
+        df,
+        columns,
+        n_folds,
+        sample_pct,
+        params["max_iter"],
+        random_state,
+        numeric_features,
+        categorical_features,
     )
 
 

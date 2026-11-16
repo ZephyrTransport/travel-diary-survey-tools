@@ -9,7 +9,10 @@ Data models represent individual records (rows) and define:
 - Required and optional fields
 - Field validation rules and constraints
 - Foreign key relationships between tables
-- Pipeline step requirements
+
+Which steps need a field is not part of the model. Each step declares the columns it reads
+and writes in its own `@step(requires=..., produces=...)`; see
+[Column Requirements](../COLUMN_REQUIREMENTS.md) for the matrix built from them.
 
 Models use Pydantic's `BaseModel` with custom field validators to ensure data quality throughout the processing pipeline.
 
@@ -18,14 +21,14 @@ Models use Pydantic's `BaseModel` with custom field validators to ensure data qu
 ### Field Validation
 Each field includes validation rules:
 ```python
-age: AgeCategory = step_field(required_in_steps=["extract_tours"])
-home_lat: float = step_field(ge=-90, le=90, required_in_steps=["extract_tours"])
+age: AgeCategory = schema_field()
+home_lat: float = schema_field(ge=-90, le=90)
 ```
 
 ### Foreign Key Relationships
 Models enforce referential integrity:
 ```python
-hh_id: int = step_field(
+hh_id: int = schema_field(
     ge=1,
     fk_to="households.hh_id",
     required_child=True,
@@ -33,10 +36,15 @@ hh_id: int = step_field(
 ```
 
 ### Pipeline Step Requirements
-Fields specify which processing steps require them:
+A step names the fields it needs, and the ones it creates:
 ```python
-person_num: int = step_field(ge=1, required_in_steps=["format_ctramp", "format_daysim"])
+@step(
+    requires={"persons": {"person_id", "age", "employment", "student", "school_type"}},
+    produces={"tours": {"tour_id", "joint_tour_id"}},
+)
+def extract_tours(...): ...
 ```
+A column whose name the config chooses is written as a pattern, such as `usable_<profile>`.
 
 ## Usage Example
 
@@ -47,10 +55,10 @@ person = PersonModel(
     person_id=1,
     hh_id=100,
     person_num=1,
-    age=AgeCategory.AGE_35_64,
+    age=AgeCategory.AGE_35_TO_44,
     gender=Gender.FEMALE,
-    employment=Employment.FULL_TIME,
-    student=Student.NOT_STUDENT,
+    employment=Employment.EMPLOYED_FULLTIME,
+    student=Student.NONSTUDENT,
     # ... other fields
 )
 ```
@@ -63,6 +71,8 @@ Core data models used in the processing pipeline for households, persons, days, 
 
 ::: data_canon.models.survey.PersonModel
 
+::: data_canon.models.survey.HouseholdDayModel
+
 ::: data_canon.models.survey.PersonDayModel
 
 ::: data_canon.models.survey.UnlinkedTripModel
@@ -72,6 +82,14 @@ Core data models used in the processing pipeline for households, persons, days, 
 ::: data_canon.models.survey.TourModel
 
 ::: data_canon.models.survey.JointTripModel
+
+::: data_canon.models.survey.JointTourModel
+
+::: data_canon.models.survey.HabitualLocationModel
+
+::: data_canon.models.survey.HabitualLocationDayModel
+
+::: data_canon.models.weighting.HouseholdWeightingModel
 
 ## Travel Model-formatted Data Models
 

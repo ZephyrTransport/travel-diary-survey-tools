@@ -3,7 +3,7 @@
 # Weighting Module
 
 Documentation has moved to the module docstrings and the
-[mkdocs site](../../docs/pipeline_steps/weighting.md).
+[mkdocs site](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/weighting/).
 
 Remaining planned features are tracked in
 [issue #92](https://github.com/BayAreaMetro/travel-diary-survey-tools/issues/92)

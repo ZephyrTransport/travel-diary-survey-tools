@@ -1,9 +1,9 @@
 """Custom IntEnum categories for weighting controls.
 
-These define the **output bins** for the 8 collapsing controls where the
+These define the **output bins** for the collapsing controls where the
 canonical survey granularity is reduced to fewer bins for weighting.  The
-5 identity controls (income, education, race, ethnicity, age) reuse
-canonical ``LabeledEnum`` directly and are not duplicated here.
+identity controls (income, education, age) reuse canonical ``LabeledEnum``
+directly and are not duplicated here.
 """
 
 from enum import IntEnum
@@ -50,6 +50,15 @@ class HHVehiclesCategory(IntEnum):
     VEH_6_PLUS = 6
 
 
+class HHVehiclesPerDriverCategory(IntEnum):
+    """Household vehicles against drivers (anyone 16+)."""
+
+    NONE = 0
+    LESS_THAN_DRIVERS = 1
+    ONE_TO_ONE = 2
+    MORE_THAN_DRIVERS = 3
+
+
 class HHChildrenCategory(IntEnum):
     """Number of children in household (0-4, 5+)."""
 
@@ -65,7 +74,7 @@ class HHChildrenCategory(IntEnum):
 
 
 class GenderCategory(IntEnum):
-    """Gender bins for weighting (male / female / other).
+    """Gender bins for weighting (male / female).
 
     PUMS only has binary SEX.
     """
@@ -95,6 +104,22 @@ class CommuteModeCategory(IntEnum):
     OTHER = 7
 
 
+class RaceEthnicityCategory(IntEnum):
+    """Hispanic persons of any race, then race for everyone else.
+
+    Race values match the canonical ``Race`` enum.
+    """
+
+    AFAM = 1
+    NATIVE = 2
+    ASIAN = 3
+    PACIFIC = 4
+    WHITE = 5
+    OTHER = 6
+    MULTI = 7
+    HISPANIC_ALLRACES = 8
+
+
 class StudentCategory(IntEnum):
     """Student status (not student / K-12 / college)."""
 
@@ -113,8 +138,6 @@ class TotalCategory(IntEnum):
 
 
 # -- Cross-tabulation helpers ----------------------------------------------
-
-_SENTINEL_NAMES = frozenset({"MISSING", "PNTA"})
 
 
 def make_crosstab_enum(

@@ -13,6 +13,17 @@ from utils.helpers import expr_haversine as haversine_dist
 
 logger = logging.getLogger(__name__)
 
+# The four per-pair distances compute_pairwise_distances adds, in vector order.
+DISTANCE_COLUMNS = ["origin_dist_m", "dest_dist_m", "depart_diff_min", "arrive_diff_min"]
+
+
+def _require_distances(trip_pairs: pl.DataFrame) -> None:
+    """Raise unless *trip_pairs* carries the columns from compute_pairwise_distances."""
+    missing = set(DISTANCE_COLUMNS) - set(trip_pairs.columns)
+    if missing:
+        msg = f"Missing required distance columns: {missing}. Run compute_pairwise_distances first."
+        raise ValueError(msg)
+
 
 def compute_pairwise_distances(trip_pairs: pl.DataFrame) -> pl.DataFrame:
     """Compute spatial and temporal distances for trip pairs.
@@ -81,16 +92,7 @@ def apply_buffer_filter(
     Returns:
         Filtered DataFrame containing only pairs passing all four thresholds
     """
-    required_cols = {
-        "origin_dist_m",
-        "dest_dist_m",
-        "depart_diff_min",
-        "arrive_diff_min",
-    }
-    missing = required_cols - set(trip_pairs.columns)
-    if missing:
-        msg = f"Missing required distance columns: {missing}. Run compute_pairwise_distances first."
-        raise ValueError(msg)
+    _require_distances(trip_pairs)
 
     filtered = trip_pairs.filter(
         (pl.col("origin_dist_m") < space_threshold_meters)
@@ -133,16 +135,7 @@ def apply_mahalanobis_filter(
     Raises:
         ValueError: If covariance matrix is singular (condition number > 1000)
     """
-    required_cols = {
-        "origin_dist_m",
-        "dest_dist_m",
-        "depart_diff_min",
-        "arrive_diff_min",
-    }
-    missing = required_cols - set(trip_pairs.columns)
-    if missing:
-        msg = f"Missing required distance columns: {missing}. Run compute_pairwise_distances first."
-        raise ValueError(msg)
+    _require_distances(trip_pairs)
 
     # Convert covariance to numpy array
     if isinstance(covariance[0], (int, float)):
@@ -166,14 +159,7 @@ def apply_mahalanobis_filter(
     cov_inv = np.linalg.inv(cov_matrix)
 
     # Extract difference vectors as numpy array
-    deltas = trip_pairs.select(
-        [
-            "origin_dist_m",
-            "dest_dist_m",
-            "depart_diff_min",
-            "arrive_diff_min",
-        ]
-    ).to_numpy()
+    deltas = trip_pairs.select(DISTANCE_COLUMNS).to_numpy()
 
     # Compute Mahalanobis distance for each pair
     # d = sqrt(delta^T * Sigma^-1 * delta)

@@ -21,36 +21,17 @@ To recover the old boolean "was this imputed?" flag::
 import polars as pl
 
 
-def stash_preimputed_column(
-    df: pl.DataFrame,
-    original_df: pl.DataFrame,
-    column: str,
-) -> pl.DataFrame:
-    """Copy the pre-imputation value of *column* from *original_df* onto *df*.
-
-    The stashed column is named ``{column}_preimputed`` and has the same
-    dtype as the original.  It captures the value **before**
-    ``prepare_column_for_imputation`` converted sentinel codes to null,
-    so PNTA / MISSING codes are preserved.
-
-    Args:
-        df: DataFrame with imputed values.
-        original_df: Original DataFrame before imputation.
-        column: Name of the column that was imputed.
-
-    Returns:
-        DataFrame with added ``{column}_preimputed`` column.
-    """
-    stash_name = f"{column}_preimputed"
-    return df.with_columns(original_df[column].alias(stash_name))
-
-
 def stash_preimputed_columns(
     df: pl.DataFrame,
     original_df: pl.DataFrame,
     columns: list[str],
 ) -> pl.DataFrame:
-    """Stash pre-imputation values for multiple columns.
+    """Copy each imputed column's pre-imputation value from *original_df* onto *df*.
+
+    Each stashed column is named ``{column}_preimputed`` and has the same dtype
+    as the original. It captures the value **before**
+    ``prepare_column_for_imputation`` converted sentinel codes to null, so PNTA /
+    MISSING codes are preserved. A column absent from either frame is skipped.
 
     Args:
         df: DataFrame with imputed values.
@@ -60,8 +41,7 @@ def stash_preimputed_columns(
     Returns:
         DataFrame with added ``{column}_preimputed`` columns.
     """
-    result_df = df
     for col in columns:
         if col in df.columns and col in original_df.columns:
-            result_df = stash_preimputed_column(result_df, original_df, col)
-    return result_df
+            df = df.with_columns(original_df[col].alias(f"{col}_preimputed"))
+    return df

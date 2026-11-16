@@ -1,7 +1,8 @@
+[](){#ctramp-output-models}
 # CTRAMP Models
 
 Pydantic data models for CT-RAMP (Coordinated Travel – Regional Activity Modeling Platform) output
-file formats.  These models define the schema for the seven tables produced by the
+file formats.  These models define the schema for the eleven tables produced by the
 [CT-RAMP formatting pipeline step](../pipeline_steps/format_output/ctramp.md).
 
 The schema is based on the

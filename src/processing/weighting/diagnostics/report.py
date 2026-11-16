@@ -2,7 +2,8 @@
 
 Entry point is [`generate_report`][processing.weighting.diagnostics.report.generate_report],
 which collects every fit a run produced, builds Plotly figures and HTML tables via the sibling
-modules (``charts``, ``data``, ``tables``), then renders them
+modules (``charts``, ``crosswalk_map``, ``data``, ``tables``, ``profile_tables``,
+``comparison``, ``glossary``), then renders them
 into a single ``.html`` file using a bundled Jinja2 template.
 
 # One document per run, not per fit
@@ -37,35 +38,38 @@ from geopandas import GeoDataFrame
 from processing.weighting.core.specs import ControlTotals, ProfileFit
 
 from .charts import (
-    crosswalk_figure,
     ef_tradeoff_figure,
     fit_diverging_figure,
+    fit_x_limit,
     imputation_distribution_figure,
-    violins_figure,
+    weight_distribution_figure,
 )
-from .comparison import Comparison, fitted_weight_sets, inheritance, payload
+from .comparison import Comparison, payload
+from .crosswalk_map import crosswalk_figure
 from .data import (
     apply_fit_merges,
     compute_weighted_totals,
+    exclusions,
     fit_table,
     merge_control_moe,
     profile_summary,
     redistribution,
-    split_identity,
     weight_cascade,
     zone_fit_summary,
 )
 from .glossary import CASCADE, COMPARER, FIT, IMPUTATION, WEIGHTS, glossary_groups, term
+from .profile_tables import (
+    cascade_table,
+    exclusion_table,
+    profile_comparison_table,
+    redistribution_view,
+)
+from .table_html import profile_key, profile_label
 from .tables import (
     balancer_performance_table,
-    cascade_table,
-    coverage_table,
     crosswalk_summary_table,
     imputation_summary_table,
-    inheritance_table,
-    profile_comparison_table,
-    redistribution_table,
-    split_identity_table,
+    survey_share_table_html,
     unweighted_cell_counts,
     weight_quality_table,
 )
@@ -179,14 +183,16 @@ def _section_numbers(present: dict[str, bool], panes: list[dict]) -> dict[str, i
     return numbers
 
 
-def _label(profile: str | None) -> str:
-    """How a profile is named to a reader."""
-    return profile or "the survey"
+def _per_profile(views: dict[str | None, str]) -> str:
+    """One block per profile, outside the panes, shown with that profile's toggle.
 
-
-def _key(profile: str | None) -> str:
-    """How a profile is named in markup, for the toggle to address."""
-    return profile or "survey"
+    The first profile's block is shown on load, matching the first pane.
+    """
+    return "".join(
+        f'<div class="profile-view" data-profile="{profile_key(profile)}"'
+        f"{'' if i == 0 else ' hidden'}>{html}</div>"
+        for i, (profile, html) in enumerate(views.items())
+    )
 
 
 def _fit_control_table(
@@ -202,8 +208,8 @@ def _fit_control_table(
     if control_moe is not None:
         merged_moe = merge_control_moe(control_moe, merge_specs)
         table = table.join(
-            merged_moe.select("geo_id", "control_name", "category", "moe_pct"),
-            on=["geo_id", "control_name", "category"],
+            merged_moe.select("zone_group_id", "control_name", "category", "moe_pct"),
+            on=["zone_group_id", "control_name", "category"],
             how="left",
         )
     return table
@@ -247,26 +253,89 @@ def _pane(
     merge_specs: list | None,
     pums_incidence: pl.DataFrame | None,
     max_expansion_factor: float | None,
+    fit_x_range: float,
+    *,
+    moe_importance: dict[str, float] | None,
+    importance_used: dict[str, float] | None,
 ) -> dict:
     """Everything one profile contributes to the document."""
     weighted = fit.seed_incidence.join(
         fit.weights.select("hh_id", "hh_weight"), on="hh_id", how="left"
     )
     imputation_table, imputation_chart = _imputation_blocks(fit, target_names, pums_incidence)
-    zone_fit = zone_fit_summary(control_table, target_names)
+    zone_fit = zone_fit_summary(control_table)
     return {
-        "profile": _label(fit.profile),
-        "key": _key(fit.profile),
+        "profile": profile_label(fit.profile),
+        "key": profile_key(fit.profile),
         "imputation_table": imputation_table,
         "imputation_chart": imputation_chart,
         "balancer_performance_table": balancer_performance_table(fit.statuses, weighted, zone_fit),
         "weight_quality_table": weight_quality_table(weighted),
-        "violins_html": violins_figure(weighted).to_html(**_PLOTLY_KWARGS),
-        "fit_bars_html": fit_diverging_figure(control_table).to_html(**_PLOTLY_KWARGS),
+        "weight_distribution_html": weight_distribution_figure(weighted).to_html(**_PLOTLY_KWARGS),
+        "fit_bars_html": fit_diverging_figure(control_table, fit_x_range).to_html(**_PLOTLY_KWARGS),
         "sparsity_html": unweighted_cell_counts(
-            fit.seed_incidence, target_names, control_totals, merge_specs
+            fit.seed_incidence,
+            target_names,
+            control_totals,
+            merge_specs,
+            moe_importance=moe_importance,
+            importance_used=importance_used,
         ),
         "ef_tradeoff_section": _ef_section(fit, max_expansion_factor),
+    }
+
+
+def _crosswalk_blocks(
+    fits: dict[str | None, ProfileFit],
+    puma_gdf: GeoDataFrame | None,
+    target_gdf: GeoDataFrame | None,
+    crosswalk_df: pl.DataFrame | None,
+    zone_groups: dict[str, list[str]] | None,
+    zone_counties: dict[str, str] | None,
+) -> tuple[str, str]:
+    """The crosswalk map, drawn once for the run, and each profile's zone table."""
+    crosswalk_section = ""
+    if puma_gdf is not None and target_gdf is not None and crosswalk_df is not None:
+        figure = crosswalk_figure(
+            puma_gdf=puma_gdf,
+            target_gdf=target_gdf,
+            crosswalk_df=crosswalk_df,
+            seeds={profile: fit.seed_incidence for profile, fit in fits.items()},
+            zone_groups=zone_groups,
+        )
+        crosswalk_section = f'<div class="chart-map">{figure.to_html(**_PLOTLY_KWARGS)}</div>'
+
+    crosswalk_table = (
+        _per_profile(
+            {
+                p: crosswalk_summary_table(crosswalk_df, f.seed_incidence, zone_counties or {})
+                for p, f in fits.items()
+            }
+        )
+        if crosswalk_df is not None
+        else ""
+    )
+    return crosswalk_section, crosswalk_table
+
+
+def _cascade_blocks(
+    fits: dict[str | None, ProfileFit], tables: dict[str, pl.DataFrame | None]
+) -> dict[str, str]:
+    """The weight cascade, every profile side by side, with the cleaner's exclusions."""
+    cascades = {
+        profile: weight_cascade(tables, profile=profile, usability_flag_col=fit.usability_flag_col)
+        for profile, fit in fits.items()
+    }
+    carried = {
+        profile: redistribution_view(
+            redistribution(tables, profile=profile, usability_flag_col=fit.usability_flag_col)
+        )
+        for profile, fit in fits.items()
+    }
+    return {
+        "cascade_table": cascade_table(cascades),
+        "exclusion_table": exclusion_table(exclusions(tables)),
+        "redistribution_view": _per_profile(carried) if any(carried.values()) else "",
     }
 
 
@@ -282,11 +351,15 @@ def generate_report(  # noqa: PLR0913
     target_gdf: GeoDataFrame | None = None,
     crosswalk_df: pl.DataFrame | None = None,
     zone_groups: dict[str, list[str]] | None = None,
+    zone_counties: dict[str, str] | None = None,
     merge_specs: list | None = None,
     control_moe: pl.DataFrame | None = None,
+    moe_importance: dict[str, float] | None = None,
+    importance_used: dict[str, float] | None = None,
     pums_incidence: pl.DataFrame | None = None,
     max_expansion_factor: float | None = None,
     comparison: Comparison | None = None,
+    survey_shares: pl.DataFrame | None = None,
 ) -> Path:
     """Write the run's self-contained HTML diagnostics report to *output_path*.
 
@@ -304,8 +377,12 @@ def generate_report(  # noqa: PLR0913
         target_gdf: Target-zone boundaries for the crosswalk map.
         crosswalk_df: The PUMA-to-zone allocation table.
         zone_groups: Zone groupings, when zones were merged for balancing.
+        zone_counties: Each zone's Census county name or names, for the zone table.
         merge_specs: Category merges, for labelling the fit table.
         control_moe: Per-cell PUMS standard errors from replicate weights.
+        moe_importance: Each control's importance as its PUMS MOE gave it, or
+            None when importance was not MOE-based.
+        importance_used: Each control's importance as balancing used it.
         pums_incidence: PUMS incidence, as the reference distribution for the
             fractional seed imputation chart.
         max_expansion_factor: The production EF, marked on the calibration
@@ -313,6 +390,8 @@ def generate_report(  # noqa: PLR0913
         comparison: Weight sets to compare pairwise. Run-level by construction:
             a comparison names two profiles, so it cannot sit in a pane that
             shows one. Omitted, or holding no pairs, the section is left out.
+        survey_shares: Each group's share of its area's survey against its share
+            of the area's PUMS, from the check run before balancing.
 
     Returns:
         The path written.
@@ -326,6 +405,7 @@ def generate_report(  # noqa: PLR0913
         for profile, fit in fits.items()
     }
 
+    fit_x_range = fit_x_limit(list(control_tables.values()))
     panes = [
         _pane(
             fit,
@@ -335,65 +415,30 @@ def generate_report(  # noqa: PLR0913
             merge_specs,
             pums_incidence,
             max_expansion_factor,
+            fit_x_range,
+            moe_importance=moe_importance,
+            importance_used=importance_used,
         )
         for profile, fit in fits.items()
     ]
 
-    # Section 1 — profile comparison, the one view no single fit can produce
+    # The profile comparison, the one view no single fit can produce
     comparison_table = profile_comparison_table(
         [profile_summary(fit, tables, control_tables[profile]) for profile, fit in fits.items()]
     )
-
-    # Section 2 — crosswalk map, drawn once for the run
-    crosswalk_section = ""
-    if puma_gdf is not None and target_gdf is not None and crosswalk_df is not None:
-        figure = crosswalk_figure(
-            puma_gdf=puma_gdf,
-            target_gdf=target_gdf,
-            crosswalk_df=crosswalk_df,
-            seeds={profile: fit.seed_incidence for profile, fit in fits.items()},
-            zone_groups=zone_groups,
-        )
-        crosswalk_section = f'<div class="chart-map">{figure.to_html(**_PLOTLY_KWARGS)}</div>'
-
-    first = next(iter(fits.values()))
-    crosswalk_table = (
-        crosswalk_summary_table(crosswalk_df, first.seed_incidence)
-        if crosswalk_df is not None
-        else ""
+    crosswalk_section, crosswalk_table = _crosswalk_blocks(
+        fits, puma_gdf, target_gdf, crosswalk_df, zone_groups, zone_counties
     )
+    survey_share_html = survey_share_table_html(survey_shares) if survey_shares is not None else ""
+    cascade_blocks = _cascade_blocks(fits, tables)
 
-    # Section 3 — the weight cascade, every profile side by side
-    cascades = {
-        profile: weight_cascade(tables, profile=profile, usability_flag_col=fit.usability_flag_col)
-        for profile, fit in fits.items()
-    }
-    ratios = {
-        profile: redistribution(tables, profile=profile, usability_flag_col=fit.usability_flag_col)
-        for profile, fit in fits.items()
-    }
-    splits = {profile: split_identity(tables, profile=profile) for profile in fits}
-
-    # How each set's weight descends, including any supplied sets: it describes
-    # each set on its own, so it belongs with the cascade, not the comparer.
-    sets = comparison.sets if comparison is not None else fitted_weight_sets(list(fits))
-    cascade_blocks = {
-        "cascade_table": cascade_table(cascades),
-        "redistribution_table": redistribution_table(ratios),
-        "inheritance_table": inheritance_table(
-            inheritance(tables, sets), {s.name: s.label for s in sets}
-        ),
-        "split_identity_table": split_identity_table(splits),
-        "coverage_table": coverage_table({p: f.coverage for p, f in fits.items()}),
-    }
-
-    # Section 4 — the pairwise comparer, embedded as data and drawn in the browser
+    # The pairwise comparer, embedded as data and drawn in the browser
     comparer = comparison or Comparison(sets=[], pairs=[])
 
     nums = _section_numbers(
         {
             "comparison": bool(comparison_table),
-            "crosswalk": bool(crosswalk_section or crosswalk_table),
+            "crosswalk": bool(crosswalk_section or crosswalk_table or survey_share_html),
             "cascade": any(cascade_blocks.values()),
             "comparer": bool(comparer),
         },
@@ -409,6 +454,7 @@ def generate_report(  # noqa: PLR0913
         "comparison_table": comparison_table,
         "crosswalk_section": crosswalk_section,
         "crosswalk_table": crosswalk_table,
+        "survey_share_table": survey_share_html,
         **cascade_blocks,
         "panes": panes,
         "nums": nums,

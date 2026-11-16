@@ -1,23 +1,31 @@
-"""Census TIGER geography loading.
+"""Census geography and block counts for the weighting.
 
-PUMA and block geometries share the same decennial vintage (2010 for
-pre-2022 PUMS, 2020 for 2022+) so that block GEOIDs match the sample
-plan.  Block population is fetched from the Census decennial API
-(PL 94-171 for 2020, SF1 for 2010) and joined by GEOID — the TIGER
-shapefiles themselves do not always carry population columns.
+Each input is a file in the census folder, named from the state and year:
 
-Processed GeoDataFrames are cached as GeoParquet under
-``<pipeline-cache-dir>/weighting/census_geo/`` for fast repeat loads.
+``census_<vintage>/tl_<year>_<st>_puma<vv>.parquet``
+    PUMA boundaries, from the TIGER release of the PUMS year (via pygris).
+``census_<vintage>/tl_<vintage>_<st>_tabblock<vv>.parquet``
+    Block boundaries (via pygris).
+``census_<vintage>/block_population_<st>.parquet``, ``block_households_<st>.parquet``,
+``county_names_<st>.parquet``
+    From the decennial census API (PL 94-171 for 2020, SF1 for 2010).
+
+The vintage is the decennial census the PUMS year's PUMAs are drawn on (2010
+for 2012-2021, 2020 for 2022 on). A file missing from the folder is downloaded
+there, and from then on every run reads it as it is.
 """
 
 import logging
 import os
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
 import geopandas as gpd
+import pandas as pd
+import polars as pl
 import pygris
 import requests
 from tqdm import tqdm
@@ -26,20 +34,27 @@ logger = logging.getLogger(__name__)
 
 _KEY_SIGNUP_URL = "https://api.census.gov/data/key_signup.html"
 
-# Explicit column mappings per decennial vintage.
+# Column names per decennial vintage.
 _PUMA_ID = {2020: "PUMACE20", 2010: "PUMACE10"}
 _BLOCK_ID = {2020: "GEOID20", 2010: "GEOID10"}
 
-# Decennial census API endpoints and total-population variable names.
-_BLOCK_POP_API: dict[int, tuple[str, str]] = {
-    2020: ("https://api.census.gov/data/2020/dec/pl", "P1_001N"),
-    2010: ("https://api.census.gov/data/2010/dec/sf1", "P001001"),
+# Decennial census API endpoint per vintage, and its block variables.
+_CENSUS_API = {
+    2020: "https://api.census.gov/data/2020/dec/pl",
+    2010: "https://api.census.gov/data/2010/dec/sf1",
 }
+_BLOCK_POP_VAR = {2020: "P1_001N", 2010: "P001001"}
+_BLOCK_HOUSEHOLDS_VAR = {2020: "H1_002N", 2010: "H003002"}  # occupied housing units
 
+#: Attempts per API request. The Census API returns 5xx under load, and a 2010
+#: fetch makes one request per county; the delay grows with each attempt.
+_MAX_CENSUS_ATTEMPTS = 4
+_RETRY_BACKOFF_SECONDS = 2.0
 
-# ---------------------------------------------------------------------------
-# Vintage helper
-# ---------------------------------------------------------------------------
+#: Server-side statuses worth retrying. A 4xx is our request being wrong.
+_TRANSIENT_STATUS = frozenset({500, 502, 503, 504})
+
+_COUNTY_WORKERS = 8
 
 
 def puma_vintage_for_pums_year(pums_year: int) -> int:
@@ -56,18 +71,45 @@ def puma_vintage_for_pums_year(pums_year: int) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Census API helpers
+# Files in the census folder
+# ---------------------------------------------------------------------------
+
+
+def _vintage_dir(census_dir: Path, pums_year: int) -> tuple[Path, int]:
+    vintage = puma_vintage_for_pums_year(pums_year)
+    return Path(census_dir) / f"census_{vintage}", vintage
+
+
+def _ensure(path: Path, fetch: Callable[[], Any]) -> None:
+    """Write *fetch()* to *path* when it is not there yet.
+
+    Written under a temporary name and then renamed, so an interrupted
+    download never leaves a file that a later run would read as complete.
+    """
+    if path.exists():
+        return
+    logger.info("Not found, downloading: %s", path)
+    data = fetch()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    partial = path.with_name(path.name + ".part")
+    if isinstance(data, pl.DataFrame):
+        data.write_parquet(partial)
+    else:
+        data.to_parquet(partial)
+    partial.replace(path)
+
+
+# ---------------------------------------------------------------------------
+# Census API
 # ---------------------------------------------------------------------------
 
 
 def _census_api_key() -> str:
     """Return the Census data-API key from the environment.
 
-    The Census data API requires a key on every request; a keyless request
-    is redirected to an HTML "Missing Key" page (HTTP 200), which is not
-    valid JSON.  Sign up (free, instant) at ``_KEY_SIGNUP_URL`` and set
-    ``CENSUS_KEY`` (or ``CENSUS_API_KEY``) in the environment or a ``.env``
-    file loaded by the runner script.
+    A keyless request is redirected to an HTML "Missing Key" page (HTTP 200).
+    Sign up (free, instant) at ``_KEY_SIGNUP_URL`` and set ``CENSUS_KEY`` (or
+    ``CENSUS_API_KEY``) in the environment or a ``.env`` file.
     """
     key = os.environ.get("CENSUS_KEY") or os.environ.get("CENSUS_API_KEY")
     if not key:
@@ -85,10 +127,8 @@ def _census_api_key() -> str:
 def _census_json(resp: requests.Response) -> Any:  # noqa: ANN401
     """Return parsed JSON from a Census API response, or a clear error.
 
-    A missing/invalid key makes the Census API return an HTML "Missing Key"
-    page with HTTP 200, so ``raise_for_status()`` passes but ``resp.json()``
-    fails with an opaque ``JSONDecodeError``.  This helper detects that case
-    (and any other non-JSON body) and raises an actionable ``RuntimeError``.
+    A missing or invalid key returns an HTML page with HTTP 200, so
+    ``raise_for_status()`` passes but ``resp.json()`` fails opaquely.
     """
     resp.raise_for_status()
     content_type = resp.headers.get("Content-Type", "")
@@ -115,25 +155,6 @@ def _census_json(resp: requests.Response) -> Any:  # noqa: ANN401
         raise RuntimeError(msg) from e
 
 
-def _parse_block_response(data: list[list[str]], pop_var: str) -> dict[str, int]:
-    """Parse a Census API JSON response into ``{geoid: population}``."""
-    header, *rows = data
-    pop_i = header.index(pop_var)
-    st_i, co_i, tr_i, bl_i = (header.index(c) for c in ("state", "county", "tract", "block"))
-    return {r[st_i] + r[co_i] + r[tr_i] + r[bl_i]: int(r[pop_i]) for r in rows}
-
-
-#: Attempts per county request before giving up. The Census API returns 5xx
-#: under load often enough that a single failure must not end a run that is
-#: making 58 of these; the delay grows so a struggling server is not hammered.
-_MAX_CENSUS_ATTEMPTS = 4
-_RETRY_BACKOFF_SECONDS = 2.0
-
-#: Server-side statuses worth retrying. A 4xx is our request being wrong and
-#: will fail identically however many times it is sent.
-_TRANSIENT_STATUS = frozenset({500, 502, 503, 504})
-
-
 def _is_transient(err: Exception) -> bool:
     """Whether *err* is a server-side failure that a later attempt may clear."""
     if isinstance(err, requests.HTTPError) and err.response is not None:
@@ -141,131 +162,101 @@ def _is_transient(err: Exception) -> bool:
     return isinstance(err, requests.ConnectionError | requests.Timeout)
 
 
-def _fetch_county_blocks(
-    url: str,
-    pop_var: str,
-    state_fips: str,
-    county: str,
-    key: str,
-) -> dict[str, int]:
-    """Fetch block population for a single county, retrying server failures.
+def _census_get(url: str, params: dict[str, str], timeout: int) -> Any:  # noqa: ANN401
+    """GET one Census API request, retrying server failures.
 
     Raises:
         requests.RequestException: If the request fails for a reason a retry
             cannot clear, or still fails after :data:`_MAX_CENSUS_ATTEMPTS`.
     """
-    params = {
-        "get": pop_var,
-        "for": "block:*",
-        "in": f"state:{state_fips} county:{county}",
-        "key": key,
-    }
+    params = {**params, "key": _census_api_key()}
     for attempt in range(1, _MAX_CENSUS_ATTEMPTS + 1):
         try:
-            return _parse_block_response(
-                _census_json(requests.get(url, params=params, timeout=120)), pop_var
-            )
+            return _census_json(requests.get(url, params=params, timeout=timeout))
         except Exception as err:
             if not _is_transient(err) or attempt == _MAX_CENSUS_ATTEMPTS:
                 raise
             delay = _RETRY_BACKOFF_SECONDS * attempt
             logger.warning(
-                "County %s block request failed (attempt %d/%d): %s. Retrying in %.0fs.",
-                county,
+                "Census API request for %s failed (attempt %d/%d): %s. Retrying in %.0fs.",
+                params["in"],
                 attempt,
                 _MAX_CENSUS_ATTEMPTS,
                 err,
                 delay,
             )
             time.sleep(delay)
-    msg = f"County {county}: exhausted retries"  # pragma: no cover - loop always returns/raises
+    msg = "Census API: exhausted retries"  # pragma: no cover - loop always returns/raises
     raise RuntimeError(msg)
 
 
-def _fetch_block_population(state_fips: str, vintage: int) -> dict[str, int]:
-    """Fetch total population per Census block from the decennial census API.
+def _parse_block_response(data: list[list[str]], variable: str) -> dict[str, int]:
+    """Parse a Census API JSON response into ``{geoid: count}``."""
+    header, *rows = data
+    value_i = header.index(variable)
+    st_i, co_i, tr_i, bl_i = (header.index(c) for c in ("state", "county", "tract", "block"))
+    return {r[st_i] + r[co_i] + r[tr_i] + r[bl_i]: int(r[value_i]) for r in rows}
 
-    The 2020 PL endpoint supports ``county:* tract:*`` in a single
-    request.  The 2010 SF1 endpoint does not, so we first list counties
-    and then fetch blocks county-by-county (parallelised with threads).
 
-    Returns ``{geoid: population}`` for every block in *state_fips*.
-    """
-    url, pop_var = _BLOCK_POP_API[vintage]
-    key = _census_api_key()
-    logger.info(
-        "Fetching %d decennial block population for state %s from Census API",
-        vintage,
-        state_fips,
-    )
-
-    # 2020 PL accepts a single statewide request -- every block in the state in
-    # one response, which for California is around half a million rows. The API
-    # returns 500 for it often enough that it cannot be the only route, so a
-    # failure falls through to the same county-by-county walk 2010 requires
-    # rather than ending the run.
-    if vintage >= 2020:  # noqa: PLR2004
-        try:
-            resp = requests.get(
-                url,
-                params={
-                    "get": pop_var,
-                    "for": "block:*",
-                    "in": f"state:{state_fips} county:* tract:*",
-                    "key": key,
-                },
-                timeout=300,
-            )
-            result = _parse_block_response(_census_json(resp), pop_var)
-        except (requests.RequestException, RuntimeError) as err:
-            logger.warning(
-                "Statewide block request failed (%s); falling back to one request "
-                "per county, which asks the API for far less at a time.",
-                err,
-            )
-        else:
-            logger.info("Fetched population for %d blocks", len(result))
-            return result
-
-    # County-by-county: required for 2010 SF1, and the fallback for 2020.
-    resp = requests.get(
-        url,
-        params={"get": "NAME", "for": "county:*", "in": f"state:{state_fips}", "key": key},
+def _county_names(state_fips: str, vintage: int) -> pl.DataFrame:
+    header, *rows = _census_get(
+        _CENSUS_API[vintage],
+        {"get": "NAME", "for": "county:*", "in": f"state:{state_fips}"},
         timeout=60,
     )
-    county_data = _census_json(resp)
-    co_i = county_data[0].index("county")
-    counties = [r[co_i] for r in county_data[1:]]
-    logger.info("Fetching blocks for %d counties in state %s", len(counties), state_fips)
-
-    result: dict[str, int] = {}
-    block_count = 0
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        futures = {
-            pool.submit(_fetch_county_blocks, url, pop_var, state_fips, c, key): c for c in counties
+    name_i, st_i, co_i = (header.index(c) for c in ("NAME", "state", "county"))
+    # The API names a county with its state, as in "Alameda County, California"
+    return pl.DataFrame(
+        {
+            "county_fips": [r[st_i] + r[co_i] for r in rows],
+            "county_name": [r[name_i].split(",")[0] for r in rows],
         }
-        with tqdm(total=len(counties), unit="county") as pbar:
-            for future in as_completed(futures):
-                county_pop = future.result()
-                result.update(county_pop)
-                block_count += len(county_pop)
-                pbar.set_postfix(blocks=f"{block_count:,}")
-                pbar.update(1)
-
-    logger.info("Fetched population for %d blocks", len(result))
-    return result
+    ).sort("county_fips")
 
 
-# ---------------------------------------------------------------------------
-# GeoParquet cache
-# ---------------------------------------------------------------------------
+def _fetch_block_counts(state_fips: str, vintage: int, variable: str, column: str) -> pl.DataFrame:
+    """Fetch one count per Census block from the decennial census API.
 
+    The 2020 PL endpoint returns a whole state in one request. The 2010 SF1
+    endpoint does not, so 2010 is fetched one county at a time.
 
-def _geo_cache_path(key: str, cache_dir: Path | None) -> Path | None:
-    """Return the cache path for a census GeoParquet file, or None."""
-    if cache_dir is None:
-        return None
-    return cache_dir / "census_geo" / f"{key}.parquet"
+    Returns ``[block_id, <column>]`` for every block in *state_fips*.
+
+    Raises:
+        ValueError: If the API returns no blocks.
+    """
+    url = _CENSUS_API[vintage]
+    logger.info("Fetching %d block %s for state %s", vintage, variable, state_fips)
+    if vintage >= 2020:  # noqa: PLR2004
+        counts = _parse_block_response(
+            _census_get(
+                url,
+                {"get": variable, "for": "block:*", "in": f"state:{state_fips} county:* tract:*"},
+                timeout=300,
+            ),
+            variable,
+        )
+    else:
+        counties = [c[2:] for c in _county_names(state_fips, vintage)["county_fips"]]
+        counts = {}
+        with ThreadPoolExecutor(max_workers=_COUNTY_WORKERS) as pool:
+            futures = [
+                pool.submit(
+                    _census_get,
+                    url,
+                    {"get": variable, "for": "block:*", "in": f"state:{state_fips} county:{c}"},
+                    120,
+                )
+                for c in counties
+            ]
+            for future in tqdm(as_completed(futures), total=len(futures), unit="county"):
+                counts.update(_parse_block_response(future.result(), variable))
+
+    if not counts:
+        msg = f"The Census API returned no {variable} blocks for state {state_fips} ({url})."
+        raise ValueError(msg)
+    logger.info("Fetched %s for %d blocks", variable, len(counts))
+    return pl.DataFrame({"block_id": list(counts), column: list(counts.values())}).sort("block_id")
 
 
 # ---------------------------------------------------------------------------
@@ -273,91 +264,99 @@ def _geo_cache_path(key: str, cache_dir: Path | None) -> Path | None:
 # ---------------------------------------------------------------------------
 
 
-def get_puma_gdf(
-    state_fips: str,
-    pums_year: int,
-    *,
-    cache_dir: Path | None = None,
-) -> gpd.GeoDataFrame:
-    """Download PUMA polygons for *state_fips* via pygris.
+def get_puma_gdf(state_fips: str, pums_year: int, census_dir: Path) -> gpd.GeoDataFrame:
+    """PUMA polygons for *state_fips*, from the TIGER release of *pums_year*.
 
     Returns a GeoDataFrame with ``puma_id`` (str) and ``geometry``.
     """
-    vintage = puma_vintage_for_pums_year(pums_year)
-    path = _geo_cache_path(f"puma_{state_fips}_{vintage}", cache_dir)
-    if path and path.exists():
-        logger.debug("Cache hit: %s", path)
-        return gpd.read_parquet(path)
-
-    logger.info(
-        "Downloading %d-vintage PUMAs (TIGER %d) for state %s", vintage, pums_year, state_fips
-    )
+    folder, vintage = _vintage_dir(census_dir, pums_year)
+    path = folder / f"tl_{pums_year}_{state_fips}_puma{str(vintage)[2:]}.parquet"
+    _ensure(path, lambda: pygris.pumas(state=state_fips, year=pums_year))
     id_col = _PUMA_ID[vintage]
-    gdf = pygris.pumas(state=state_fips, year=pums_year, cache=True)
-    gdf = (
-        gdf[[id_col, "geometry"]]
-        .rename(columns={id_col: "puma_id"})
-        .assign(puma_id=lambda df: df["puma_id"].astype(str))
+    gdf = gpd.read_parquet(path, columns=[id_col, "geometry"])
+    return gdf.rename(columns={id_col: "puma_id"}).assign(
+        puma_id=lambda df: df["puma_id"].astype(str)
     )
 
-    if path:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        gdf.to_parquet(path)
-        logger.debug("Cached → %s", path)
-    return gdf
 
+def get_block_gdf(state_fips: str, pums_year: int, census_dir: Path) -> gpd.GeoDataFrame:
+    """Block polygons with their decennial population, for dasymetric allocation.
 
-def get_block_gdf(
-    state_fips: str,
-    pums_year: int,
-    *,
-    cache_dir: Path | None = None,
-) -> gpd.GeoDataFrame:
-    """Download block geometries and join decennial population.
+    Uses the same vintage as the PUMAs, so block GEOIDs match the sample plan.
 
-    Uses the same vintage as PUMAs so block GEOIDs match the sample
-    plan.  Population is fetched from the Census decennial API and
-    joined by GEOID.
+    Returns a GeoDataFrame with ``block_id`` (str), ``block_pop`` (int), and
+    ``geometry``.
 
-    The population is used for dasymetric block-level weighting of cross
-    PUMA-to-custom zone allocations.
-
-    Returns a GeoDataFrame with ``block_id`` (str), ``block_pop`` (int),
-    and ``geometry``.
+    Raises:
+        ValueError: If a block has no population row, which means the two files
+            are from different vintages or one is damaged.
     """
-    vintage = puma_vintage_for_pums_year(pums_year)
-    path = _geo_cache_path(f"block_{state_fips}_{vintage}", cache_dir)
-    if path and path.exists():
-        logger.debug("Cache hit: %s", path)
-        return gpd.read_parquet(path)
+    folder, vintage = _vintage_dir(census_dir, pums_year)
+    blocks_path = folder / f"tl_{vintage}_{state_fips}_tabblock{str(vintage)[2:]}.parquet"
+    pop_path = folder / f"block_population_{state_fips}.parquet"
+    _ensure(blocks_path, lambda: pygris.blocks(state=state_fips, year=vintage))
+    _ensure(
+        pop_path,
+        lambda: _fetch_block_counts(state_fips, vintage, _BLOCK_POP_VAR[vintage], "block_pop"),
+    )
 
     geoid_col = _BLOCK_ID[vintage]
-    logger.info("Downloading %d TIGER blocks for state %s", vintage, state_fips)
-    gdf = pygris.blocks(state=state_fips, year=vintage, cache=True)
-
-    pop = _fetch_block_population(state_fips, vintage)
-    if not pop:
+    gdf = gpd.read_parquet(blocks_path, columns=[geoid_col, "geometry"])
+    gdf = gdf.rename(columns={geoid_col: "block_id"})
+    gdf["block_id"] = gdf["block_id"].astype(str)
+    pop = pd.read_parquet(pop_path).set_index("block_id")["block_pop"]
+    gdf["block_pop"] = gdf["block_id"].map(pop)
+    unmatched = gdf["block_pop"].isna()
+    if unmatched.any():
         msg = (
-            f"Fetched empty block population for state {state_fips} "
-            f"vintage {vintage}. Check the Census API endpoint."
+            f"{unmatched.sum():,} of {len(gdf):,} blocks in {blocks_path.name} have no "
+            f"population in {pop_path.name}, e.g. {gdf.loc[unmatched, 'block_id'].head(3).tolist()}"
         )
         raise ValueError(msg)
-
-    gdf = gdf[[geoid_col, "geometry"]].rename(columns={geoid_col: "block_id"})
-    gdf["block_id"] = gdf["block_id"].astype(str)
-    gdf["block_pop"] = gdf["block_id"].map(pop).fillna(0).astype(int)
-
-    # Report population count sanity check.
-    total_pop = gdf["block_pop"].sum()
+    gdf["block_pop"] = gdf["block_pop"].astype(int)
     logger.info(
         "Total block population for state %s vintage %d: %d",
         state_fips,
         vintage,
-        total_pop,
+        gdf["block_pop"].sum(),
     )
-
-    if path:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        gdf.to_parquet(path)
-        logger.debug("Cached → %s", path)
     return gdf
+
+
+def get_block_households(state_fips: str, pums_year: int, census_dir: Path) -> pl.DataFrame:
+    """Decennial households per Census block, for sample-plan base weights.
+
+    Uses the same vintage as the block geometries, so block GEOIDs match them
+    and their first 12 characters match the sample plan's block groups.
+
+    Returns a DataFrame with columns ``[block_id, households]``.
+    """
+    folder, vintage = _vintage_dir(census_dir, pums_year)
+    path = folder / f"block_households_{state_fips}.parquet"
+    _ensure(
+        path,
+        lambda: _fetch_block_counts(
+            state_fips, vintage, _BLOCK_HOUSEHOLDS_VAR[vintage], "households"
+        ),
+    )
+    households = pl.read_parquet(path)
+    logger.info(
+        "Total block households for state %s vintage %d: %d",
+        state_fips,
+        vintage,
+        households["households"].sum(),
+    )
+    return households
+
+
+def get_county_names(state_fips: str, pums_year: int, census_dir: Path) -> pl.DataFrame:
+    """The Census name of every county in *state_fips*, such as "Alameda County".
+
+    Returns a DataFrame with columns ``[county_fips, county_name]``, where
+    ``county_fips`` is the 5-character state and county code that starts every
+    block GEOID.
+    """
+    folder, vintage = _vintage_dir(census_dir, pums_year)
+    path = folder / f"county_names_{state_fips}.parquet"
+    _ensure(path, lambda: _county_names(state_fips, vintage))
+    return pl.read_parquet(path)

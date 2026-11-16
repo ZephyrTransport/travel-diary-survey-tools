@@ -1,9 +1,11 @@
 """Tour aggregation helper functions for tour extraction.
 
 This module contains functions for:
-- Aggregating trips to tour-level records
-- Computing tour attributes (purpose, mode, timing)
+- Flagging each trip end against its own tour's anchor
+- Aggregating trips to tour-level records and classifying them
 - Assigning half-tour classification
+
+The primary destination and tour purpose come from ``destination_helpers``.
 """
 
 import logging
@@ -16,268 +18,15 @@ from data_canon.codebook.tours import (
     TourDirection,
     TourType,
 )
-from data_canon.codebook.trips import PurposeCategory
-from utils.helpers import expr_haversine
+from processing.habitual_locations import MatchConfig
 
-from .priority_utils import (
-    add_activity_duration_column,
-    add_mode_priority_column,
-    add_purpose_priority_column,
-    add_purpose_score_column,
+from .destination_helpers import (
+    calculate_destination_times,
+    calculate_tour_purpose_and_destination,
 )
 from .tour_configs import TourConfig
 
 logger = logging.getLogger(__name__)
-
-
-def _calculate_tour_purp_and_dest(
-    linked_trips: pl.DataFrame,
-    config: TourConfig,
-) -> tuple[pl.DataFrame, pl.DataFrame]:
-    """Calculate tour purpose and primary destination from trip data.
-
-    Determines tour purpose from the highest priority non-last trip, with
-    activity duration as a tie-breaker. Returns enhanced trip data with
-    purpose priorities and primary destination coordinates.
-
-    Args:
-        linked_trips: Trip data with tour_num and subtour_num
-        config: TourConfig with purpose hierarchy
-
-    Returns:
-        Tuple of (enhanced_linked_trips, tour_purp_and_coords):
-        - enhanced_linked_trips: All trips with tour_id, priorities, and flags
-        - tour_purp_and_coords: Aggregated tour purpose and destination coords
-    """
-    logger.info("Calculating tour purpose and primary destination...")
-    # Add mode priority and activity duration for selection logic.
-    linked_trips = add_mode_priority_column(
-        linked_trips, config.mode_hierarchy, alias="_mode_priority"
-    )
-    linked_trips = add_activity_duration_column(
-        linked_trips,
-        config.default_activity_duration_minutes,
-        alias="_activity_duration",
-    )
-
-    # Effective destination purpose: a WORK_RELATED trip that ends at one of the
-    # person's work locations (classified WORK — a usual or an
-    # observed alternate worksite) is treated as WORK, so the tour is classified
-    # as a work tour. WORK_RELATED errands away from any work location keep their
-    # purpose and stay subtour activities.
-    effective_purpose = (
-        pl.when(
-            (pl.col("d_purpose_category") == PurposeCategory.WORK_RELATED.value)
-            & (pl.col("d_location_type") == LocationType.WORK)
-        )
-        .then(pl.lit(PurposeCategory.WORK.value))
-        .otherwise(pl.col("d_purpose_category"))
-    )
-    linked_trips = linked_trips.with_columns(effective_purpose.alias("_d_purpose_effective"))
-
-    # A trip cannot supply the tour purpose when it is the *return leg* -- the
-    # last trip, landing back on the anchor. That arrival is the tour closing,
-    # not an activity. A partial tour's last trip never reaches the anchor, so
-    # its destination is a genuine candidate; excluding it purely for being last
-    # is what left every one-trip tour with a null purpose.
-    is_last_trip = pl.col("linked_trip_id").rank("ordinal").over("tour_id") == pl.col(
-        "linked_trip_id"
-    ).count().over("tour_id")
-    anchor_reached = (
-        pl.when(pl.col("subtour_num") > 0)
-        .then(pl.col("_d_at_work") | pl.col("_d_at_school"))
-        .otherwise(pl.col("_d_is_home"))
-    )
-    linked_trips = linked_trips.with_columns(
-        [
-            is_last_trip.alias("_is_last_trip"),
-            # Mode changes are never activities, so they can never be the
-            # primary destination however long the dwell.
-            (
-                (is_last_trip & anchor_reached.fill_null(value=False))
-                | (pl.col("_d_purpose_effective") == PurposeCategory.CHANGE_MODE.value)
-            ).alias("_is_not_a_destination"),
-        ]
-    )
-
-    # Order non-last trips so the tour purpose is the first row per tour. Two
-    # methods (config.tour_purpose_method):
-    # - "score": duration-weighted, highest score wins (a long discretionary
-    #   activity can outrank a brief mandatory one). Score is on the *effective*
-    #   purpose so a work-related stop at a worksite competes as work.
-    # - "hierarchy": priority rank, activity duration breaks ties only.
-    # A tour with no candidate at all -- an anchor-to-anchor loop, or one whose
-    # every stop was a mode change -- gets a null purpose and is flagged
-    # NO_DESTINATION downstream.
-    if config.tour_purpose_method == "score":
-        linked_trips = add_purpose_score_column(
-            linked_trips,
-            config,
-            purpose_col="_d_purpose_effective",
-            duration_col="_activity_duration",
-            alias="_purpose_score",
-        )
-        non_last = linked_trips.filter(~pl.col("_is_not_a_destination")).sort(
-            # score wins; ties broken by longer activity then lowest trip id so
-            # the selection is deterministic.
-            ["tour_id", "_purpose_score", "_activity_duration", "linked_trip_id"],
-            descending=[False, True, True, False],
-            nulls_last=True,
-        )
-    else:
-        linked_trips = add_purpose_priority_column(linked_trips, config, alias="_purpose_priority")
-        non_last = linked_trips.filter(~pl.col("_is_not_a_destination")).sort(
-            ["tour_id", "_purpose_priority", "_activity_duration"],
-            descending=[False, False, True],
-        )
-
-    tour_purp_and_coords = non_last.group_by("tour_id", maintain_order=True).agg(
-        [
-            pl.col("_d_purpose_effective").first().alias("tour_purpose"),
-            pl.col("d_lat").first().alias("_primary_d_lat"),
-            pl.col("d_lon").first().alias("_primary_d_lon"),
-            pl.col("d_location_type").first().alias("_primary_d_type"),
-        ]
-    )
-
-    linked_trips = linked_trips.join(tour_purp_and_coords, on="tour_id", how="left")
-
-    return linked_trips, tour_purp_and_coords
-
-
-def _calculate_destination_times(
-    linked_trips: pl.DataFrame,
-    config: TourConfig,
-) -> pl.DataFrame:
-    """Calculate arrival and departure times at primary destination.
-
-    Uses distance thresholds based on location type to identify when trips
-    arrive at or depart from the primary destination.
-
-    Candidate trips are the ones that could *be* the destination -- the same
-    ``_is_not_a_destination`` test purpose selection uses, so the two cannot
-    disagree about which trip the destination is. Selecting on "not the last
-    trip" instead assumed every tour returns to its anchor: a one-trip tour's
-    only trip is also its last, so it matched no candidate rule and came out
-    with no destination at all, while purpose selection had already given it one.
-
-    ``dest_depart_time`` stays null when nothing departed the destination. A
-    tour cut by the diary edge arrived somewhere and stopped being observed;
-    inventing a departure would put a time on an event that did not happen.
-
-    Args:
-        linked_trips: Enhanced trip data with primary destination coordinates
-        config: TourConfig with distance thresholds
-
-    Returns:
-        DataFrame with dest_arrive_time, dest_depart_time, and
-        dest_linked_trip_id per tour_id
-    """
-    logger.info("Calculating destination arrival and departure times...")
-    # Calculate distances to primary destination and apply thresholds
-    linked_trips = linked_trips.with_columns(
-        [
-            expr_haversine(
-                pl.col("d_lat"),
-                pl.col("d_lon"),
-                pl.col("_primary_d_lat"),
-                pl.col("_primary_d_lon"),
-            ).alias("_dist_d_to_primary"),
-            expr_haversine(
-                pl.col("o_lat"),
-                pl.col("o_lon"),
-                pl.col("_primary_d_lat"),
-                pl.col("_primary_d_lon"),
-            ).alias("_dist_o_to_primary"),
-            pl.when(pl.col("_primary_d_type") == LocationType.HOME)
-            .then(pl.lit(config.distance_thresholds[LocationType.HOME]))
-            .when(pl.col("_primary_d_type") == LocationType.WORK)
-            .then(pl.lit(config.distance_thresholds[LocationType.WORK]))
-            .when(pl.col("_primary_d_type") == LocationType.SCHOOL)
-            .then(pl.lit(config.distance_thresholds[LocationType.SCHOOL]))
-            .otherwise(pl.lit(config.distance_thresholds[LocationType.HOME]))
-            .alias("_threshold"),
-        ]
-    ).with_columns(
-        [
-            (pl.col("_dist_d_to_primary") <= pl.col("_threshold")).alias("_arrives_at_primary"),
-            (pl.col("_dist_o_to_primary") <= pl.col("_threshold")).alias("_departs_from_primary"),
-        ]
-    )
-
-    # Aggregate arrive times (exclude last trip) and depart times (all trips)
-    # Use distance filtering with fallback to trip sequence
-    dest_arrive = (
-        linked_trips.filter(~pl.col("_is_not_a_destination") & pl.col("_arrives_at_primary"))
-        .group_by("tour_id")
-        .agg(
-            [
-                pl.col("arrive_time").max().alias("dest_arrive_time"),
-                pl.col("linked_trip_id").max().alias("dest_linked_trip_id"),
-            ]
-        )
-    )
-
-    # Fallback: first candidate trip, if the distance threshold was too tight.
-    dest_arrive_fallback = (
-        linked_trips.filter(~pl.col("_is_not_a_destination"))
-        .group_by("tour_id")
-        .agg(
-            [
-                pl.col("arrive_time").first().alias("dest_arrive_time"),
-                pl.col("linked_trip_id").first().alias("dest_linked_trip_id"),
-            ]
-        )
-    )
-
-    dest_depart = (
-        linked_trips.filter(pl.col("_departs_from_primary"))
-        .group_by("tour_id")
-        .agg(pl.col("depart_time").max().alias("dest_depart_time"))
-    )
-
-    # Fallback: use last trip before home if distance threshold too restrictive
-    dest_depart_fallback = (
-        linked_trips.filter(~pl.col("_is_last_trip"))
-        .group_by("tour_id")
-        .agg(pl.col("depart_time").last().alias("dest_depart_time"))
-    )
-
-    dest_times = (
-        dest_arrive_fallback.join(
-            dest_arrive.select(["tour_id", "dest_arrive_time", "dest_linked_trip_id"]),
-            on="tour_id",
-            how="left",
-            suffix="_dist",
-        )
-        .with_columns(
-            [
-                pl.coalesce(["dest_arrive_time_dist", "dest_arrive_time"]).alias(
-                    "dest_arrive_time"
-                ),
-                pl.coalesce(["dest_linked_trip_id_dist", "dest_linked_trip_id"]).alias(
-                    "dest_linked_trip_id"
-                ),
-            ]
-        )
-        .select(["tour_id", "dest_arrive_time", "dest_linked_trip_id"])
-        # Left, not full: a departure is a departure *from the destination*, so a
-        # tour with no destination has none. Joining outer let a tour whose every
-        # trip was ruled out as a candidate still pick up a departure time, and
-        # every one of its trips then classified as inbound -- leaving the tour
-        # with no outbound leg and no mode for it.
-        .join(
-            dest_depart_fallback.join(dest_depart, on="tour_id", how="left", suffix="_dist")
-            .with_columns(
-                pl.coalesce(["dest_depart_time_dist", "dest_depart_time"]).alias("dest_depart_time")
-            )
-            .select(["tour_id", "dest_depart_time"]),
-            on="tour_id",
-            how="left",
-        )
-    )
-
-    return dest_times
 
 
 def add_tour_anchor_flags(linked_trips: pl.DataFrame) -> pl.DataFrame:
@@ -323,19 +72,23 @@ def add_tour_anchor_flags(linked_trips: pl.DataFrame) -> pl.DataFrame:
 def _aggregate_and_classify_tours(
     linked_trips: pl.DataFrame,
     tour_purpose_and_coords: pl.DataFrame,
-    config: TourConfig,
+    match: MatchConfig,
 ) -> pl.DataFrame:
     """Aggregate trip data to tour level and classify tour categories.
 
     Groups trips by tour and calculates tour-level attributes including mode,
     timing, locations, and counts. Records what each tour is anchored on
     (``tour_type``) and, separately, how completely it reaches that anchor
-    (``tour_category``).
+    (``tour_category``). These are two independent facts and must not share a
+    column: ``TourType.WORK_BASED`` and ``TourCategory.PARTIAL_END`` are both
+    2, so writing the type into ``tour_category`` made every subtour read as
+    "start at home, end not at home". Data quality is graded separately, by
+    ``validate_and_correct_tours``.
 
     Args:
         linked_trips: Enhanced trip data with priorities and flags
         tour_purpose_and_coords: Tour purpose and destination coordinates
-        config: TourConfig with classification settings
+        match: The habitual-location match rule, for returns to the destination
 
     Returns:
         Tour-level DataFrame with all attributes and classifications
@@ -343,14 +96,14 @@ def _aggregate_and_classify_tours(
     logger.info("Aggregating and classifying tours...")
 
     # Calculate destination arrival/departure times
-    dest_times = _calculate_destination_times(linked_trips, config)
+    dest_times = calculate_destination_times(linked_trips, match.buffer_meters)
 
     tours = linked_trips.group_by("tour_id").agg(
         [
             # Identifiers (tour_id is automatically included from group_by)
             pl.col("person_id").first(),
             pl.col("hh_id").first(),
-            pl.col("day_id").first(),
+            pl.col("person_day_id").first(),
             pl.col("tour_num").first(),
             pl.col("subtour_num").first(),
             pl.col("parent_tour_id").first(),
@@ -371,7 +124,6 @@ def _aggregate_and_classify_tours(
             # Counts
             pl.col("linked_trip_id").count().alias("trip_count"),
             # Flags for classification
-            pl.col("subtour_num").first().alias("_subtour_num"),
             pl.col("_anchor_location_type").first().alias("_anchor_location_type"),
             pl.col("_o_at_anchor").first().alias("_o_at_anchor"),
             pl.col("_d_at_anchor").last().alias("_d_at_anchor"),
@@ -412,13 +164,8 @@ def _aggregate_and_classify_tours(
     one_trip_count = tours.filter(pl.col("trip_count") == 1).height
     logger.info("Tours: %d total, %d with a single trip", len(tours), one_trip_count)
 
-    # Classify what the tour is anchored on, and -- separately -- how completely
-    # it reaches that anchor. These are two orthogonal facts and must not share a
-    # column: TourType.WORK_BASED and TourCategory.PARTIAL_END are both 2, so
-    # writing the type into tour_category made every subtour read as
-    # "start at home, end not at home" and lose its boundary information.
-    # Validation separately flags data quality issues (tour_num=0, etc.).
-    is_subtour = pl.col("_subtour_num") > 0
+    # What the tour is anchored on, and separately how completely it reaches it
+    is_subtour = pl.col("subtour_num") > 0
     anchored_at_school = pl.col("_anchor_location_type") == LocationType.SCHOOL.value
     tours = tours.with_columns(
         [
@@ -437,7 +184,7 @@ def _aggregate_and_classify_tours(
             .otherwise(pl.lit(TourCategory.PARTIAL_BOTH))
             .alias("tour_category"),
         ]
-    ).sort(["person_id", "day_id", "origin_depart_time"])
+    ).sort(["person_id", "person_day_id", "origin_depart_time"])
 
     return tours
 
@@ -461,12 +208,15 @@ def _assign_half_tour(
     is carried by ``parent_tour_id`` / ``subtour_num`` / ``tour_type`` -- so
     direction never encodes "this is a subtour".
 
+    A tour with no primary destination has null destination times, so neither
+    rule applies and its trips default to outbound.
+
     Args:
         linked_trips: Linked trips with tour_id assignments
         tours: Tour table with dest_arrive_time and dest_depart_time
 
     Returns:
-        Linked trips with half_tour_type (TourDirection enum) column added
+        Linked trips with a ``tour_direction`` (TourDirection) column added
         and tours with outbound and inbound modes added
     """
     logger.info("Assigning half-tour classification...")
@@ -495,10 +245,8 @@ def _assign_half_tour(
             # Inbound: trip departs after final departure from primary dest
             .when(pl.col("depart_time") >= pl.col("dest_depart_time"))
             .then(pl.lit(TourDirection.INBOUND))
-            # Single-trip tours have no non-last trip, so they have no primary
-            # destination and the times above are null. They are flagged
-            # SINGLE_TRIP and dropped by the formatters, so the direction is
-            # never read; outbound is the harmless default.
+            # A tour with no primary destination has null times; outbound is the
+            # default (see docstring)
             .otherwise(pl.lit(TourDirection.OUTBOUND))
             .alias("tour_direction"),
         ]
@@ -540,27 +288,30 @@ def _assign_half_tour(
 def aggregate_tour_attributes(
     linked_trips: pl.DataFrame,
     config: TourConfig,
+    match: MatchConfig,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Aggregate trip data to tour-level records with attributes.
 
     Calculates tour attributes from trip data:
-    - Tour purpose: Highest priority destination, with duration tie-breaker
-      (When priorities equal, selects trip with longest activity duration)
+    - Tour purpose: the primary destination's purpose, chosen by
+      ``config.tour_purpose_method`` (duration-weighted score, or priority
+      rank with activity duration breaking ties)
     - Tour mode: Highest priority trip mode
     - Timing: First departure and last arrival
-    - Counts: Number of trips and stops
+    - Counts: Number of trips
 
-    IMPORTANT: Work-based subtours are aggregated separately with their own
-    tour_id (which includes subtour_num in the last 2 digits). The final output
-    includes both home-based tours and work-based subtours as separate records.
+    Work- and school-based subtours are aggregated separately with their own
+    tour_id (``tour_num * 1000 + subtour_num * 10`` after the person_day_id).
+    The output holds home-based tours and subtours as separate records.
 
     Args:
         linked_trips: Linked trips with tour_id
         config: TourConfig object with priority settings
+        match: The habitual-location match rule, for returns to the destination
 
     Returns:
         Tuple of: (enhanced_linked_trips, tours)
-        - enhanced_linked_trips: Input trips with tour_id and subtour_id added
+        - enhanced_linked_trips: Input trips with ``tour_direction`` added
     """
     logger.info("Aggregating tour data...")
 
@@ -570,10 +321,12 @@ def aggregate_tour_attributes(
     linked_trips = add_tour_anchor_flags(linked_trips)
 
     # Calculate tour purpose and primary destination
-    linked_trips, tour_purp_and_coords = _calculate_tour_purp_and_dest(linked_trips, config)
+    linked_trips, tour_purp_and_coords = calculate_tour_purpose_and_destination(
+        linked_trips, config
+    )
 
     # Aggregate to tour level and classify
-    tours = _aggregate_and_classify_tours(linked_trips, tour_purp_and_coords, config)
+    tours = _aggregate_and_classify_tours(linked_trips, tour_purp_and_coords, match)
 
     # Assign half-tour classification using tours table
     linked_trips, tours = _assign_half_tour(linked_trips, tours)

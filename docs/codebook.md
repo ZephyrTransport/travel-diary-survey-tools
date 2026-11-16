@@ -25,23 +25,5 @@ purpose = Purpose(4)  # Purpose.SHOPPING_ERRANDS
 print(purpose.label)  # "Appointment, shopping, or errands (e.g., gas)"
 ```
 
----
-::: data_canon.codebook.generic
-
-::: data_canon.codebook.households
-
-::: data_canon.codebook.vehicles
-
-::: data_canon.codebook.persons
-
-::: data_canon.codebook.trips
-
-::: data_canon.codebook.tours
-
-::: data_canon.codebook.days
-
-## Project/Format-specific
-
-::: data_canon.codebook.daysim
-
-::: data_canon.codebook.ctramp
+Every value and label is listed on [Enums](codebook_enums.md). The classes themselves are in the
+[Developer Reference](reference/data_canon/codebook.md).

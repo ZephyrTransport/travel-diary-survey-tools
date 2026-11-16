@@ -14,10 +14,13 @@ The ``compute_weights`` step orchestrates the full pipeline — see
 
 # Weight hierarchy
 
+Every weight is written once per profile, suffixed with its name
+(``hh_weight_<profile>``, ``person_weight_<profile>``, ...):
+
     hh_weight
-      └─ person_weight        (carry forward via hh_id)
-          └─ day_weight        (carry forward via person_id)
-              └─ unlinked_trip_weight  (carry forward via day_id)
+      └─ person_weight        (household's weight, shared among its usable persons)
+          └─ person_day_weight        (split: a person's usable days sum to their weight)
+              └─ unlinked_trip_weight  (day's weight, shared within the day)
                   ├─ linked_trip_weight   (mean agg via linked_trip_id)
                   │   └─ joint_trip_weight (SUM agg via joint_trip_id)
                   └─ tour_weight          (mean agg via tour_id)
@@ -27,11 +30,12 @@ The ``compute_weights`` step orchestrates the full pipeline — see
 
     weighting/
     ├── existing_weights.py       # attach pre-computed weights
+    ├── existing/                 # its settings and redistribution onto usable records
     ├── compute_weights.py        # single @step() entry point for full weighting pipeline
-    ├── weighting_pipeline.py     # internal class orchestrating the weighting process
+    ├── core/                     # WeightingPipeline, the hierarchy, propagation, settings
     ├── controls/                 # control variable definitions & registry
     ├── data_prep/                # PUMS I/O, control totals, survey seed, geography
-    ├── balancing/                # balancer, base weights, propagation, importance
+    ├── balancing/                # balancer, base weights, importance
     ├── diagnostics/              # interactive HTML report (Plotly + Jinja2)
     └── validation/               # post-balancing sanity checks
 """

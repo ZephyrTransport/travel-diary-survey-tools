@@ -9,18 +9,24 @@ Dynamic cross-tab creation:
 ``register_crosstab`` creates a CrosstabControlTarget instance at runtime
 from dimension control names, allowing cross-tabs to be defined in YAML
 config without requiring Python class definitions.
+``register_puma_control`` does the same for ``h_puma``, whose categories are the
+crosswalk's PUMAs.
 """
 
 import logging
+from typing import TYPE_CHECKING
 
 from processing.weighting.controls.base import ControlLevel, ControlTarget, CrosstabControlTarget
 from processing.weighting.controls.enums import make_crosstab_enum
 from processing.weighting.controls.household import (
     HHChildrenControl,
     HHIncomeControl,
+    HHPumaControl,
     HHSizeControl,
+    HHTargetZoneControl,
     HHTotalControl,
     HHVehiclesControl,
+    HHVehiclesPerDriverControl,
     HHWorkersControl,
 )
 from processing.weighting.controls.person import (
@@ -28,12 +34,16 @@ from processing.weighting.controls.person import (
     CommuteModeControl,
     EducationControl,
     EmploymentControl,
-    EthnicityControl,
     GenderControl,
     PersonTotalControl,
-    RaceControl,
+    RaceEthnicityControl,
     StudentControl,
 )
+
+if TYPE_CHECKING:
+    from processing.weighting.core.specs import ControlSpec
+
+logger = logging.getLogger(__name__)
 
 # ══════════════════════════════════════════════════════════════════════════
 # Registry
@@ -47,6 +57,7 @@ CONTROLS: dict[str, ControlTarget] = {
         HHIncomeControl(),
         HHWorkersControl(),
         HHVehiclesControl(),
+        HHVehiclesPerDriverControl(),
         HHChildrenControl(),
         PersonTotalControl(),
         GenderControl(),
@@ -54,8 +65,7 @@ CONTROLS: dict[str, ControlTarget] = {
         CommuteModeControl(),
         StudentControl(),
         EducationControl(),
-        RaceControl(),
-        EthnicityControl(),
+        RaceEthnicityControl(),
         AgeControl(),
     ]
 }
@@ -79,6 +89,27 @@ def resolve_targets(
 def pums_variables(level: ControlLevel) -> set[str]:
     """PUMS variable names needed for all controls at *level*."""
     return {f for ctrl in CONTROLS.values() if ctrl.level == level for f in ctrl.pums_fields}
+
+
+def register_puma_control(puma_ids: list[str] | None) -> None:
+    """Register ``h_puma`` for this run's PUMAs, or remove it when ``None``.
+
+    Always replaces: a second run in one process may have another geography, and
+    keeping the first run's PUMAs would recode its households against the wrong list.
+    """
+    CONTROLS.pop(HHPumaControl.name, None)
+    if puma_ids is not None:
+        CONTROLS[HHPumaControl.name] = HHPumaControl(puma_ids)
+
+
+def register_target_zone_control(zone_ids: list[str] | None) -> None:
+    """Register ``h_target_zone`` for this run's target zones, or remove it when ``None``.
+
+    Always replaces, for the same reason as `register_puma_control`.
+    """
+    CONTROLS.pop(HHTargetZoneControl.name, None)
+    if zone_ids is not None:
+        CONTROLS[HHTargetZoneControl.name] = HHTargetZoneControl(zone_ids)
 
 
 def register_crosstab(
@@ -216,35 +247,20 @@ def _build_dim_value_groups(
     return all_groups
 
 
-logger = logging.getLogger(__name__)
+def register_crosstabs_from_config(specs: "list[ControlSpec]") -> None:
+    """Register the cross-tab controls the config defines.
 
-
-def register_crosstabs_from_config(controls: list[dict]) -> None:
-    """Register any cross-tab controls defined in config before parsing.
-
-    Scans the controls list for entries with a ``dimensions`` key and
-    dynamically creates CrosstabControlTarget instances.  If a ``merges``
-    key is present, those per-dimension merges are applied at registration
-    time so the enum reflects the effective cell count.
-
-    Parameters
-    ----------
-    controls : list[dict]
-        Raw control definitions from YAML config.
+    Each spec with ``dimensions`` becomes a CrosstabControlTarget.  Its
+    ``merges``, if any, are applied at registration time so the enum reflects
+    the effective cell count.
     """
-    for ctrl_def in controls:
-        if "dimensions" in ctrl_def:
-            name = ctrl_def["name"]
-            dimensions = ctrl_def["dimensions"]
-            merges = ctrl_def.get("merges")
-
-            if name in CONTROLS:
-                logger.debug("Cross-tab '%s' already registered, skipping dynamic creation", name)
-                continue
-
-            logger.info(
-                "Registering dynamic cross-tab: %s (dimensions: %s)",
-                name,
-                dimensions,
-            )
-            register_crosstab(name, dimensions, merges=merges)
+    for spec in specs:
+        if spec.dimensions is None:
+            continue
+        if spec.name in CONTROLS:
+            logger.debug("Cross-tab '%s' already registered, skipping dynamic creation", spec.name)
+            continue
+        logger.info(
+            "Registering dynamic cross-tab: %s (dimensions: %s)", spec.name, spec.dimensions
+        )
+        register_crosstab(spec.name, spec.dimensions, merges=spec.merges)

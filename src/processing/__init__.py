@@ -4,21 +4,23 @@ This module imports and exposes all step functions for easy access.
 """
 
 from .add_zone_ids import add_zone_ids
-from .completeness import cascade_completeness
 from .final_check import final_check
 from .formatting import format_ctramp, format_daysim
+from .habitual_locations import detect_habitual_locations
 from .imputation.impute import imputation
 from .joint_trips import detect_joint_trips
 from .link_trips import link_trips
 from .read_write import load_data, write_data
 from .tours import extract_tours
+from .usability import cascade_usability
 from .weighting import add_existing_weights, compute_weights
 
 __all__ = [
     "add_existing_weights",
     "add_zone_ids",
-    "cascade_completeness",
+    "cascade_usability",
     "compute_weights",
+    "detect_habitual_locations",
     "detect_joint_trips",
     "extract_tours",
     "final_check",

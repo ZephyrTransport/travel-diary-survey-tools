@@ -1,15 +1,33 @@
-/* Column requirement matrix: wider content, compact table rows */
-.col-matrix .md-content {
-  max-width: 100%;
+/* Column requirement matrix (COLUMN_REQUIREMENTS.md, front matter body_class: col-matrix).
+   main.html wraps that page's content in .col-matrix, inside Material's article, so the
+   page grid is reached with :has(). The table selectors repeat Material's own
+   `.md-typeset table:not([class])` so they outrank it. */
+
+/* Full window width on this page only */
+.md-main__inner.md-grid:has(.col-matrix) {
+  max-width: none;
 }
-.col-matrix .md-sidebar--secondary {
-  display: none;
-}
-.col-matrix table {
-  font-size: 0.8rem;
+
+.md-typeset .col-matrix table:not([class]) {
+  font-size: 0.6rem;
   white-space: nowrap;
 }
-.col-matrix table td,
-.col-matrix table th {
-  padding: 0.3em 0.6em;
+
+.md-typeset .col-matrix table:not([class]) th,
+.md-typeset .col-matrix table:not([class]) td {
+  min-width: 0;
+  padding: 0.25em 0.5em;
+}
+
+/* Step columns (after Field, Type, Constraints): rotated headers keep each as narrow
+   as its marks. The legend table has two columns, so it is untouched. */
+.md-typeset .col-matrix table:not([class]) th:nth-child(n + 4) {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  vertical-align: bottom;
+  text-align: left;
+}
+
+.md-typeset .col-matrix table:not([class]) td:nth-child(n + 4) {
+  text-align: center;
 }

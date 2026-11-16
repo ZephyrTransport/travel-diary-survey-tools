@@ -13,8 +13,8 @@ groupings; both directions are edges of one tree.
 |-----------|------------------------|-----------------------------------------
 |households |``hh_weight``           |Anchor -- from the balancer, or supplied
 |persons    |``person_weight``       |Down from ``hh_weight`` via ``hh_id``
-|days       |``day_weight``          |Split: ``person_weight / n_usable_days``
-|unlinked   |``unlinked_trip_weight``|Down from ``day_weight`` via ``day_id``
+|days       |``person_day_weight``          |Split: ``person_weight / n_usable_days``
+|unlinked   |``unlinked_trip_weight``|Down from ``person_day_weight`` via ``person_day_id``
 |linked     |``linked_trip_weight``  |Up: mean of member ``unlinked_trip_weight``
 |tours      |``tour_weight``         |Up: mean of member ``linked_trip_weight``
 |joint trips|``joint_trip_weight``   |Up: **sum** of member ``linked_trip_weight``
@@ -45,10 +45,12 @@ rule is needed to read one back. Only [`weight_col_for`][processing.weighting.co
 stays the base name, which is what keeps ``id_col`` derivable.
 """
 
+from collections.abc import Collection
 from dataclasses import dataclass
 from enum import Enum, auto
 
 from data_canon.validation.column import GeneratedColumn
+from processing.usability import profile_of
 
 _SEED_COLUMNS: frozenset[str] = frozenset({"base_weight"})
 """Pre-balancing columns that are also per-profile.
@@ -56,6 +58,9 @@ _SEED_COLUMNS: frozenset[str] = frozenset({"base_weight"})
 ``base_weight`` is derived from the seed's own composition, so a different seed
 gives a different base weight -- it belongs to a fit, not to the survey.
 """
+
+SEED_TABLE = "household_weights"
+"""Table the weighting's working columns move to before the data is handed back."""
 
 
 def _suffixed(name: str, profile: str | None) -> str:
@@ -150,6 +155,32 @@ class Level:
             return None
         return LEVELS[self.parent].id_col if self.flow is Flow.DOWN else self.id_col
 
+    def member_key_for(self, usability_flag_col: str | None, columns: Collection[str]) -> str:
+        """The column on the source table saying which grouping a record is on.
+
+        The joint groupings differ by profile: ``joint_tour_id_ctramp`` is the
+        bare ``joint_tour_id`` where the tour is on it for ctramp and null where
+        it is not, so summing by it counts exactly the tours that profile keeps
+        together. Where the profile's copy is absent -- a single un-suffixed
+        run, ``survey_complete``, or a level with no per-profile copy -- the
+        bare key is the answer.
+
+        Args:
+            usability_flag_col: The flag the weighting is gated on, from which
+                the profile is read.
+            columns: Columns present on the source table.
+
+        Returns:
+            The column to group the source by. Its values are the bare key's.
+        """
+        key = self.key
+        if key is None:
+            msg = f"{self.table} is the anchor and has no member key"
+            raise ValueError(msg)
+        profile = profile_of(usability_flag_col) if usability_flag_col else None
+        profile_key = _suffixed(key, profile)
+        return profile_key if profile_key in columns else key
+
     def __post_init__(self) -> None:
         """Reject a half-declared edge at import time rather than mid-pipeline."""
         edge = (self.parent, self.flow, self.scope)
@@ -181,8 +212,8 @@ HIERARCHY: tuple[Level, ...] = (
         scope="hh_id",
     ),
     Level(
-        table="days",
-        weight_col="day_weight",
+        table="person_days",
+        weight_col="person_day_weight",
         means=(
             "Person-days represented by this record. A person's usable days sum to "
             "their person weight, the average-day convention, so a day is a share of "
@@ -199,9 +230,9 @@ HIERARCHY: tuple[Level, ...] = (
         table="unlinked_trips",
         weight_col="unlinked_trip_weight",
         means="Unlinked trips (single vehicle or mode segments) represented.",
-        parent="days",
+        parent="person_days",
         flow=Flow.DOWN,
-        scope="day_id",
+        scope="person_day_id",
     ),
     Level(
         table="linked_trips",
@@ -209,7 +240,7 @@ HIERARCHY: tuple[Level, ...] = (
         means="Linked trips (whole origin-to-destination journeys) represented.",
         parent="unlinked_trips",
         flow=Flow.UP,
-        scope="day_id",
+        scope="person_day_id",
     ),
     Level(
         table="joint_trips",
@@ -221,7 +252,7 @@ HIERARCHY: tuple[Level, ...] = (
         ),
         parent="linked_trips",
         flow=Flow.UP,
-        scope="day_id",
+        scope="hh_id",
         agg=Agg.SUM,
     ),
     Level(
@@ -230,7 +261,7 @@ HIERARCHY: tuple[Level, ...] = (
         means="Tours represented by this record.",
         parent="linked_trips",
         flow=Flow.UP,
-        scope="day_id",
+        scope="person_day_id",
     ),
     Level(
         table="joint_tours",
@@ -242,10 +273,21 @@ HIERARCHY: tuple[Level, ...] = (
         ),
         parent="tours",
         flow=Flow.UP,
-        scope="day_id",
+        scope="hh_id",
         agg=Agg.SUM,
     ),
 )
+
+# Projections of HIERARCHY. These are views, never independent facts.
+LEVELS: dict[str, Level] = {level.table: level for level in HIERARCHY}
+TABLE_NAMES: list[str] = [level.table for level in HIERARCHY]
+_WEIGHT_BASES: frozenset[str] = frozenset(level.weight_col for level in HIERARCHY)
+LEVEL_BY_WEIGHT_COL: dict[str, Level] = {level.weight_col: level for level in HIERARCHY}
+"""Supplied-weight config key -> its level.
+
+The config key *is* the weight column: one name for one thing, so a config
+cannot name a level the hierarchy does not have.
+"""
 
 
 def _validate_hierarchy() -> None:
@@ -273,15 +315,6 @@ def _validate_hierarchy() -> None:
 
 
 _validate_hierarchy()
-
-# ---------------------------------------------------------------------------
-# Projections of HIERARCHY. These are views, never independent facts.
-# ---------------------------------------------------------------------------
-
-LEVELS: dict[str, Level] = {level.table: level for level in HIERARCHY}
-TABLE_NAMES: list[str] = [level.table for level in HIERARCHY]
-
-_WEIGHT_BASES: frozenset[str] = frozenset(level.weight_col for level in HIERARCHY)
 
 
 def weight_col_for(base: str, profile: str | None) -> str:
@@ -322,21 +355,6 @@ def seed_col_for(base: str, profile: str | None) -> str:
 def weight_columns_for(profile: str | None) -> dict[str, str]:
     """Map each table to its weight column under *profile*."""
     return {level.table: level.weight_col_for(profile) for level in HIERARCHY}
-
-
-WEIGHT_COLUMNS: dict[str, str] = weight_columns_for(None)
-WEIGHT_CONFIG_MAPPING: dict[str, tuple[str, str, str]] = {
-    level.weight_col: (level.table, level.id_col, level.weight_col) for level in HIERARCHY
-}
-"""Supplied-weight config key -> (table, id column, weight column).
-
-The config key *is* the weight column: one name for one thing, so a config
-cannot name a level the hierarchy does not have.
-"""
-
-
-SEED_TABLE = "household_weights"
-"""Table the weighting's working columns move to before the data is handed back."""
 
 
 def describe_weight_columns(

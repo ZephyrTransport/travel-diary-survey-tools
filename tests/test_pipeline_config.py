@@ -1,27 +1,36 @@
-"""Contract tests binding each project's pipeline config to its runner.
+"""Each project's ``config.yaml`` agrees with its ``run.py`` and with the steps it names.
 
-``Pipeline`` resolves the step names in ``config.yaml`` against the functions
-handed to ``Pipeline(steps=[...])``. Nothing links the two: a step can be added
-to a config, and its implementation merged, while the runner is never updated to
-pass the function. The pipeline then dies part-way through a long run on a step
-that was never registered. These tests close that loop statically, so the
-mismatch fails in CI instead of on a live dataset.
-
-The runner modules are parsed with :mod:`ast` rather than imported. Importing one
-has side effects that must not happen during a test run -- ``run.py`` maps
-network drives and reads ``.env`` at module level.
+The runners are parsed with :mod:`ast`, not imported: importing ``run.py`` maps
+network drives and reads ``.env``.
 """
 
 import ast
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
+
+import processing
+from data_canon.core.dataclass import CanonicalData
+from pipeline.config import resolve_templates
+from pipeline.pipeline import Pipeline
 
 PROJECTS_DIR = Path(__file__).parent.parent / "projects"
 
 # Name of the list each runner passes to ``Pipeline(steps=...)``.
 STEP_LIST_NAME = "processing_steps"
+
+# Every consumer of a usability profile, and the key it names them under.
+_PROFILE_CONSUMERS = (
+    ("compute_weights", "weight_profiles"),
+    ("add_existing_weights", "weight_profiles"),
+    ("format_ctramp", "usability_profile"),
+    ("format_daysim", "usability_profile"),
+)
+
+# The cascade stamps this on every run, whatever profiles a project declares.
+_ALWAYS_STAMPED = frozenset({"survey_complete"})
 
 
 def _project_dirs() -> list[Path]:
@@ -35,21 +44,17 @@ def _project_dirs() -> list[Path]:
     )
 
 
-def _config_step_names(config_path: Path) -> list[str]:
-    """Step names declared in a project config, in execution order."""
+def _steps(config_path: Path) -> list[dict]:
     with config_path.open() as f:
-        config = yaml.safe_load(f)
-    return [step["name"] for step in (config or {}).get("steps", [])]
+        return (yaml.safe_load(f) or {}).get("steps", [])
+
+
+def _config_step_names(config_path: Path) -> list[str]:
+    return [step["name"] for step in _steps(config_path)]
 
 
 def _runner_step_names(run_path: Path) -> set[str]:
-    """Names in the runner's ``processing_steps`` list, without importing it.
-
-    The identifiers in that list are the registry keys: ``Pipeline`` keys by
-    ``func.__name__``, and the ``@step`` decorator preserves it via
-    ``functools.wraps``, so an imported or locally defined function registers
-    under the same name it is referenced by here.
-    """
+    """Names in the runner's ``processing_steps`` list, which are the ``__name__`` keys."""
     tree = ast.parse(run_path.read_text(encoding="utf-8"), filename=str(run_path))
     for node in ast.walk(tree):
         if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.List):
@@ -60,16 +65,11 @@ def _runner_step_names(run_path: Path) -> set[str]:
             return {elt.id for elt in node.value.elts if isinstance(elt, ast.Name)}
 
     pytest.fail(f"No `{STEP_LIST_NAME} = [...]` assignment found in {run_path}")
-    return set()  # unreachable; keeps the return type honest
 
 
 @pytest.mark.parametrize("project_dir", _project_dirs(), ids=lambda p: p.name)
 def test_config_steps_are_registered_in_runner(project_dir: Path):
-    """Every step named in a project config is passed to the Pipeline.
-
-    The runner may register extra functions the config does not use (steps can
-    be commented out of a config), so this is a subset check, not equality.
-    """
+    """Every step a config names is passed to the Pipeline (the runner may pass more)."""
     config_steps = _config_step_names(project_dir / "config.yaml")
     registered = _runner_step_names(project_dir / "run.py")
 
@@ -85,11 +85,7 @@ def test_config_steps_are_registered_in_runner(project_dir: Path):
 
 @pytest.mark.parametrize("project_dir", _project_dirs(), ids=lambda p: p.name)
 def test_config_step_names_are_unique(project_dir: Path):
-    """A config must not name the same step twice.
-
-    Steps are cached and looked up by name, so a duplicate silently runs the same
-    function again and overwrites the first result's cache entry.
-    """
+    """A config does not name the same step twice."""
     config_steps = _config_step_names(project_dir / "config.yaml")
     duplicates = {name for name in config_steps if config_steps.count(name) > 1}
 
@@ -101,75 +97,45 @@ def test_config_step_names_are_unique(project_dir: Path):
 
 def _step_params(config_path: Path, step_name: str) -> dict:
     """Params of the named step, or an empty dict if the config omits it."""
-    with config_path.open() as f:
-        config = yaml.safe_load(f)
-    for step in (config or {}).get("steps", []):
+    for step in _steps(config_path):
         if step.get("name") == step_name:
             return step.get("params") or {}
     return {}
 
 
-# Every consumer of a usability profile, and the key it names one under.
-_PROFILE_CONSUMERS = (
-    ("compute_weights", "usability_flag_col"),
-    ("add_existing_weights", "usability_flag_col"),
-    ("format_ctramp", "usability_flag_col"),
-    ("format_daysim", "usability_flag_col"),
-)
-
-# Always available: the cascade stamps it on every run, whatever profiles a
-# project declares.
-_ALWAYS_STAMPED = frozenset({"survey_complete"})
-
-
 @pytest.mark.parametrize("project_dir", _project_dirs(), ids=lambda p: p.name)
 def test_named_profiles_are_stamped_by_the_cascade(project_dir: Path):
-    """Every profile a step names must be one ``cascade_completeness`` declares.
-
-    The weight columns are suffixed with the profile name verbatim, so a typo
-    here does not fail: it writes a column set no consumer can name, gated on a
-    verdict no step stamps. Cheaper to catch statically than after a balancing
-    run per profile.
-    """
+    """Every profile a step names is one ``cascade_usability`` stamps; a typo would not fail."""
     config_path = project_dir / "config.yaml"
-    declared = set(
-        _step_params(config_path, "cascade_completeness").get("usability_profiles") or {}
-    )
+    declared = set(_step_params(config_path, "cascade_usability").get("usability_profiles") or {})
     if not declared:
         pytest.skip("project declares no usability profiles")
     legal = declared | _ALWAYS_STAMPED
 
     for step_name, key in _PROFILE_CONSUMERS:
         params = _step_params(config_path, step_name)
-        named = [
-            *([params[key]] if params.get(key) else []),
-            *(params.get("weight_profiles") or []),
-        ]
+        value = params.get(key) or []
+        named = value if isinstance(value, list) else [value]
         for profile in named:
             assert profile in legal, (
                 f"{project_dir.name}: step {step_name!r} names profile {profile!r}, which "
-                f"cascade_completeness does not stamp. Declared: {sorted(legal)}"
+                f"cascade_usability does not stamp. Declared: {sorted(legal)}"
             )
 
 
 @pytest.mark.parametrize("project_dir", _project_dirs(), ids=lambda p: p.name)
-def test_weighting_names_one_universe(project_dir: Path):
-    """A weighting step names a single profile or a profile list, never both."""
-    config_path = project_dir / "config.yaml"
-    for step_name in ("compute_weights", "add_existing_weights"):
-        params = _step_params(config_path, step_name)
-        if not params:
+def test_config_keys_are_taken_by_their_steps(project_dir: Path):
+    """Every key a config sets is taken by its ``processing`` step, and none it needs is missing."""
+    with (project_dir / "config.yaml").open() as f:
+        config = resolve_templates(yaml.safe_load(f))
+    fake = SimpleNamespace(config=config, data=CanonicalData())
+    for step_cfg in config["steps"]:
+        step_func = getattr(processing, step_cfg["name"], None)
+        if step_func is None:
             continue
-        assert not (params.get("usability_flag_col") and params.get("weight_profiles")), (
-            f"{project_dir.name}: step {step_name!r} names both usability_flag_col and "
-            "weight_profiles; they mean different things about what gets fitted."
-        )
+        Pipeline.parse_step_args(fake, step_cfg["name"], step_func)
 
 
 def test_projects_are_discovered():
-    """Guard the discovery itself.
-
-    If the layout changes and no project is found, the parametrized tests above
-    silently collect zero cases and pass, giving false assurance.
-    """
+    """At least one project is found, so the tests above do not pass on zero cases."""
     assert _project_dirs(), f"No project (config.yaml + run.py) found under {PROJECTS_DIR}"

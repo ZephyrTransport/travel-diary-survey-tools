@@ -70,33 +70,23 @@ def get_required_children_fields(
         the parent table -- only rows where it is true need a child -- or None
         when every parent row needs one.
     """
+    fk_fields = get_foreign_key_fields(model)
     required_children = {}
-
     for field_name, field_info in model.model_fields.items():
         extra = field_info.json_schema_extra or {}
-
-        if extra.get("required_child", False):
-            fk_to = extra.get("fk_to")
-            if not fk_to:
-                msg = f"Field '{field_name}' has required_child=True but no fk_to specified"
-                raise ValueError(msg)
-
-            if not isinstance(fk_to, str):
-                msg = (
-                    f"Invalid fk_to type for {field_name}: {type(fk_to).__name__}. Expected string"
-                )
-                raise TypeError(msg)
-
-            parent_table, parent_column = fk_to.split(".", 1)
-            when_col = extra.get("required_child_when")
-            if when_col is not None and not isinstance(when_col, str):
-                msg = (
-                    f"Invalid required_child_when type for {field_name}: "
-                    f"{type(when_col).__name__}. Expected string"
-                )
-                raise TypeError(msg)
-            required_children[field_name] = (parent_table, parent_column, when_col)
-
+        if not extra.get("required_child", False):
+            continue
+        if field_name not in fk_fields:
+            msg = f"Field '{field_name}' has required_child=True but no fk_to specified"
+            raise ValueError(msg)
+        when_col = extra.get("required_child_when")
+        if when_col is not None and not isinstance(when_col, str):
+            msg = (
+                f"Invalid required_child_when type for {field_name}: "
+                f"{type(when_col).__name__}. Expected string"
+            )
+            raise TypeError(msg)
+        required_children[field_name] = (*fk_fields[field_name], when_col)
     return required_children
 
 
@@ -146,10 +136,7 @@ def validate_fk_references(
     Raises:
         ValueError: If FK references non-unique field or missing table/field
     """
-    # Build map of unique fields by table
-    unique_fields_by_table = {}
-    for table_name, model in models.items():
-        unique_fields_by_table[table_name] = set(get_unique_fields(model))
+    unique_fields_by_table = {t: set(get_unique_fields(m)) for t, m in models.items()}
 
     # Validate all FK references
     for table_name, model in models.items():
@@ -215,12 +202,7 @@ def check_foreign_keys(
         # Get parent table
         parent_df = get_table_func(parent_table)
         if parent_df is None:
-            # Skip FK validation when parent table doesn't exist
-            # This can happen when:
-            # 1. Tables validated in isolation during step input validation
-            # 2. Parent table created by a later step in the pipeline
-            # Actual FK constraint validated when tables in same
-            # CanonicalData
+            # Parent not loaded (validated alone, or made by a later step); checked once present
             logger.debug(
                 "Skipping FK validation for %s.%s -> %s.%s: parent table not found",
                 table_name,

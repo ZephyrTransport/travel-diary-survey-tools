@@ -30,14 +30,12 @@ DEFAULT_IMPORTANCE = 100.0
 _N_REPLICATES = 80
 
 
-def compute_moe_importance(
+def compute_control_moe(
     hh_df: pl.DataFrame,
     person_df: pl.DataFrame,
     target_names: list[str],
-    *,
-    geo_col: str = "ctrl_geoid",
-) -> dict[str, float]:
-    """Compute per-control importance weights from PUMS replicate-weight MOE.
+) -> pl.DataFrame:
+    """Compute per-cell MOE from PUMS replicate weights for all controls.
 
     Args:
         hh_df: Crosswalk-allocated PUMS households with ``_xw_WGTP`` and
@@ -46,28 +44,58 @@ def compute_moe_importance(
         person_df: Crosswalk-allocated PUMS persons with ``_xw_PWGTP``
             and ``_xw_PWGTP1`` … ``_xw_PWGTP80`` columns (plus recoded
             controls).
-        target_names: Control registry names to compute importance for.
-        geo_col: Geography column (default ``"ctrl_geoid"``).
+        target_names: Control registry names to compute the MOE for.
 
     Returns:
-        ``{control_name: importance}`` for controls where MOE could be
-        computed.  Controls with no PUMS records (data sparsity) are
-        omitted — the balancer will apply its default importance.
+        A DataFrame with columns ``[zone_group_id, control_name, category,
+        target_total, se, moe_pct]``.  Controls with no PUMS records are
+        skipped.
 
     Raises:
         ValueError: If a target name is not in the control registry, or
             if required replicate weight / control columns are missing
             from the data.
     """
-    control_cvs: dict[str, float] = {}
-
+    frames: list[pl.DataFrame] = []
     for name in target_names:
         ctrl = CONTROLS.get(name)
         if ctrl is None:
             msg = f"Unknown control {name!r} — not in registry"
             raise ValueError(msg)
+        cell_df = _control_cell_moe(ctrl, hh_df, person_df)
+        if cell_df is not None:
+            frames.append(cell_df)
 
-        cv = _control_cv(ctrl, hh_df, person_df, geo_col)
+    if not frames:
+        return pl.DataFrame(
+            schema={
+                "zone_group_id": pl.Utf8,
+                "control_name": pl.Utf8,
+                "category": pl.Utf8,
+                "target_total": pl.Float64,
+                "se": pl.Float64,
+                "moe_pct": pl.Float64,
+            }
+        )
+    return pl.concat(frames)
+
+
+def compute_moe_importance(control_moe: pl.DataFrame, target_names: list[str]) -> dict[str, float]:
+    """Compute per-control importance weights from the per-cell MOE.
+
+    Args:
+        control_moe: Per-cell MOE from
+            [`compute_control_moe`][processing.weighting.balancing.importance.compute_control_moe].
+        target_names: Control registry names to compute importance for.
+
+    Returns:
+        ``{control_name: importance}`` for controls where MOE could be
+        computed.  Controls with no PUMS records (data sparsity) are
+        omitted — the balancer will apply its default importance.
+    """
+    control_cvs: dict[str, float] = {}
+    for name in target_names:
+        cv = _control_cv(control_moe.filter(pl.col("control_name") == name))
         if cv is not None:
             control_cvs[name] = cv
 
@@ -81,42 +109,6 @@ def compute_moe_importance(
     return importance
 
 
-def compute_control_moe(
-    hh_df: pl.DataFrame,
-    person_df: pl.DataFrame,
-    target_names: list[str],
-    *,
-    geo_col: str = "ctrl_geoid",
-) -> pl.DataFrame:
-    """Compute per-cell MOE from PUMS replicate weights for all controls.
-
-    Returns a DataFrame with columns ``[geo_id, control_name, category,
-    target_total, se, moe_pct]``.  Controls with no PUMS records are
-    silently skipped.
-    """
-    frames: list[pl.DataFrame] = []
-    for name in target_names:
-        ctrl = CONTROLS.get(name)
-        if ctrl is None:
-            continue
-        cell_df = _control_cell_moe(ctrl, hh_df, person_df, geo_col)
-        if cell_df is not None:
-            frames.append(cell_df)
-
-    if not frames:
-        return pl.DataFrame(
-            schema={
-                "geo_id": pl.Utf8,
-                "control_name": pl.Utf8,
-                "category": pl.Utf8,
-                "target_total": pl.Float64,
-                "se": pl.Float64,
-                "moe_pct": pl.Float64,
-            }
-        )
-    return pl.concat(frames)
-
-
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -126,19 +118,18 @@ def _control_cell_moe(
     ctrl: ControlTarget,
     hh_df: pl.DataFrame,
     person_df: pl.DataFrame,
-    geo_col: str,
 ) -> pl.DataFrame | None:
     """Compute per-cell SE and MOE% for one control across all zones.
 
-    Returns a DataFrame with columns ``[geo_id, control_name, category,
+    Returns a DataFrame with columns ``[zone_group_id, control_name, category,
     target_total, se, moe_pct]``, or ``None`` if no PUMS records exist.
     """
     if ctrl.level == ControlLevel.HOUSEHOLD:
-        source, wt_col, rep_prefix = hh_df, "_xw_WGTP", "_xw_WGTP"
+        source, wt_col = hh_df, "_xw_WGTP"
     else:
-        source, wt_col, rep_prefix = person_df, "_xw_PWGTP", "_xw_PWGTP"
+        source, wt_col = person_df, "_xw_PWGTP"
 
-    rep_cols = [f"{rep_prefix}{i}" for i in range(1, _N_REPLICATES + 1)]
+    rep_cols = [f"{wt_col}{i}" for i in range(1, _N_REPLICATES + 1)]
     missing = [c for c in rep_cols if c not in source.columns]
 
     if missing:
@@ -160,7 +151,7 @@ def _control_cell_moe(
 
     cells = (
         source.filter(pl.col(ctrl.name).is_in(valid_values))
-        .group_by([geo_col, ctrl.name])
+        .group_by(["zone_group_id", ctrl.name])
         .agg([pl.col(wt_col).sum(), *(pl.col(c).sum() for c in rep_cols)])
     )
     if len(cells) == 0:
@@ -174,15 +165,15 @@ def _control_cell_moe(
     se = np.sqrt((4.0 / _N_REPLICATES) * np.sum(diff**2, axis=1))
 
     # Build result DataFrame with string category names
-    geo_ids = cells[geo_col].to_list()
+    zone_group_ids = cells["zone_group_id"].to_list()
     cat_ints = cells[ctrl.name].to_list()
     cat_names = [value_to_name.get(v, str(v)) for v in cat_ints]
     moe_pct = np.where(estimates > 0, se / estimates * 100, 0.0)
 
     return pl.DataFrame(
         {
-            "geo_id": geo_ids,
-            "control_name": [ctrl.name] * len(geo_ids),
+            "zone_group_id": zone_group_ids,
+            "control_name": [ctrl.name] * len(zone_group_ids),
             "category": cat_names,
             "target_total": estimates.tolist(),
             "se": se.tolist(),
@@ -191,23 +182,18 @@ def _control_cell_moe(
     )
 
 
-def _control_cv(
-    ctrl: ControlTarget,
-    hh_df: pl.DataFrame,
-    person_df: pl.DataFrame,
-    geo_col: str,
-) -> float | None:
+def _control_cv(cells: pl.DataFrame) -> float | None:
     """Compute a representative CV for one control across all zones.
 
-    Returns the *median CV across cells* (geo x category), or ``None``
-    if no PUMS records exist for this control's categories.
-    """
-    cell_df = _control_cell_moe(ctrl, hh_df, person_df, geo_col)
-    if cell_df is None:
-        return None
+    Args:
+        cells: The control's rows of ``compute_control_moe``.
 
-    targets = cell_df["target_total"].to_numpy()
-    ses = cell_df["se"].to_numpy()
+    Returns:
+        The *median CV across cells* (zone x category), or ``None`` if no
+        cell has a positive estimate.
+    """
+    targets = cells["target_total"].to_numpy()
+    ses = cells["se"].to_numpy()
     mask = targets > 0
     if not mask.any():
         return None

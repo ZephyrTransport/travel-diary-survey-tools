@@ -10,9 +10,9 @@ For detailed API documentation including function signatures, parameters, compon
 The documentation includes:
 
 - `format_ctramp()` - Transform canonical data to CT-RAMP model specification
-- Complete component descriptions (Households, Persons, Mandatory Locations, Individual Tours, Joint Tours, Individual Trips, Joint Trips)
+- Component descriptions for the eleven output tables (households, persons, mandatory locations, individual and joint tours and trips, all tours, all trips, CDAP and auto ownership results)
 - Data flow and execution stages
-- Configuration parameters (income thresholds, TAZ filtering, age thresholds, gender defaults)
+- Configuration parameters (`usability_profile`, income thresholds, TAZ field, age thresholds, gender defaults). Which records are written is the profile's choice: the step keeps the records its `usability_profile` admits
 - Implementation notes (excluded fields, placeholder values, empty data handling)
 - Usage examples
 

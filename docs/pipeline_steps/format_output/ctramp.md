@@ -1,3 +1,4 @@
+[](){#ctramp-format}
 # CT-RAMP Formatting
 
 ## Overview
@@ -31,22 +32,29 @@ Bridging these two representations is the core job of the pipeline steps that pr
 
 | Pipeline step | What it does |
 |---|---|
-| `load_data` | Reads raw BATS household / person / trip tables |
-| `link_trips` | Resolves GPS traces into semantically distinct linked trips |
+| `load_data`, `clean_<project>` | Reads the survey tables and recodes them to the canonical schema |
+| `link_trips` | Joins trip segments into linked trips |
+| `detect_habitual_locations` | Finds each person's home, workplace and school |
 | `detect_joint_trips` | Identifies trips shared among household members |
-| `extract_tours` | Groups linked trips into home-based and work-based tours |
+| `extract_tours` | Groups linked trips into home-based tours, subtours and joint tours |
+| `add_zone_ids` | Assigns TAZ (and other zones) to every location |
+| `cascade_usability` | Stamps `usable_<profile>` for each profile, `ctramp` among them |
+| `compute_weights` | Fits one weight set per profile, `hh_weight_ctramp` among them |
 | **`format_ctramp`** | **Translates canonical tours/trips into CT-RAMP schema** |
 
 By the time `format_ctramp` runs, the canonical data is already in a tour-based structure that
 mirrors CT-RAMP's expectations.  The remaining work is renaming columns, encoding categorical
-variables, applying income-based segmentation, and filtering out households/persons that cannot be
-meaningfully represented in the model.
+variables and applying income-based segmentation. Which records are written is not decided here:
+the step keeps the records its `usability_profile` admits (the `usable_<profile>` column), and
+reads that profile's weights.
 
 ---
 
 ## Output Tables
 
-`format_ctramp` produces seven tables that exactly mirror the CT-RAMP model output files.
+`format_ctramp` produces eleven tables that mirror the CT-RAMP model output files: households,
+persons, individual and joint tours, individual and joint trips, mandatory locations, all tours,
+all trips, and the CDAP and auto ownership results.
 See [CT-RAMP Data Models](../../models/ctramp.md) for the table listing and field-level schema
 documentation.
 
@@ -107,16 +115,19 @@ information recorded in the linked trip data.
 
 ### Joint tours
 
-Tours detected by `detect_joint_trips` as shared among two or more household members are written to
-the **joint** tour and trip tables rather than the individual ones.  The `joint_tours_ctramp` table
+Joint tours are built by `extract_tours` from the joint trips `detect_joint_trips` found. They are
+written to the **joint** tour and trip tables, rather than the individual ones, when the profile
+admits them: CT-RAMP draws a joint tour's trips once for everyone on it, so the `ctramp` profile
+sets `joint_tours: fully_joint`, and a tour someone leaves for a leg becomes individual tours.  The `joint_tours_ctramp` table
 records tour composition (adults only, children only, or mixed) and the participating person list.
 
 ### Spatial fields (TAZ)
 
 CT-RAMP operates on Transportation Analysis Zones (TAZ).  Home, work, and school locations are
 snapped to TAZ centroids by the upstream `add_zone_ids` step.  `format_ctramp` selects which
-TAZ geography to use (configurable via `taz_field`, e.g. `TAZ1454`) and optionally drops
-households whose home location falls outside the model region (`drop_missing_taz: true`).
+TAZ geography to use (configurable via `taz_field`, e.g. `TAZ1454`). A record without a TAZ is
+left out by the profile, not by this step: the `ctramp` profile sets `zone_coverage` to that zone
+system.
 
 ---
 
@@ -159,12 +170,12 @@ made on a **weighted** basis, matching what the model sees from its synthetic po
 
 ## Configuration Reference
 
-See [CTRAMPConfig][processing.formatting.ctramp.ctramp_config.CTRAMPConfig] for all
-configuration parameters.  Key parameters from `config_tm17_calibration.yaml`:
+As set in `projects/bats_2023/config.yaml`:
 
-```yaml
+```yaml title="Example"
 - name: format_ctramp
   params:
+    usability_profile: ctramp       # the records kept, and the weights read
     income_low_threshold: 30000     # below → work_low ($2000)
     income_med_threshold: 60000     # below → work_med ($2000)
     income_high_threshold: 100000   # below → work_high, above → work_very_high ($2000)
@@ -172,127 +183,10 @@ configuration parameters.  Key parameters from `config_tm17_calibration.yaml`:
     age_adult: 4                    # AgeCategory enum value; 4 = AGE_18_TO_24+
     gender_default_for_missing: "f" # CT-RAMP requires binary gender
     taz_field: "TAZ1454"            # Which zone geography to use
-    drop_missing_taz: true
-    filter_zero_weight: true
 ```
 
----
+### Settings
 
-## API Reference
+<!-- step-settings: format_ctramp -->
 
-::: processing.formatting.ctramp.format_ctramp
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - format_ctramp
-      filters:
-        - "!^logger$"
-        - "!^_"
-
-::: processing.formatting.ctramp.ctramp_config
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - CTRAMPConfig
-      filters:
-        - "!^logger$"
-        - "!^_"
-
-::: processing.formatting.ctramp.format_households
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - format_households
-      filters:
-        - "!^logger$"
-        - "!^_"
-
-::: processing.formatting.ctramp.format_persons
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - format_persons
-      filters:
-        - "!^logger$"
-        - "!^_"
-
-::: processing.formatting.ctramp.format_mandatory_location
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - format_mandatory_location
-      filters:
-        - "!^logger$"
-        - "!^_"
-
-::: processing.formatting.ctramp.format_tours
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - format_individual_tour
-        - format_joint_tour
-      filters:
-        - "!^logger$"
-        - "!^_"
-
-::: processing.formatting.ctramp.format_trips
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - format_individual_trip
-        - format_joint_trip
-      filters:
-        - "!^logger$"
-        - "!^_"
-
-::: processing.formatting.ctramp.person_mappings
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - GENDER_MAP
-        - EMPLOYMENT_TO_CTRAMP
-        - ctramp_person_type_expression
-        - log_person_type_warnings
-      filters:
-        - "!^logger$"
-        - "!^_"
-
-::: processing.formatting.ctramp.purpose_mappings
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - PURPOSECATEGORY_TO_JTF_GROUP
-        - ctramp_purpose_category_expression
-      filters:
-        - "!^logger$"
-        - "!^_"
-
-::: processing.formatting.ctramp.mode_mappings
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - ctramp_mode_expression
-      filters:
-        - "!^logger$"
-        - "!^_"
-
-::: processing.formatting.ctramp.student_mappings
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - ctramp_student_category_expression
-        - log_student_category_warnings
-      filters:
-        - "!^logger$"
-        - "!^_"
+Code: [processing.formatting.ctramp](../../reference/processing/formatting/ctramp.md)

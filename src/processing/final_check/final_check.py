@@ -8,7 +8,9 @@ that leverages the `@step()` decorator's automatic Pydantic model validation.
 
     # Pydantic Model Validation
 
-    1. This step is decorated with `@step(validate_input=True, validate_output=True)`
+    1. This step is decorated with `@step(validate_input=True, validate_output=True)`.
+       Its config entry can override either flag; a flag the config leaves out keeps
+       the decorator's value
     2. The pipeline framework automatically validates all input/output against Pydantic
        data models
     3. Validation checks:
@@ -53,20 +55,27 @@ import logging
 
 import polars as pl
 
-from pipeline.decoration import step
+from pipeline.decoration import Tables, step
 
 logger = logging.getLogger(__name__)
 
 
-@step(validate_input=True, validate_output=True)
-def final_check(
-    households: pl.DataFrame,
-    persons: pl.DataFrame,
-    days: pl.DataFrame,
-    unlinked_trips: pl.DataFrame,
-    linked_trips: pl.DataFrame,
-    tours: pl.DataFrame,
-) -> dict[str, pl.DataFrame]:
+@step(
+    validate_input=True,
+    validate_output=True,
+    requires={
+        table: set()
+        for table in (
+            "households",
+            "persons",
+            "person_days",
+            "unlinked_trips",
+            "linked_trips",
+            "tours",
+        )
+    },
+)
+def final_check(tables: Tables) -> dict[str, pl.DataFrame]:
     """Run comprehensive validation on all canonical survey tables.
 
     This is a pass-through function that relies on the `@step()` decorator to
@@ -75,20 +84,14 @@ def final_check(
     and business rules.
 
     Args:
-        households: Processed household table with all required fields
-        persons: Processed person table with all required fields
-        days: Processed person-day table with all required fields
-        unlinked_trips: Processed unlinked trip records with all required fields
-        linked_trips: Processed linked trip records (journey-level) with all
-            required fields
-        tours: Processed tour records with all required fields
+        tables: The six core tables, processed.
 
     Returns:
         Dictionary containing the same validated tables:
 
             - households: Validated household table
             - persons: Validated person table
-            - days: Validated person-day table
+            - person_days: Validated person-day table
             - unlinked_trips: Validated unlinked trip records
             - linked_trips: Validated linked trip records
             - tours: Validated tour records
@@ -104,20 +107,6 @@ def final_check(
           ideally be implemented in Pydantic models for reusability
     """
     logger.info("Starting final validation checks")
-
-    # Pydantic handles validation automatically when parsing/creating models
-    # Just pass through the data - validation happens at model instantiation
-
-    # This space *could* be used to implement any additional custom checks
-    # that are not covered by the pydantic models, if needed in future. But
-    # checks should ideally be implemented in the models themselves!
-
+    # Validation happens in the @step decorator; see Notes for adding checks here
     logger.info("Final validation checks completed successfully")
-    return {
-        "households": households,
-        "persons": persons,
-        "days": days,
-        "unlinked_trips": unlinked_trips,
-        "linked_trips": linked_trips,
-        "tours": tours,
-    }
+    return dict(tables)

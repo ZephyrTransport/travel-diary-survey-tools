@@ -1,6 +1,6 @@
 """Data models for DaySim file formats.
 
-See [Pipeline Steps > Format Output > DaySim Format](../pipeline_steps/format_output/daysim.md)
+See [Pipeline Steps > Format Output > DaySim Format][daysim-format]
 
 """
 

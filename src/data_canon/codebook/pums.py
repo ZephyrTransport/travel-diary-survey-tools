@@ -83,6 +83,7 @@ class PumsSchl(LabeledEnum):
 
     canonical_field_name = "SCHL"
 
+    NA = (0, "N/A (less than 3 years old)")
     NO_SCHOOLING = (1, "No schooling completed")
     NURSERY = (2, "Nursery school, preschool")
     KINDERGARTEN = (3, "Kindergarten")
@@ -195,6 +196,9 @@ class PumsThresholds:
 
     # AGEP — child age ceiling for h_children aggregation
     CHILD_MAX_AGE: int = 17
+
+    # AGEP — youngest driving age, for h_vehicles_per_driver aggregation
+    MIN_DRIVING_AGE: int = 16
 
     # WKHP — weekly hours threshold below which an employed person
     # is classified as part-time

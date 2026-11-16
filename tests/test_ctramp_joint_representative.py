@@ -1,8 +1,7 @@
-"""Choosing the member trip that stands for a joint group's location.
+"""Which member trip gives a joint record its origin and destination.
 
-Canonical joint tables carry no coordinates -- they record which trips travelled
-together, not where. CT-RAMP needs one origin and one destination per joint
-record, so the choice is made here, and these pin what it chooses.
+Canonical joint tables say which trips travelled together, not where; CT-RAMP
+needs one origin and destination per joint record.
 """
 
 import polars as pl
@@ -44,13 +43,7 @@ class TestChoosingTheMember:
         assert rep["o_lat"].to_list() == [37.600]  # not the 37.55 midpoint
 
     def test_a_pair_ties_even_when_the_arithmetic_is_untidy(self):
-        """The pair's tie must survive floating point, or the tie-break never runs.
-
-        Two members are equidistant from their own midpoint exactly, but not in
-        binary: subtracting the midpoint can leave one a fraction of an ulp
-        closer. Unrounded, that noise decides the commonest case instead of
-        ``person_id``.
-        """
+        """A pair ties despite floating-point noise in the midpoint, so person_id still decides."""
         members = _members([(101, 500, 900, 39.0100, 40.0100), (102, 500, 900, 39.0000, 40.0000)])
 
         rep = select_representative_members(members)
@@ -72,11 +65,10 @@ class TestChoosingTheMember:
         assert rep["person_id"].to_list() == [102]
 
     def test_both_ends_come_from_the_same_member(self):
-        """A per-end rule would compose an origin and destination nobody paired.
+        """Origin and destination come from one member, not the nearest member at each end.
 
-        Person 102 is nearest the centre at the origin and 103 at the
-        destination, but 101 is closest over the two together -- so the row is
-        person 101's real trip, not a splice of the other two.
+        Person 102 is nearest the centre at the origin and 103 at the destination,
+        but 101 is closest over both.
         """
         members = _members(
             [
@@ -122,21 +114,11 @@ class TestChoosingTheMember:
 
 
 class TestOneMemberPerJointTour:
-    """The choice is settled per joint tour, not per leg.
-
-    Choosing per leg lets a tour take its outbound from one member and its
-    inbound from another. Where those two reported home a few metres apart
-    across a zone boundary, the tour then leaves one zone and returns to a
-    different one -- a tour that never gets home.
-    """
+    """Chosen per joint tour, so a tour cannot leave one member's home and return to another's."""
 
     @staticmethod
     def _tour_where_legs_disagree() -> pl.DataFrame:
-        """Two legs of one joint tour whose per-leg medoids are different people.
-
-        Outbound: 102 is the middle of 101/102/103. Inbound: 103 is. Left to
-        themselves the legs would pick different members.
-        """
+        """Two legs of one joint tour whose middle members differ: 102 outbound, 103 inbound."""
         return _members(
             [
                 # outbound leg
@@ -158,11 +140,7 @@ class TestOneMemberPerJointTour:
         assert rep["person_id"].n_unique() == 1
 
     def test_the_legs_would_otherwise_have_disagreed(self):
-        """The premise: judged alone, the two legs pick different members.
-
-        Without this the previous test would pass on a fixture that never
-        exercised the rule.
-        """
+        """The premise of the test above: judged alone, the two legs pick different members."""
         members = self._tour_where_legs_disagree().with_columns(
             pl.lit(None, dtype=pl.Int64).alias("joint_tour_id")
         )
@@ -193,12 +171,7 @@ class TestTheTourAndItsTripsAgree:
     """The joint tour and its joint trips are two views of one outing."""
 
     def test_the_tour_takes_the_same_member_as_its_trips(self):
-        """Both files resolve to one member, so neither describes half of each.
-
-        The tour file used to take whichever member tour sorted first, which on
-        BATS 2023 disagreed with the trip file's representative for 148 joint
-        tours -- placing 10 of them in a different zone from their own trips.
-        """
+        """The tour and its trips resolve to the same member."""
         members = _members(
             [
                 (101, 500, 900, 37.0000, 38.0000),

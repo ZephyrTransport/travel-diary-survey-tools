@@ -5,8 +5,7 @@ import logging
 import polars as pl
 
 from data_canon.codebook.daysim import DaysimPersonType
-from data_canon.codebook.households import IncomeBroad
-from utils.helpers import get_income_midpoint
+from processing.formatting.income_bins import income_bin_midpoints
 
 from .mappings import (
     RENTOWN_MAP,
@@ -22,18 +21,16 @@ def format_households(
 ) -> pl.DataFrame:
     """Format household data to DaySim specification.
 
-    Calculates household composition from person data and applies income
-    fallback logic.
+    Calculates household composition from person data and fills income from
+    the income bin where no income is given.
 
     Key Transformations:
 
-    - **Household Composition***: Aggregate person types within household (full-time workers,
+    - **Household Composition**: Aggregate person types within household (full-time workers,
       part-time workers, retirees, non-working adults, university students, high school
       students, children by age)
-    - **Income Processing**: Categorize household income into DaySim bins using midpoint
-      values, handle missing values with fallback logic from detailed to followup income
-    - **Size and Type**: Household size from person count, household type derived from
-      composition (workers, students, children)
+    - **Income**: The household's income, else the midpoint of its income bin, else -1
+    - **Size**: Household size, vehicles and workers as reported
     - **Coordinates**: Home location coordinates and TAZ/MAZ assignment
 
     Household composition fields:
@@ -95,12 +92,9 @@ def format_households(
     )
 
     # Derive hhincome: use pre-computed income if available, otherwise midpoint of income_bin
-    income_bin_map = {
-        bin_cat.value: int(get_income_midpoint(bin_cat))
-        for bin_cat in IncomeBroad
-        if "Prefer not to answer" not in bin_cat.label and "Missing" not in bin_cat.label
-    }
-    income_bin_expr = pl.col("income_bin").cast(pl.Int64).replace_strict(income_bin_map, default=-1)
+    income_bin_expr = (
+        pl.col("income_bin").cast(pl.Int64).replace_strict(income_bin_midpoints(), default=-1)
+    )
     if "income" in households_daysim.columns:
         households_daysim = households_daysim.with_columns(
             hhincome=pl.coalesce(pl.col("income"), income_bin_expr).fill_null(-1)

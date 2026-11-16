@@ -38,6 +38,7 @@ import logging
 
 import polars as pl
 
+from processing.joint_trips.aggregation import household_day_of
 from utils.create_ids import create_concatenated_id
 
 logger = logging.getLogger(__name__)
@@ -72,13 +73,13 @@ def identify_joint_tours(
 
     if joint_trip_members.is_empty():
         logger.info("No joint trips found, skipping joint tour identification")
-        return _without_joint_tours(linked_trips, tours)
+        return without_joint_tours(linked_trips, tours)
 
     eligible_tours = _find_eligible_tours(trips_with_tours, joint_trip_members)
 
     if eligible_tours.is_empty():
         logger.info("No tours where all trips are joint, skipping joint tour identification")
-        return _without_joint_tours(linked_trips, tours)
+        return without_joint_tours(linked_trips, tours)
 
     # One row per (tour, joint_trip_id). This is the relation linked_trips
     # already holds; keep it long rather than collapsing to a list per tour.
@@ -95,7 +96,7 @@ def identify_joint_tours(
 
     if valid_joint_tours.is_empty():
         logger.info("No stable joint tour groups found")
-        return _without_joint_tours(linked_trips, tours)
+        return without_joint_tours(linked_trips, tours)
 
     tours_with_joint_id = _assign_joint_tour_ids(
         tour_joint_trips.join(
@@ -173,7 +174,7 @@ def _validate_joint_tours_have_joint_trips(linked_trips: pl.DataFrame) -> None:
     raise ValueError(msg)
 
 
-def build_joint_tours_table(tours: pl.DataFrame) -> pl.DataFrame:
+def build_joint_tours_table(tours: pl.DataFrame, person_days: pl.DataFrame) -> pl.DataFrame:
     """Build the canonical ``joint_tours`` table from tours carrying a joint id.
 
     One row per ``joint_tour_id``, mirroring how ``build_joint_trips_table``
@@ -184,15 +185,19 @@ def build_joint_tours_table(tours: pl.DataFrame) -> pl.DataFrame:
     Args:
         tours: Canonical tours, after ``identify_joint_tours`` has stamped
             ``joint_tour_id``.
+        person_days: Days with ``person_day_id``, ``hh_day_id`` and ``travel_date``; see
+            :func:`processing.joint_trips.aggregation.household_day_of`.
 
     Returns:
-        One row per joint tour with ``hh_id``, ``day_id``, ``num_participants``
+        One row per joint tour with ``hh_id``, ``hh_day_id``, ``travel_date``,
+        ``num_participants``
         and, where the member tours carry it, ``survey_complete``.
     """
     schema = {
         "joint_tour_id": pl.Int64,
         "hh_id": pl.Int64,
-        "day_id": pl.Int64,
+        "hh_day_id": pl.Int64,
+        "travel_date": person_days.schema["travel_date"],
         "num_participants": pl.Int64,
     }
     if "joint_tour_id" not in tours.columns:
@@ -204,14 +209,20 @@ def build_joint_tours_table(tours: pl.DataFrame) -> pl.DataFrame:
 
     agg = [
         pl.col("hh_id").first(),
-        pl.col("day_id").first(),
         pl.col("person_id").n_unique().alias("num_participants"),
     ]
     # A joint tour is only as complete as its least complete member.
     if "survey_complete" in members.columns:
         agg.append(pl.all("survey_complete").alias("survey_complete"))
 
-    joint_tours = members.group_by("joint_tour_id").agg(agg).sort("joint_tour_id")
+    joint_tours = (
+        members.group_by("joint_tour_id")
+        .agg(agg)
+        .join(
+            household_day_of(members, person_days, "joint_tour_id"), on="joint_tour_id", how="left"
+        )
+        .sort("joint_tour_id")
+    )
 
     logger.info(
         "Built %d joint tours from %d member tours",
@@ -221,7 +232,7 @@ def build_joint_tours_table(tours: pl.DataFrame) -> pl.DataFrame:
     return joint_tours
 
 
-def _without_joint_tours(
+def without_joint_tours(
     linked_trips: pl.DataFrame,
     tours: pl.DataFrame,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
@@ -370,21 +381,9 @@ def _drop_singleton_joint_tours(
     Returns:
         The same frame with singleton joint_tour_ids set to null
     """
-    shared_ids = (
-        tours_with_joint_id.group_by("joint_tour_id")
-        .agg(pl.col("person_id").n_unique().alias("_n_persons"))
-        .filter(pl.col("_n_persons") >= MIN_JOINT_TOUR_PARTICIPANTS)
-        .select("joint_tour_id")
-        .with_columns(pl.lit(value=True).alias("_shared"))
-    )
-
-    return (
-        tours_with_joint_id.join(shared_ids, on="joint_tour_id", how="left")
-        .with_columns(
-            pl.when(pl.col("_shared").fill_null(value=False))
-            .then(pl.col("joint_tour_id"))
-            .otherwise(pl.lit(None, dtype=pl.Int64))
-            .alias("joint_tour_id")
-        )
-        .drop("_shared")
+    n_persons = pl.col("person_id").n_unique().over("joint_tour_id")
+    return tours_with_joint_id.with_columns(
+        pl.when(n_persons >= MIN_JOINT_TOUR_PARTICIPANTS)
+        .then(pl.col("joint_tour_id"))
+        .alias("joint_tour_id")
     )

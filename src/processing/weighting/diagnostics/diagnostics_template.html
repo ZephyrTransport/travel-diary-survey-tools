@@ -107,6 +107,20 @@
   .tile { border: 1px solid #ddd; padding: .4rem .7rem; min-width: 104px; }
   .tile .k { display: block; color: #666; font-size: .78em; margin-bottom: .1rem; }
   .tile .v { font-size: 1.25em; font-variant-numeric: tabular-nums; }
+  /* Zone table and weight carried for dropped records */
+  .checks { border-left: 3px solid #2a7f2a; background: #f3f9f3; padding: .5rem .9rem;
+            margin: .8rem 0; max-width: 80ch; font-size: .95em; }
+  .checks ul { margin: .3rem 0 0; padding-left: 1.2rem; }
+  .bars { max-width: 720px; margin: .8rem 0; }
+  .bar-row { display: flex; align-items: center; gap: .6rem; margin: .3rem 0; }
+  .bar-lab { width: 7rem; color: #444; font-size: .9em; }
+  .bar { display: flex; flex: 1; height: 1.1rem; border: 1px solid #ccc; }
+  .seg { display: block; height: 100%; }
+  .s0 { background: #d9e6ef; } .s1 { background: #f2c18d; } .s2 { background: #e8954b; }
+  .s3 { background: #c9611f; } .s4 { background: #8a3a0c; }
+  .legend { font-size: .8em; color: #555; margin: .3rem 0 0 7.6rem; }
+  .legend .key { display: inline-block; width: .8rem; height: .8rem; vertical-align: -1px;
+                 margin: 0 .2rem 0 .6rem; border: 1px solid #bbb; }
   @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
 </style>
 </head>
@@ -188,53 +202,59 @@
   simplified to about 10&nbsp;m, which is not visible at this scale and keeps the file small.
 </div></details>
 {{ crosswalk_section }}
+{% if crosswalk_table %}
+<h3>Households by zone &mdash; <span class="profile-name active-profile">{{ panes[0].profile }}</span></h3>
+<p class="lede">Surveyed households in each zone for the selected profile. County names come from the Census, so a zone ID listed under the wrong group shows up as the wrong county.</p>
 {{ crosswalk_table }}
+{% endif %}
+{% if survey_share_table %}
+<h3>Survey share of each group</h3>
+<p class="lede">Each group's share of its area's survey records against its share of the area's PUMS (households for household targets, persons for person targets), smallest ratio first.</p>
+<details class="more"><summary>How to read this</summary><div>
+  <b>Ratio</b> is % of area's survey divided by % of area's PUMS. At 1.0 the group is in the survey in
+  proportion; at 0.10 it has a tenth of its share. A group with a low ratio needs weights well above its
+  area's average to reach its target, and the weighting caps how far a weight can go, so the run stops
+  before balancing on any group below <code>balancing.min_survey_share_ratio</code>. Each row is the
+  profile with the lowest ratio.
+</div></details>
+<details><summary>All groups</summary>
+{{ survey_share_table }}
+</details>
+{% endif %}
 </section>
 {% endif %}
 
 {% if nums.cascade is defined %}
 <section id="sec-cascade" data-sec="cascade">
 <h2>{{ nums.cascade }} &mdash; {{ titles.cascade }}</h2>
-<p class="lede">Records included and records weighted at each level, for every profile.</p>
-<details class="more"><summary>How to read this</summary><div><ul>
-  <li><b>Usable</b>: meets the profile's criteria for that level.</li>
-  <li><b>Weighted</b>: usable and assigned a weight.</li>
-  <li><b>Unweighted</b>: usable but assigned no weight. Below the household level, this means the record's household was excluded, so a person can be usable and still have no weight. At the household level, it means the household is outside every control zone (see the coverage table below).</li>
-</ul></div></details>
+<p class="lede">Records each profile keeps at each level. Only kept records carry a weight.</p>
 {{ cascade_table }}
 
-<h3>Redistribution of dropped records' weight</h3>
-<p class="lede">Dropped records' weight is redistributed among the remaining records at that level. The table shows each record's {{ term("ratio", "weight divided by the weight of the record it belongs to") }}, such as a person's weight divided by their household's; 1.0 means nothing was dropped.</p>
-<details class="more"><summary>How to read this</summary><div>
-  Every remaining record that belongs to the same higher-level record is scaled up by the same factor. A maximum of 10 means one
-  person carries the weight of a ten-person household. This is arithmetically correct, but records with
-  high ratios have a large influence on estimates, so check how many there are.
-</div></details>
-{{ redistribution_table }}
-
-{% if inheritance_table %}
-<h3>How each level's weights relate to the level above</h3>
-<p class="lede">For each set of weights, whether the weights at a level were copied from the level above, redistributed from it, or adjusted afterwards. Includes weights supplied with the survey.</p>
-<details class="more"><summary>How to read this</summary><div><ul>
-  <li><b>Copied</b>: every record has the same weight as the record it belongs to. Comparing weight sets at this level shows nothing that the level above does not.</li>
-  <li><b>Redistributed</b>: records that belong to the same higher-level record, such as the trips on one day, are all scaled by the same factor, so totals at this level stay consistent with the level above.</li>
-  <li><b>Adjusted per record</b>: records that belong to the same higher-level record were scaled by different factors after the weights were assigned. Totals calculated at this level will not match the same totals calculated at the level above; for example, trip-based totals will not match day-based totals. <b>Groups with unequal adjustments</b> counts the higher-level records where this occurs, and <b>Largest difference</b> is the largest ratio between two factors within one of them.</li>
-</ul>Days are excluded, because a person's weight is divided among their days by design.</div></details>
-{{ inheritance_table }}
+{% if exclusion_table %}
+<h3>Excluded by the cleaner</h3>
+<p class="lede">Records the project cleaner excluded, each counted at its own level. An excluded record is dropped under every profile, and so is everything below it. Where a profile needs every member's day, an excluded day also drops the household's other days on that date.</p>
+{{ exclusion_table }}
 {% endif %}
 
-<h3>Day split identity</h3>
-<p class="lede">A person's weight is divided among their usable days, so each person's day weights must add up to the person weight.</p>
-<details class="more"><summary>How to read this</summary><div>
-  Any gap larger than rounding error indicates a software defect. <b>With no usable lower-level record</b>
-  counts persons who have a weight but no usable day. Their weight is not passed down to the day level, rather
-  than being moved to other persons, which would distort day-level totals.
-</div></details>
-{{ split_identity_table }}
+<div class="checks">
+  <b class="converged">&#10003; Weight checks passed</b>
+  <ul>
+    <li>Every kept record carries a weight, and no other record does.</li>
+    <li>At every level, the weights add up to the level above.</li>
+  </ul>
+</div>
 
-<h3>Control geography coverage</h3>
-<p class="lede">Households outside every control zone cannot be assigned a weight.</p>
-{{ coverage_table }}
+{% if redistribution_view %}
+<h3>Weight carried for dropped records &mdash; <span class="profile-name active-profile">{{ panes[0].profile }}</span></h3>
+<p class="lede">When a household keeps only some of its people, the people kept carry the dropped people's share of the household's weight. Trips within a day work the same way. Most kept records are unchanged; the rest are scaled up by the amount shown.</p>
+<details class="more"><summary>How to read this</summary><div>
+  A household of 3 that keeps 2 people: each kept person carries 1.5&times; the household's weight.
+  One person kept from a household of 4 carries 4&times;. The totals stay right either way, but a record
+  scaled up a lot has more influence on estimates, so look at how many are in the higher ranges.
+  Days are split from their person rather than carried, so they are not shown.
+</div></details>
+{{ redistribution_view }}
+{% endif %}
 </section>
 {% endif %}
 
@@ -317,7 +337,7 @@ the model's estimates do not suit the survey population.</p>
 <p class="lede">Whether weighting succeeded in each zone, how closely weighted totals match their targets, and how much the weights vary.</p>
 <details class="more"><summary>How to read this</summary><div><ul>
   <li><b>Conv?</b>: whether weighting reached the required accuracy within the maximum number of iterations.</li>
-  <li><b>Household / Person</b>: total households and persons, from the first household-level and person-level control. If either does not match, consider increasing the importance of <code>h_total</code> or <code>p_total</code>. Surveys tend to under-sample large households, which lowers the person total.</li>
+  <li><b>Household / Person</b>: the <code>h_total</code> and <code>p_total</code> targets. If either does not match, consider increasing the importance of <code>h_total</code> or <code>p_total</code>. Surveys tend to under-sample large households, which lowers the person total.</li>
   <li><b>{{ term("cv") }}</b> depends heavily on the number and type of controls: below 0.6 is typical only with 2&ndash;3 household controls; 0.6&ndash;1.0 with a moderate specification of 4&ndash;6; 1.0&ndash;1.5 with many controls, including many person-level controls, and is not a problem if the targets are met; above 1.5, check for conflicting controls or categories with few records.</li>
   <li><b>{{ term("ess") }}</b> depends on the specification too: above 60% usually needs few controls or a very large sample; 40&ndash;60% is typical for a travel diary survey balancing 6&ndash;10 controls including person-level ones; 30&ndash;40% is common with many person-level controls; below 30% means a few records probably carry much of the weight, so consider combining categories, removing conflicting controls, or changing the expansion factor limits.</li>
   <li>Each person-level control (age, gender, employment, commute mode, and so on) is counted per household, and each one added gives the household weights more targets to meet at once. With five or more, ESS is usually 35&ndash;55%.</li>
@@ -329,14 +349,15 @@ the model's estimates do not suit the survey population.</p>
 <h2>{{ nums.quality }} &mdash; {{ titles.quality }} &mdash; <span class="profile-name">{{ pane.profile }}</span></h2>
 <p class="lede">How much the weights vary, and how far weighting moved them from their starting values.</p>
 <details class="more"><summary>How to read this</summary><div>
-  Weights should be roughly log-normal. The charts use a log scale, so they should look roughly
-  bell-shaped. Several peaks are not necessarily a problem, but suggest that a few variables, such as one
+  Weights should be roughly log-normal, so on the Log scale each zone's points should spread like a
+  bell turned on its side. Each point is a household; its sideways spread shows how many households
+  have about that weight, and the black line is the zone's mean. Several peaks are not necessarily a problem, but suggest that a few variables, such as one
   large control category, are driving the weights. {{ term("ef", "Expansion factors") }} at the configured
   limits mean weighting would have moved those households further if allowed. The sample is too small for
   the controls, and some categories or zones should be combined.
 </div></details>
 {{ pane.weight_quality_table }}
-<div class="chart">{{ pane.violins_html }}</div>
+<div class="chart">{{ pane.weight_distribution_html }}</div>
 </section>
 
 {% if pane.ef_tradeoff_section %}
@@ -356,8 +377,9 @@ the model's estimates do not suit the survey population.</p>
 <h2>{{ nums.fit_bars }} &mdash; {{ titles.fit_bars }} &mdash; <span class="profile-name">{{ pane.profile }}</span></h2>
 <p class="lede">{{ term("pcterr", "Percent error") }} for every control category in every zone. Hover a bar for the absolute values.</p>
 <p class="note">
-  Bar: % error. Red: the error exceeds 1 {{ term("se") }} of the PUMS target. Whiskers: &plusmn;1 SE.
-  Grey bars are within the target's own sampling uncertainty, so the gap may be in the target rather than the weighting.
+  Bar: % error. Whiskers: the target's ACS 90% margin of error (1.645 &times; its {{ term("se") }} from the PUMS replicate weights).
+  Red: the error is outside both the margin of error and &plusmn;5%. Grey bars are within one of them: inside the margin of error the gap may be sampling error in the target rather than the weighting; inside &plusmn;5% it is small however tight the target.
+  A group with no margin of error is red past &plusmn;15%.
 </p>
 <div class="chart">{{ pane.fit_bars_html }}</div>
 </section>
@@ -567,6 +589,14 @@ the model's estimates do not suit the survey population.</p>
     active = key;
     panes.forEach(function (p) {
       p.style.display = p.dataset.profile === key ? '' : 'none';
+    });
+    /* Blocks outside the panes that still belong to one profile */
+    document.querySelectorAll('.profile-view').forEach(function (v) {
+      v.hidden = v.dataset.profile !== key;
+    });
+    var label = activePane() && activePane().querySelector('.profile-name');
+    document.querySelectorAll('.active-profile').forEach(function (s) {
+      s.textContent = label ? label.textContent : key;
     });
     buttons.forEach(function (b) {
       b.setAttribute('aria-pressed', String(b.dataset.profile === key));

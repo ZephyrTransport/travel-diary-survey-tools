@@ -8,7 +8,7 @@ Orchestrates the core balancing loop:
    derive MOE-based per-control importance from PUMS replicate weights, with explicit
    YAML overrides.
 3. **Balancer** ([`balancer`][processing.weighting.balancing.balancer]) --
-   maximum-entropy list balancing via PopulationSim's ``np_balancer_numba``.
+   maximum-entropy list balancing via ``np_balancer_numba``, vendored from PopulationSim.
    Runs independently per geography zone.
 
 Household weights leave here for [`processing.weighting.core.propagation`]

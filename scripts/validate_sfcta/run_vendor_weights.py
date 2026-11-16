@@ -55,6 +55,8 @@ from pipeline.pipeline import Pipeline  # noqa: E402
 from processing import (  # noqa: E402
     add_existing_weights,
     add_zone_ids,
+    cascade_usability,
+    detect_habitual_locations,
     detect_joint_trips,
     extract_tours,
     format_daysim,
@@ -72,21 +74,25 @@ ADD_EXISTING_WEIGHTS_STEP = {
     "validate_input": False,
     "cache": False,
     "params": {
+        # Same choices as the add_existing_weights block in the project config.
+        "preserve_travel_totals": True,
+        "household_size_top_group": 6,
         "derive_missing_weights": True,  # fills linked_trip/joint_trip/tour weights
+        "weight_profiles": ["ctramp", "daysim", "analysis"],
         "weights": {
-            "household_weights": {
+            "hh_weight": {
                 "weight_path": "{{ survey_dir }}/hh.csv",
                 "weight_col": "hh_weight",
             },
-            "person_weights": {
+            "person_weight": {
                 "weight_path": "{{ survey_dir }}/person.csv",
                 "weight_col": "person_weight",
             },
-            "day_weights": {
+            "day_weight": {
                 "weight_path": "{{ survey_dir }}/day.csv",
                 "weight_col": "day_weight",
             },
-            "unlinked_trip_weights": {
+            "unlinked_trip_weight": {
                 "weight_path": "{{ survey_dir }}/trip.csv",
                 "weight_id_col": "trip_id",
                 "weight_col": "trip_weight",
@@ -138,10 +144,12 @@ if __name__ == "__main__":
             clean_2023_bats,
             imputation,
             link_trips,
+            detect_habitual_locations,
             detect_joint_trips,
             extract_tours,
-            add_existing_weights,
             add_zone_ids,
+            cascade_usability,
+            add_existing_weights,
             format_daysim,
             write_data,
         ],

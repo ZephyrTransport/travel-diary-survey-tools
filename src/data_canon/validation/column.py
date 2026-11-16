@@ -79,14 +79,11 @@ def get_unique_fields(model: type[BaseModel]) -> list[str]:
     Returns:
         List of field names marked as unique
     """
-    unique_fields = []
-
-    for field_name, field_info in model.model_fields.items():
-        extra = field_info.json_schema_extra or {}
-        if extra.get("unique", False):
-            unique_fields.append(field_name)
-
-    return unique_fields
+    return [
+        name
+        for name, info in model.model_fields.items()
+        if (info.json_schema_extra or {}).get("unique", False)
+    ]
 
 
 def check_unique_constraints(

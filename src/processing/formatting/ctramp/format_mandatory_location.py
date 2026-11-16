@@ -4,7 +4,7 @@ import logging
 
 import polars as pl
 
-from utils.helpers import expr_haversine
+from utils.helpers import METERS_PER_MILE, expr_haversine
 
 from .ctramp_config import CTRAMPConfig
 
@@ -30,14 +30,6 @@ def calc_fixed_location_distances(
     """
     if fixed_type not in ["work", "school"]:
         msg = "fixed_type must be 'work' or 'school'"
-        raise ValueError(msg)
-
-    if config.distance_unit not in ["miles", "kilometers", "meters"]:
-        msg = "distance_unit must be 'miles', 'kilometers', or 'meters'"
-        raise ValueError(msg)
-
-    if config.fixed_location_buffer_meters is None:
-        msg = "fixed_location_buffer_meters must be set in config"
         raise ValueError(msg)
 
     # Filter persons to fixed locations for the type we are calculating
@@ -85,50 +77,23 @@ def calc_fixed_location_distances(
     )
     logger.debug("Join complete: %d trip-person rows", len(trips_with_locations))
 
-    # Calculate flags for origin/destination proximity
+    def within_buffer(end: str, place: str) -> pl.Expr:
+        distance = expr_haversine(
+            pl.col(f"{end}_lat"),
+            pl.col(f"{end}_lon"),
+            pl.col(f"{place}_lat"),
+            pl.col(f"{place}_lon"),
+            units="meters",
+        )
+        return distance <= config.fixed_location_buffer_meters
+
     logger.debug("Computing haversine proximity flags")
     trips_with_flags = trips_with_locations.with_columns(
         [
-            (
-                expr_haversine(
-                    pl.col("o_lat"),
-                    pl.col("o_lon"),
-                    pl.col("home_lat"),
-                    pl.col("home_lon"),
-                    units="meters",
-                )
-                <= config.fixed_location_buffer_meters
-            ).alias("origin_is_home"),
-            (
-                expr_haversine(
-                    pl.col("o_lat"),
-                    pl.col("o_lon"),
-                    pl.col(f"{fixed_type}_lat"),
-                    pl.col(f"{fixed_type}_lon"),
-                    units="meters",
-                )
-                <= config.fixed_location_buffer_meters
-            ).alias(f"origin_is_{fixed_type}"),
-            (
-                expr_haversine(
-                    pl.col("d_lat"),
-                    pl.col("d_lon"),
-                    pl.col("home_lat"),
-                    pl.col("home_lon"),
-                    units="meters",
-                )
-                <= config.fixed_location_buffer_meters
-            ).alias("dest_is_home"),
-            (
-                expr_haversine(
-                    pl.col("d_lat"),
-                    pl.col("d_lon"),
-                    pl.col(f"{fixed_type}_lat"),
-                    pl.col(f"{fixed_type}_lon"),
-                    units="meters",
-                )
-                <= config.fixed_location_buffer_meters
-            ).alias(f"dest_is_{fixed_type}"),
+            within_buffer("o", "home").alias("origin_is_home"),
+            within_buffer("o", fixed_type).alias(f"origin_is_{fixed_type}"),
+            within_buffer("d", "home").alias("dest_is_home"),
+            within_buffer("d", fixed_type).alias(f"dest_is_{fixed_type}"),
             # Calculate matching TAZs for origin/destination, used as fallback
             (pl.col(f"o_{config.taz_field}") == pl.col(f"{fixed_type}_{config.taz_field}")).alias(
                 f"origin_is_{fixed_type}_{config.taz_field}"
@@ -184,7 +149,7 @@ def calc_fixed_location_distances(
     # If unit is miles, convert from meters
     if config.distance_unit == "miles":
         distances = distances.with_columns(
-            (pl.col(f"{fixed_type}_distance_meters") / 1609.34).alias(
+            (pl.col(f"{fixed_type}_distance_meters") / METERS_PER_MILE).alias(
                 f"{fixed_type}_distance_miles"
             )
         ).select(["person_id", f"{fixed_type}_distance_miles"])
@@ -201,6 +166,34 @@ def calc_fixed_location_distances(
         len(distances),
     )
     return distances
+
+
+def _log_tours_with_no_usual_location(
+    mandatory_loc: pl.DataFrame, kind: str, place: str, taz_field: str
+) -> None:
+    """Warn about *kind* tours made by person-days with no usual *place*.
+
+    The model sends every work or school tour to the usual location, so it has
+    nothing to send these to. The tours are real -- the survey could not place
+    them -- and stay *kind* tours, with the location 0.
+    """
+    count_col, zone_col = f"{kind}_count", f"{kind}_{taz_field}"
+    if count_col not in mandatory_loc.columns:
+        return
+    unplaced = mandatory_loc.filter(
+        (pl.col(count_col).fill_null(0) > 0) & (pl.col(zone_col).fill_null(0) == 0)
+    )
+    if unplaced.is_empty():
+        return
+    logger.warning(
+        "%d %s tour(s) by %d person-day(s) with no usual %s; they stay %s tours, "
+        "with the location 0.",
+        unplaced[count_col].sum(),
+        kind,
+        unplaced.height,
+        place,
+        kind,
+    )
 
 
 def format_mandatory_location(
@@ -270,6 +263,9 @@ def format_mandatory_location(
             on="person_id",
             how="left",
         ).rename({f"{fixed_type}_distance_{config.distance_unit}": f"{fixed_type}_distance_survey"})
+
+    for kind, place in (("work", "workplace"), ("school", "school")):
+        _log_tours_with_no_usual_location(mandatory_loc, kind, place, config.taz_field)
 
     # Map to CT-RAMP column names
     mandatory_loc = mandatory_loc.select(

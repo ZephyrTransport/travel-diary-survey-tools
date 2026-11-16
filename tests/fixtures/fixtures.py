@@ -6,27 +6,28 @@ test data.
 """
 
 import polars as pl
-import pytest
 
 from data_canon.codebook.trips import PurposeCategory
 from processing.link_trips import link_trips
-from processing.tours import extract_tours
 
-from .base_records import create_day
-from .locations import lookup_location
+from .locations import LOCATIONS
+from .records import create_day, create_unlinked_trip
 from .scenario_builders import (
     DEFAULT_TRANSIT_MODE_CODES,
     multi_person_household,
-    multi_stop_tour,
-    multi_tour_day,
     simple_work_tour,
     transit_commute,
 )
-from .trip_records import create_unlinked_trip
+from .tour_pipeline import locate_and_extract_tours
 
-# ==============================================================================
-# Processed Scenario Functions
-# ==============================================================================
+# The coordinate prefixes whose zones each table carries.
+_ZONED = {
+    "households": ["home"],
+    "persons": ["work", "school"],
+    "unlinked_trips": ["o", "d"],
+    "linked_trips": ["o", "d"],
+    "tours": ["o", "d"],
+}
 
 
 def create_simple_work_tour_processed(
@@ -36,35 +37,21 @@ def create_simple_work_tour_processed(
     """Create simple work tour processed through pipeline.
 
     Returns processed data ready for formatter testing.
-
-    Returns:
-        Dict with keys: households, persons, days, unlinked_trips,
-                       linked_trips, tours
     """
-    households, persons, days, unlinked_trips = simple_work_tour(hh_id, person_id)
-    return process_scenario_through_pipeline(households, persons, days, unlinked_trips)
+    households, persons, person_days, unlinked_trips = simple_work_tour(hh_id, person_id)
+    return process_scenario_through_pipeline(households, persons, person_days, unlinked_trips)
 
 
 def create_transit_commute_processed() -> dict[str, pl.DataFrame]:
-    """Create transit commute scenario with all processing applied.
-
-    Returns:
-        Dict with keys: households, persons, days, unlinked_trips,
-                       linked_trips, tours
-    """
-    households, persons, days, unlinked_trips = transit_commute()
-    return process_scenario_through_pipeline(households, persons, days, unlinked_trips)
+    """Create transit commute scenario with all processing applied."""
+    households, persons, person_days, unlinked_trips = transit_commute()
+    return process_scenario_through_pipeline(households, persons, person_days, unlinked_trips)
 
 
 def create_multi_person_household_processed(
     hh_id: int = 1,
 ) -> dict[str, pl.DataFrame]:
-    """Create multi-person household processed through pipeline.
-
-    Returns:
-        Dict with keys: households, persons, days, unlinked_trips,
-                       linked_trips, tours
-    """
+    """Create multi-person household processed through pipeline."""
     households, persons = multi_person_household(hh_id=hh_id)
 
     # Create simple days for all persons
@@ -78,7 +65,7 @@ def create_multi_person_household_processed(
 
         days_list.append(
             create_day(
-                day_id=person_id,
+                person_day_id=person_id,
                 person_id=person_id,
                 hh_id=hh_id,
                 person_num=person_num,
@@ -96,7 +83,7 @@ def create_multi_person_household_processed(
                         unlinked_trip_id=unlinked_trip_id,
                         person_id=person_id,
                         hh_id=hh_id,
-                        day_id=person_id,
+                        person_day_id=person_id,
                         person_num=person_num,
                         o_purpose_category=PurposeCategory.HOME,
                         d_purpose_category=PurposeCategory.WORK,
@@ -109,7 +96,7 @@ def create_multi_person_household_processed(
                         unlinked_trip_id=unlinked_trip_id + 1,
                         person_id=person_id,
                         hh_id=hh_id,
-                        day_id=person_id,
+                        person_day_id=person_id,
                         person_num=person_num,
                         o_purpose_category=PurposeCategory.WORK,
                         d_purpose_category=PurposeCategory.HOME,
@@ -122,160 +109,60 @@ def create_multi_person_household_processed(
             )
             unlinked_trip_id += 2
 
-    days = pl.DataFrame(days_list)
+    person_days = pl.DataFrame(days_list)
     unlinked_trips = pl.DataFrame(unlinked_trips_list) if unlinked_trips_list else pl.DataFrame()
 
     if not unlinked_trips.is_empty():
-        return process_scenario_through_pipeline(households, persons, days, unlinked_trips)
+        return process_scenario_through_pipeline(households, persons, person_days, unlinked_trips)
     return {
         "households": households,
         "persons": persons,
-        "days": days,
+        "person_days": person_days,
         "unlinked_trips": unlinked_trips,
         "linked_trips": pl.DataFrame(),
         "tours": pl.DataFrame(),
     }
 
 
-# ==============================================================================
-# Pipeline Processing Helper
-# ==============================================================================
+def _with_zones(df: pl.DataFrame, prefix: str) -> pl.DataFrame:
+    """*df* with ``<prefix>_taz`` and ``<prefix>_maz`` looked up from its coordinates."""
+    lat, lon = (
+        df[col] if col in df.columns else [None] * df.height
+        for col in (f"{prefix}_lat", f"{prefix}_lon")
+    )
+    found = [LOCATIONS.get(point) for point in zip(lat, lon, strict=True)]
+    return df.with_columns(
+        pl.Series(f"{prefix}_taz", [loc and loc.taz for loc in found], dtype=pl.Int64),
+        pl.Series(f"{prefix}_maz", [loc and loc.maz for loc in found], dtype=pl.Int64),
+    )
 
 
-def add_test_taz_maz_ids(
-    households: pl.DataFrame | None = None,
-    persons: pl.DataFrame | None = None,
-    unlinked_trips: pl.DataFrame | None = None,
-    linked_trips: pl.DataFrame | None = None,
-    tours: pl.DataFrame | None = None,
-) -> dict[str, pl.DataFrame]:
-    """Add TAZ/MAZ IDs to dataframes using mock spatial join.
-
-    Simulates project-specific spatial join step that assigns TAZ/MAZ IDs
-    based on lat/lon coordinates. Uses simple dictionary lookup from
-    locations.py for test scenarios.
-
-    Args:
-        households: Households DataFrame (optional)
-        persons: Persons DataFrame (optional)
-        unlinked_trips: Unlinked trips DataFrame (optional)
-        linked_trips: Linked trips DataFrame (optional)
-        tours: Tours DataFrame (optional)
-
-    Returns:
-        Tuple of (unlinked_trips, linked_trips, tours, households) with TAZ/MAZ
-    """
-
-    def assign_zone_ids(
-        df: pl.DataFrame, lat_col: str, lon_col: str, taz_col: str, maz_col: str
-    ) -> pl.DataFrame:
-        """Assign TAZ/MAZ to a dataframe based on lat/lon columns."""
-        if df.is_empty():
-            # Just add the columns if empty
-            return df.with_columns(
-                [
-                    pl.lit(None, dtype=pl.Int64).alias(taz_col),
-                    pl.lit(None, dtype=pl.Int64).alias(maz_col),
-                ]
-            )
-
-        # Build lookup lists
-        taz_list = []
-        maz_list = []
-
-        for row in df.iter_rows(named=True):
-            lat = row.get(lat_col)
-            lon = row.get(lon_col)
-            location = lookup_location(lat, lon)
-
-            if location:
-                taz_list.append(location.taz)
-                maz_list.append(location.maz)
-            else:
-                taz_list.append(None)
-                maz_list.append(None)
-
-        # Add TAZ/MAZ columns
-        return df.with_columns(
-            [
-                pl.Series(taz_col, taz_list, dtype=pl.Int64),
-                pl.Series(maz_col, maz_list, dtype=pl.Int64),
-            ]
-        )
-
+def add_test_taz_maz_ids(**tables: pl.DataFrame | None) -> dict[str, pl.DataFrame]:
+    """Stand in for the zone join: each table given, with zone ids for its known coordinates."""
     result = {}
-
-    # Define zone assignment mappings for each dataframe
-    zone_mappings = [
-        (households, "households", [("home_lat", "home_lon", "home_taz", "home_maz")]),
-        (
-            persons,
-            "persons",
-            [
-                ("work_lat", "work_lon", "work_taz", "work_maz"),
-                ("school_lat", "school_lon", "school_taz", "school_maz"),
-            ],
-        ),
-        (
-            unlinked_trips,
-            "unlinked_trips",
-            [
-                ("o_lat", "o_lon", "o_taz", "o_maz"),
-                ("d_lat", "d_lon", "d_taz", "d_maz"),
-            ],
-        ),
-        (
-            linked_trips,
-            "linked_trips",
-            [
-                ("o_lat", "o_lon", "o_taz", "o_maz"),
-                ("d_lat", "d_lon", "d_taz", "d_maz"),
-            ],
-        ),
-        (
-            tours,
-            "tours",
-            [
-                ("o_lat", "o_lon", "o_taz", "o_maz"),
-                ("d_lat", "d_lon", "d_taz", "d_maz"),
-            ],
-        ),
-    ]
-
-    # Process each dataframe with its zone assignments
-    for df, key, assignments in zone_mappings:
+    for name, prefixes in _ZONED.items():
+        df = tables.get(name)
         if df is not None:
-            result[key] = df
-            for lat_col, lon_col, taz_col, maz_col in assignments:
-                result[key] = assign_zone_ids(result[key], lat_col, lon_col, taz_col, maz_col)
-
+            for prefix in prefixes:
+                df = _with_zones(df, prefix)
+            result[name] = df
     return result
 
 
 def process_scenario_through_pipeline(
     households: pl.DataFrame,
     persons: pl.DataFrame,
-    days: pl.DataFrame,
+    person_days: pl.DataFrame,
     unlinked_trips: pl.DataFrame,
 ) -> dict[str, pl.DataFrame]:
     """Process a scenario through link_trips → extract_tours pipeline.
 
     Utility function for tests that need to process custom scenarios through
     the full pipeline with production defaults.
-
-    Args:
-        households: Households DataFrame
-        persons: Persons DataFrame
-        days: Days DataFrame
-        unlinked_trips: Unlinked trips DataFrame
-
-    Returns:
-        Dict with keys: households, persons, days, unlinked_trips,
-                        linked_trips, tours
     """
     # Link trips (using config.yaml defaults)
     link_result = link_trips(
-        unlinked_trips,
+        unlinked_trips=unlinked_trips,
         change_mode_enum=PurposeCategory.CHANGE_MODE.value,
         transit_mode_enums=DEFAULT_TRANSIT_MODE_CODES,
         max_dwell_time=180,  # in minutes
@@ -288,7 +175,7 @@ def process_scenario_through_pipeline(
     unlinked_trips = link_result["unlinked_trips"]  # Use updated unlinked trips with linked_trip_id
 
     # Extract tours (using config.yaml defaults)
-    tour_result = extract_tours(
+    tour_result = locate_and_extract_tours(
         persons=persons,
         households=households,
         unlinked_trips=unlinked_trips,
@@ -303,10 +190,10 @@ def process_scenario_through_pipeline(
         linked_trips=tour_result["linked_trips"],
         tours=tour_result["tours"],
     )
-    data_with_zones["days"] = days  # Days do not need zone IDs
+    data_with_zones["person_days"] = person_days  # Days do not need zone IDs
 
     # Stamp the usability verdict the formatters read. The real pipeline gets it
-    # from cascade_completeness, which needs reporting flags these synthetic
+    # from cascade_usability, which needs reporting flags these synthetic
     # scenarios do not carry -- so mark every record usable, which is what these
     # fixtures mean: they exist to exercise formatting, not gating. A test about
     # gating stamps its own values.
@@ -315,43 +202,3 @@ def process_scenario_through_pipeline(
             data_with_zones[name] = frame.with_columns(pl.lit(value=True).alias("usable_test"))
 
     return data_with_zones
-
-
-# ==============================================================================
-# Pytest Fixtures
-# ==============================================================================
-
-
-@pytest.fixture(scope="module")
-def simple_work_tour_processed():
-    """Simple work tour processed through link_trips and extract_tours.
-
-    Returns:
-        Dict with keys: households, persons, days, unlinked_trips,
-                        linked_trips, tours
-    """
-    return create_simple_work_tour_processed()
-
-
-@pytest.fixture(scope="module")
-def multi_stop_tour_processed():
-    """Multi-stop work tour processed through link_trips and extract_tours.
-
-    Returns:
-        Dict with keys: households, persons, days, unlinked_trips,
-                        linked_trips, tours
-    """
-    households, persons, days, unlinked_trips = multi_stop_tour()
-    return process_scenario_through_pipeline(households, persons, days, unlinked_trips)
-
-
-@pytest.fixture(scope="module")
-def multi_tour_day_processed():
-    """Multi-tour day processed through link_trips and extract_tours.
-
-    Returns:
-        Dict with keys: households, persons, days, unlinked_trips,
-                        linked_trips, tours
-    """
-    households, persons, days, unlinked_trips = multi_tour_day()
-    return process_scenario_through_pipeline(households, persons, days, unlinked_trips)

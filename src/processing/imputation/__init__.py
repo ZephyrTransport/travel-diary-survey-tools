@@ -2,7 +2,7 @@
 
 This module provides configurable imputation using established statistical
 methods.  It is designed as a pipeline step that operates on any combination
-of canonical survey tables (households, persons, days, trips, tours).
+of canonical survey tables (households, persons, person_days, trips, tours).
 
 # Supported methods
 
@@ -23,31 +23,33 @@ of canonical survey tables (households, persons, days, trips, tours).
   values, re-imputes them, and reports accuracy / RMSE metrics.
 * **Method comparison** -- head-to-head benchmark of KNN, RF, and MICE on
   every imputed column using the same folds and feature sets.
-* **Cross-table features** -- ``join_tables`` pulls parent-table columns and
-  auto-generates within-household mode features; ``aggregate_from`` pivots
-  child rows up to a parent.
+* **Cross-table features** -- ``join_tables`` pulls columns from the tables a
+  record belongs to and auto-generates within-household count features;
+  ``aggregate_from`` counts the rows of another table that belong to each record.
 
 # Typical pipeline position
 
     steps:
       - name: load_data
-      - name: custom_cleaning
+      - name: clean_<project>
       - name: imputation        # ← after cleaning, before linking
       - name: link_trips
-      - name: joint_trips
+      - name: detect_habitual_locations
+      - name: detect_joint_trips
       - name: extract_tours
 
 # Supported relationships for joining tables
 
-These parent → child relationships are supported for ``join_tables``
+These relationships are supported for ``join_tables`` (and, in reverse, for
+``aggregate_from``)
 
-| Child table    | Parent table                | Join key                   |
-|----------------|-----------------------------|----------------------------|
-| persons        | households                  | hh_id                      |
-| days           | persons / households        | person_id / hh_id          |
-| unlinked_trips | days / persons / households | day_id / person_id / hh_id |
-| linked_trips   | days / persons / households | day_id / person_id / hh_id |
-| tours          | persons / households        | person_id / hh_id          |
+| Table          | Joined from                       | Join key                          |
+|----------------|-----------------------------------|-----------------------------------|
+| persons        | households                        | hh_id                             |
+| person_days    | persons / households              | person_id / hh_id                 |
+| unlinked_trips | person_days / persons / households | person_day_id / person_id / hh_id |
+| linked_trips   | person_days / persons / households | person_day_id / person_id / hh_id |
+| tours          | persons / households              | person_id / hh_id                 |
 
 # Missing-data assumptions
 

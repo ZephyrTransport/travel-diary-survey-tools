@@ -9,16 +9,28 @@ from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 
 from .impute_utils import (
     build_feature_matrix,
-    decode_dense_to_integer,
+    count_missing,
+    decode_target,
     encode_integer_categoricals,
     is_categorical,
-    validate_features_exist,
 )
 
 logger = logging.getLogger(__name__)
 
 
-def impute_random_forest(  # noqa: PLR0915
+def _feature_importance(feature_names: list[str], importances: np.ndarray) -> dict[str, float]:
+    """Mean decrease in impurity per input feature, one-hot columns summed, descending.
+
+    A one-hot column ``{feature}={value}`` counts towards ``feature``.
+    """
+    summed: dict[str, float] = {}
+    for name, importance in dict(zip(feature_names, importances, strict=False)).items():
+        feature = name.split("=", 1)[0]
+        summed[feature] = summed.get(feature, 0.0) + importance
+    return dict(sorted(summed.items(), key=lambda x: x[1], reverse=True))
+
+
+def impute_random_forest(
     df: pl.DataFrame,
     column: str,
     n_estimators: int = 100,
@@ -75,25 +87,11 @@ def impute_random_forest(  # noqa: PLR0915
         See the *Feature Importance* section in ``docs/pipeline_steps/imputation.md``
         for interpretation guidance.
     """
-    if column not in df.columns:
-        msg = f"Column '{column}' not found in DataFrame"
-        raise ValueError(msg)
-
-    validate_features_exist(df, numeric_features, categorical_features)
-
-    n_missing = df[column].null_count()
-    n_total = len(df)
-    pct_imputed = (n_missing / n_total) * 100
-
-    if n_missing == 0:
-        logger.info("Column '%s': No missing values, skipping imputation", column)
-        return df, {"n_missing": 0, "n_imputed": 0, "pct_imputed": 0.0}
-
-    if n_missing == n_total:
-        logger.warning("Column '%s': All values are missing, cannot impute", column)
-        return df, {"n_missing": n_missing, "n_imputed": 0, "pct_imputed": 100.0}
-
-    original_dtype = df[column].dtype
+    n_missing, pct_imputed, skip_stats = count_missing(
+        df, column, numeric_features, categorical_features
+    )
+    if skip_stats is not None:
+        return df, skip_stats
 
     # Encode non-contiguous integer codes to dense 0..N
     df_work, int_encodings = encode_integer_categoricals(df, [column])
@@ -122,36 +120,26 @@ def impute_random_forest(  # noqa: PLR0915
     x_train = x_all[known_mask]
     y_train = target_values[known_mask]
     x_predict = x_all[missing_mask]
+    # The forest samples training rows by position; sorting by value keeps it the
+    # same whatever order the rows arrive in. Identical rows are interchangeable.
+    order = np.lexsort(np.column_stack([x_train, y_train]).T[::-1])
+    x_train, y_train = x_train[order], y_train[order]
 
-    # Choose classifier vs regressor
+    # Classifier for a categorical target, regressor for a continuous one
     use_classifier = is_categorical(df, column)
     if use_classifier:
         y_train = y_train.astype(int)
-        model = RandomForestClassifier(
-            n_estimators=n_estimators,
-            max_depth=max_depth,
-            random_state=random_state,
-            n_jobs=-1,
-        )
-    else:
-        model = RandomForestRegressor(
-            n_estimators=n_estimators,
-            max_depth=max_depth,
-            random_state=random_state,
-            n_jobs=-1,
-        )
-
+    forest = RandomForestClassifier if use_classifier else RandomForestRegressor
+    model = forest(
+        n_estimators=n_estimators, max_depth=max_depth, random_state=random_state, n_jobs=-1
+    )
     model.fit(x_train, y_train)
+    # Threads sum the trees' votes in finishing order, which flips near-ties
+    # between runs; one thread predicts the same every time.
+    model.set_params(n_jobs=1)
     predicted = model.predict(x_predict)
 
-    # Extract feature importance (MDI) and aggregate one-hot columns
-    raw_importances = dict(zip(x_feature_names, model.feature_importances_, strict=False))
-    aggregated: dict[str, float] = {}
-    for fname, imp in raw_importances.items():
-        parent = fname.split("=", 1)[0] if "=" in fname else fname
-        aggregated[parent] = aggregated.get(parent, 0.0) + imp
-    feature_importance = dict(sorted(aggregated.items(), key=lambda x: x[1], reverse=True))
-
+    feature_importance = _feature_importance(x_feature_names, model.feature_importances_)
     if feature_importance and verbose:
         top = list(feature_importance.items())[:5]
         lines = [f"  {i}. {name:<20s} {imp:.3f}" for i, (name, imp) in enumerate(top, 1)]
@@ -165,15 +153,7 @@ def impute_random_forest(  # noqa: PLR0915
     full_values = target_values.copy()
     full_values[missing_mask] = predicted
 
-    # Decode back to original codes
-    if column in int_encodings:
-        decoded = decode_dense_to_integer(full_values, int_encodings[column])
-        imputed_series = pl.Series(column, decoded).cast(original_dtype)
-    elif original_dtype.is_integer():
-        imputed_series = pl.Series(column, full_values).round().cast(original_dtype)
-    else:
-        imputed_series = pl.Series(column, full_values)
-
+    imputed_series = decode_target(full_values, column, df[column].dtype, int_encodings)
     return df.with_columns(imputed_series), {
         "n_missing": n_missing,
         "n_imputed": n_missing,

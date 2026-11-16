@@ -2,11 +2,10 @@ name: Documentation
 
 on:
   push:
-    branches: [main, mkdocs, weighting]
+    # The site documents develop, where merged work lands; main is not deployed.
+    branches: [develop]
   # Build (but do not deploy) on pull requests, so a docs break is caught at
-  # review rather than when develop reaches main. A reference to a module that
-  # had been split apart sat broken on develop precisely because nothing built
-  # the docs until a deploying branch was touched.
+  # review rather than after merge.
   pull_request:
     branches: [develop, main]
   workflow_dispatch:
@@ -43,7 +42,8 @@ jobs:
         run: uv sync --group dev
 
       - name: Build documentation
-        run: uv run mkdocs build
+        # --strict: a broken cross-reference or missing page fails the build
+        run: uv run mkdocs build --strict
 
       # Only a deploying push needs the artifact; a pull request is checked by
       # the build step above and stops there.

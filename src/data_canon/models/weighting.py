@@ -27,16 +27,23 @@ class HouseholdWeightingModel(BaseModel):
 
     # Not required_child: households exist whether or not weighting ran.
     hh_id: int = schema_field(ge=1, unique=True, fk_to="households.hh_id")
-    study_geoid: str | None = schema_field(
+    target_zone_id: str | None = schema_field(
         default=None,
-        description="Geography the household is assigned to for weighting (e.g. county FIPS).",
+        description="Target zone the home is in, from the target-zone file (e.g. county FIPS).",
     )
-    ctrl_geoid: str | None = schema_field(
+    zone_group_id: str | None = schema_field(
         default=None,
         description=(
-            "The control geography `study_geoid` maps into. Several study "
-            "geographies can share one control zone where sample is too thin to "
+            "Zone group the target zone belongs to: the balancer fits each group. "
+            "Several target zones share one group where sample is too thin to "
             "balance them separately."
+        ),
+    )
+    home_puma: str | None = schema_field(
+        default=None,
+        description=(
+            "PUMA containing the home location, from the PUMA boundaries the "
+            "PUMS targets are allocated by."
         ),
     )
     bg_geo_id: str | None = schema_field(

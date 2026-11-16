@@ -14,9 +14,16 @@ theme:
 
 plugins:
   - search
-  - autorefs
+  - autorefs:
+      # An object documented on a step page and in the Developer Reference links to the nearer copy.
+      resolve_closest: true
   - include-markdown:
       rewrite_relative_urls: true
+  - gen-files:
+      scripts:
+        - scripts/gen_ref_pages.py
+  - literate-nav:
+      nav_file: SUMMARY.md
   - mkdocstrings:
       handlers:
         python:
@@ -58,12 +65,14 @@ nav:
   - Pipeline: pipeline.md
   - Pipeline Steps:
       - pipeline_steps/index.md
-      - Load Data: pipeline_steps/read_write.md
+      - Load / Write Data: pipeline_steps/read_write.md
       - Cleaning: pipeline_steps/cleaning.md
       - Imputation: pipeline_steps/imputation.md
       - Link Trips: pipeline_steps/link_trips.md
+      - Detect Habitual Locations: pipeline_steps/detect_habitual_locations.md
       - Detect Joint Trips: pipeline_steps/detect_joint_trips.md
       - Extract Tours: pipeline_steps/extract_tours.md
+      - Add Zone IDs: pipeline_steps/add_zone_ids.md
       - Completeness & Usability: pipeline_steps/usability.md
       - Weighting:
           - Overview: pipeline_steps/weighting/index.md
@@ -80,6 +89,7 @@ nav:
       - Format Output:
           - DaySim Format: pipeline_steps/format_output/daysim.md
           - CT-RAMP Format: pipeline_steps/format_output/ctramp.md
+          - Usual Workplace: pipeline_steps/format_output/usual_workplace.md
       - Final Check: pipeline_steps/final_check.md
   - Data Models:
       - Survey Data Models: models/index.md
@@ -90,12 +100,19 @@ nav:
       - Column Requirements: COLUMN_REQUIREMENTS.md
       - Enum Reference: codebook.md
       - Enums: codebook_enums.md
+  - Developer Reference: reference/
+
+hooks:
+  - scripts/docs_step_pages.py
 
 extra_css:
   - assets/stylesheets/column_matrix.css
+  - assets/stylesheets/step_pages.css
 
 markdown_extensions:
   - admonition
+  - attr_list
+  - md_in_html
   - pymdownx.details
   - pymdownx.superfences:
       custom_fences:

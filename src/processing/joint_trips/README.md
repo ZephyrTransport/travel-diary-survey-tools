@@ -4,7 +4,7 @@
 
 This module detects joint trips where multiple household members travel together by identifying trips with similar spatial and temporal characteristics.
 
-For detailed API documentation including function signatures, parameters, and the complete algorithm, see: [Joint Trip Detection API Documentation](https://bayareametro.github.io/travel-diary-survey-tools/processing/#joint-trip-detection)
+For detailed API documentation including function signatures, parameters, and the complete algorithm, see: [Joint Trip Detection API Documentation](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/detect_joint_trips/)
 
 The documentation includes:
 

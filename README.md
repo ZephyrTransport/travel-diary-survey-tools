@@ -53,125 +53,51 @@ The usage pattern for the pipeline is a bit different than the typical numbered 
 There are three main components:
 
 * **Setup**
-  * This contains the point of entry defined in `projects/run.py` and
-  * Pipeline configuration defined in `projects/config.yaml`
+    * Each project has a runner, `projects/<project>/run.py`, as the point of entry, and
+    * a pipeline configuration, `projects/<project>/config.yaml`
 * **Pipeline Execution**
-  * The central `Pipeline` class defined in `src/processing/pipeline.py`
-  * A set of modular processing steps defined in `src/processing/steps/`
+    * The central `Pipeline` class defined in `src/pipeline/pipeline.py`
+    * A set of modular processing steps, one package each under `src/processing/`
 * **Data Models and Validation**
-  * Canonical data models and validation logic defined in `src/data_canon/`
-  * This can be used standalone, but also is integrated into the pipeline steps for automatic validation
-  * The data models define the expected schema and content for each data table (households, persons, days, trips, tours, vehicles, etc.) Each field is tagged with a set of constraints, and the step it pertains.
+    * Canonical data models and validation logic defined in `src/data_canon/`
+    * This can be used standalone, but also is integrated into the pipeline steps for automatic validation
+    * The data models define the expected schema and content for each data table (households, persons, days, trips, tours, vehicles, etc.) Each field carries its constraints, and each step declares the fields it reads and writes in `@step(requires=..., produces=...)`.
 
 ### Conceptual Diagram
 ```mermaid
-%%{init: {
-  "flowchart": {
-    "rankSpacing": 15,
-    "nodeSpacing": 20
-  }
-}}%%
-
+%%{init: {"flowchart": {"rankSpacing": 30, "nodeSpacing": 18}}}%%
 flowchart LR
-
-subgraph Setup[**Setup**]
-  direction TB
-  RunPy([projects/run.py])
-  ConfigYAML([projects/config.yaml])
-end
-
-RunPy([projects/run.py]) ----> Pipeline
-ConfigYAML([projects/config.yaml]) ----> Pipeline
-
-subgraph Pipeline[**Pipeline**]
-  direction TB
-  LoadData([Load Data]) --> CustomPre([Custom Pre-Processing])
-  CustomPre --> Imputation([Imputation])
-  Imputation --> JointTrips([Joint Trips])
-  JointTrips --> LinkTrips([Link Trips])
-  LinkTrips --> ExtractTours([Extract Tours])
-  ExtractTours --> Format{Format Output}
-
-  Format --> PUMS
-  Format --> ActivitySim --> CnV1 --> ActivitySim
-  Format --> DaySim --> CnV2 --> DaySim
-  Format --> CTRAMP --> CnV3 --> CTRAMP
-  Format --> Standard --> CnV4
-
-  subgraph Output[" "]
+  subgraph Pipeline[Pipeline steps, in run order]
     direction TB
-    WeightingPipeline --> Modeling
+    Setup(["projects/#lt;project#gt;/<br/>run.py + config.yaml"]) --> Load
+    Load([load_data]) --> Clean(["clean_#lt;project#gt;"]) --> Impute([imputation]) --> Link([link_trips])
+    Link --> Hab([detect_habitual_locations]) --> Joint([detect_joint_trips]) --> Tours([extract_tours])
+    Tours --> Zones([add_zone_ids]) --> Comp
+    Comp["<b>cascade_usability</b><br/>• usable_ctramp<br/>• usable_daysim<br/>• usable_analysis"] --> Weights
+    PUMS[/PUMS + sample plan/] --> Weights
+    Weights["<b>compute_weights</b><br/>for each profile:<br/>seed → balance<br/>→ propagate"]
+    Weights --> CT([format_ctramp]) --> Write([write_data])
+    Weights --> DS([format_daysim]) --> Write
   end
 
-  subgraph WeightingPipeline[**Weighting**]
+  subgraph Tables[Canonical tables]
     direction TB
-    PUMS --> Weighting([Weighting]) --> Weights
-    Weighting([Weighting])
-    Weights[/"Expansion<br>Weights"\]
+    H[[households]] ~~~ P[[persons]] ~~~ D[[days]] ~~~ U[[unlinked_trips]] ~~~ L[[linked_trips]] ~~~ T[[tours]] ~~~ J[[joint_trips]] ~~~ JT[[joint_tours]] ~~~ HL[[habitual_locations]]
   end
 
-  subgraph Modeling["Modeling"]
-    direction TB
+  Pipeline <-.-> Tables
 
-    ActivitySim{{ActivitySim<br>Format}}
-    CnV1("Calibration &<br>Validation")
-
-    DaySim{{DaySim<br>Format}}
-    CnV2("Calibration &<br>Validation")
-
-    CTRAMP{{CT-RAMP<br>Format}}
-    CnV3("Calibration &<br>Validation")
-
-    Standard{{Standard<br>Format}}
-    CnV4("Analysis &<br>Validation")
-
-    style space1 fill:none,stroke:none
-  end
-end
-
-Pipeline <----> DataModels
-
-subgraph DataModels[**Data Models**]
-  direction LR
-  Households[["households"]]
-  Persons[["   persons   "]]
-  Days[["days"]]
-  UnlinkedTrips[["unlinked_trips"]]
-  LinkedTrips[["linked_trips"]]
-  Tours[["tours"]]
-end
-
-style Setup fill:#f9f9f9,stroke:#333,stroke-width:1px,color:#000
-style RunPy fill:#e1f5e1,color:#000
-style ConfigYAML fill:#fff4e1,color:#000
-style Pipeline fill:#e3f2fd,stroke:#333,stroke-width:1px,color:#000
-style DataModels fill:#f3e5f5,stroke:#333,stroke-width:1px,color:#000
-style Format fill:#fff4e1,color:#000
-
-style Output fill:none,stroke:#333,stroke-width:0px,color:#000
-
-style LoadData color:#000
-style CustomPre fill:#f0f0f0,color:#000
-style Imputation color:#000
-style JointTrips color:#000
-style LinkTrips color:#000
-style ExtractTours color:#000
-style Weighting color:#000
-style Format color:#000
-
-style Households fill:#d1c4e9,color:#000,stroke:#000
-style Persons fill:#d1c4e9,color:#000,stroke:#000
-style Days fill:#d1c4e9,color:#000,stroke:#000
-style UnlinkedTrips fill:#d1c4e9,color:#000,stroke:#000
-style LinkedTrips fill:#d1c4e9,color:#000,stroke:#000
-style Tours fill:#d1c4e9,color:#000,stroke:#000
-
-style ActivitySim fill:#ffe0b2,color:#000
-style DaySim fill:#ffe0b2,color:#000
-style CTRAMP fill:#ffe0b2,color:#000
-style Standard fill:#ffe0b2,color:#000
-style PUMS fill:#ffe0b2,color:#000
+  style Setup fill:#fff4e1,color:#000
+  style Pipeline fill:#eef4fb,stroke:#999,color:#000
+  style Tables fill:#f3e5f5,stroke:#999,color:#000
+  style PUMS fill:#ffe0b2,color:#000
+  style Comp text-align:left,fill:#e8f5e9,color:#000
+  style Weights text-align:left,fill:#e8f5e9,color:#000
+  style CT fill:#ffe0b2,color:#000
+  style DS fill:#ffe0b2,color:#000
 ```
+
+The profile names are the bats_2023 project's; each project declares its own under `cascade_usability`. Each formatter keeps the records, and reads the weights, of the profile named after it.
 
 
 ### Pipeline Steps
@@ -180,18 +106,23 @@ The data processing pipeline consists of modular steps that transform raw survey
 
 #### Core Processing Steps
 
+In the order the project configs run them:
+
 1. **[Load Data](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/read_write/)** - Loads canonical survey tables from CSV, Parquet, or geospatial files into memory
-2. **[Cleaning](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/cleaning/)** - Project-specific data cleaning operations (e.g., fixing time/distance errors, adding missing records)
-3. **[Imputation](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/imputation/)** - Imputes missing values for key variables (e.g., mode, purpose, locations)
-4. **[Detect Joint Trips](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/detect_joint_trips/)** - Identifies shared household trips using spatial-temporal similarity matching
-5. **[Link Trips](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/link_trips/)** - Aggregates individual trip segments into complete journey records by detecting mode changes and transfers
-6. **[Extract Tours](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/extract_tours/)** - Builds hierarchical tour structures (home-based tours and work-based subtours) from linked trips
-7. **[Weighting](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/weighting/)** *(placeholder)* - Calculates expansion weights to match survey sample to population targets
-8. **Format Output** - Transforms canonical data to model-specific formats (DaySim, ActivitySim, etc.)
-    - **[DaySim Format](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/format_output/daysim/)** - Formats data for DaySim model input
+2. **[Cleaning](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/cleaning/)** - Project-specific (`clean_<project>`): recodes the vendor's data to the canonical schema, builds the reported habitual locations, and sets `survey_complete`
+3. **[Imputation](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/imputation/)** - Fills missing values in the configured columns (KNN, random forest or MICE), keeping the originals in `<column>_preimputed`
+4. **[Link Trips](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/link_trips/)** - Aggregates individual trip segments into complete journey records by detecting mode changes and transfers
+5. **[Detect Habitual Locations](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/detect_habitual_locations/)** - Finds each person's home, workplace and school, reported and observed from their trips
+6. **[Detect Joint Trips](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/detect_joint_trips/)** - Identifies shared household trips using spatial-temporal similarity matching
+7. **[Extract Tours](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/extract_tours/)** - Builds home-based tours, work- and school-based subtours, and joint tours from linked trips
+8. **[Add Zone IDs](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/add_zone_ids/)** - Assigns each configured zone system (e.g. TAZ, MAZ) to homes, workplaces, schools, trip ends, tours and habitual locations
+9. **[Completeness & Usability](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/usability/)** - Cascades `survey_complete` through the tables and stamps one `usable_<profile>` flag for each profile the project declares
+10. **[Weighting](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/weighting/)** - `compute_weights` balances one set of expansion weights per profile to Census PUMS controls; [`add_existing_weights`](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/weighting/existing_weights/) attaches supplied weights instead
+11. **[Final Check](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/final_check/)** *(optional)* - Validates every table against its full canonical schema
+12. **Format Output** - Transforms canonical data to model-specific formats, each keeping the records its own profile admits
     - **[CT-RAMP Format](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/format_output/ctramp/)** - Formats data for CT-RAMP model input
-9. **[Final Check](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/final_check/)** - Validates complete dataset against canonical schemas before export
-10. **[Write Data](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/read_write/)** - Writes processed tables to output files with optional validation
+    - **[DaySim Format](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/format_output/daysim/)** - Formats data for DaySim model input
+13. **[Write Data](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/read_write/)** - Writes processed tables to output files with optional validation
 
 Each step links to documentation generated by the step's docstring, and provides detailed documentation on:
 - Input/output data requirements
@@ -231,167 +162,117 @@ In VSCode you can select the interpreter manually with the GUI.
 
 ### 2. Configuration
 
-The pipeline is configured using YAML files that specify input data, steps, and parameters:
+The pipeline is configured using YAML files that specify input data, steps, and parameters. This is an abridged version of [`projects/bats_2023/config.yaml`](projects/bats_2023/config.yaml), which is the full working example:
 
 ```yaml
-# config.yaml
+# projects/<project>/config.yaml
 
-# Define directory shorthands
-survey_dir: "M:/some/path/to/survey/data"
-output_dir: "M:/some/path/to/output/data"
-TM1_shapefile_dir: "X:/travel-model-one/utilities/geographies"
-TM2_shapefile_dir: "X:/tm2py-utils/tm2py_utils/inputs/maz_taz/shapefiles"
+# Directory shorthands. "{{ name }}" is replaced by another key in this file, or by
+# a root such as MTC_DATA set in your environment or a .env file beside the project.
+survey_dir: "{{ MTC_DATA }}/path/to/survey/data"
+output_dir: "{{ BOX_DIR }}/path/to/output"
+TM2_shapefile_dir: "{{ TM2PY_UTILS_CLONE }}/tm2py_utils/inputs/maz_taz/shapefiles"
 
-# Pipeline configuration
 steps:
   - name: load_data
-    validate: false # This will override @step(validate=True/False) in the function definition
+    validate_input: false  # overrides the step's @step() default; leave it out to keep that
     params:
       input_paths:
         households: "{{ survey_dir }}/hh.csv"
         persons: "{{ survey_dir }}/person.csv"
-        days: "{{ survey_dir }}/day.csv"
+        person_days: "{{ survey_dir }}/day.csv"
         unlinked_trips: "{{ survey_dir }}/trip.csv"
 
-  - name: custom_cleaning
-    validate: false
-
-  # - name: imputation
-  #   validate: true
+  - name: clean_2023_bats  # the project's own cleaning step
+    params:
+      child_day_complete: vendor
 
   - name: link_trips
-    validate: true
     params:
-      change_mode_enum: 11  # Purpose code for 'change_mode'
-      transit_mode_enums: [12, 13, 14]
+      change_mode_enum: CHANGE_MODE
+      transit_mode_enums: [FERRY, TRANSIT, LONG_DISTANCE]
       max_dwell_time: 180  # in minutes
       dwell_buffer_distance: 100  # in meters
+      split_on_occupancy: false  # no default: the config must say
 
-  - name: extract_tours
-    validate: true
+  # ... detect_habitual_locations, detect_joint_trips, extract_tours
 
-  - name: custom_add_zone_ids
-    validate: true
+  - name: add_zone_ids
     params:
       zone_geographies:
-        - zone_name: "taz"  # Primary TAZ for DaySim
+        - zone_name: "taz"
           shapefile: "{{ TM2_shapefile_dir }}/tazs_TM2_2_5.shp"
           zone_id_field: "TAZ_NODE"
-        - zone_name: "maz"  # Primary MAZ for DaySim
-          shapefile: "{{ TM2_shapefile_dir }}/mazs_TM2_2_5.shp"
-          zone_id_field: "MAZ_NODE"
-        # Add additional zone geographies as needed:
-        - zone_name: "TAZ1454"
-          shapefile: "{{ TM1_shapefile_dir }}/bayarea_rtaz1454_rev1_WGS84.shp"
-          zone_id_field: "TAZ1454"
 
-  - name: weighting
-    validate: true
+  # ... cascade_usability, compute_weights, format_ctramp, format_daysim
 
-  - name: final_check
-    validate: true
-
-  - name: format_output
-    validate: true
+  - name: write_data
+    validate_input: true
     params:
-      format: "daysim"
-      outputs:
-        households_daysim: "{{ survey_dir }}/hh_daysim.csv"
-        persons_daysim: "{{ survey_dir }}/person_daysim.csv"
-        days_daysim: "{{ survey_dir }}/day_daysim.csv"
-        linked_trips_daysim: "{{ survey_dir }}/linked_trip_daysim.csv"
-        tours_daysim: "{{ survey_dir }}/tour_daysim.csv"
-
-  - name: format_output
-    validate: false
-    params:
-      format: "standard"
-      outputs:
+      output_paths:
         households: "{{ output_dir }}/households.csv"
         persons: "{{ output_dir }}/persons.csv"
-        days: "{{ output_dir }}/days.csv"
-        unlinked_trips: "{{ output_dir }}/unlinked_trips.csv"
-        linked_trips: "{{ output_dir }}/linked_trips.csv"
-        tours: "{{ output_dir }}/tours.csv"
-
 ```
+
+A setting with no default in the code must be given here, and a key the step does not take is an error, so a misspelt setting fails before the run starts rather than being ignored. See [Configuring a step](https://bayareametro.github.io/travel-diary-survey-tools/pipeline/#configuring-a-step) for how settings reach a step.
 
 ### 3. Pipeline Runner
 
-You need a runner script to execute the pipeline, typically named `run.py`. This also allows for CLI execution for automation.
-
-You can also inject custom pre-processing steps here. The goal is to **keep the core pipeline code generalized for maintainability, but allow for custom logic to be injected as needed**.
+You need a runner script to execute the pipeline, typically `projects/<project>/run.py`. It imports the shared steps and any project-specific ones, and hands them to the `Pipeline`. The goal is to **keep the core pipeline code generalized for maintainability, but allow for custom logic to be injected as needed**: a project's cleaning step lives beside its runner, not in `src/`.
 
 ```python
-# projects/run.py
+# projects/<project>/run.py (abridged from projects/bats_2023/run.py)
 from pathlib import Path
-import polars as pl
 
-from pipeline.decoration import step
+from clean_bats_2023 import clean_2023_bats  # the project's own step, tagged with @step()
+
 from pipeline.pipeline import Pipeline
+from processing import (
+    add_zone_ids,
+    cascade_usability,
+    compute_weights,
+    detect_habitual_locations,
+    detect_joint_trips,
+    extract_tours,
+    format_ctramp,
+    format_daysim,
+    imputation,
+    link_trips,
+    load_data,
+    write_data,
+)
 
-# Optional: project-specific custom step functions
-# Could put this in a separate py file and import to keep this runner concise and consistent
-# Must tag with @step() decorator to be recognized by the pipeline
-@step()
-def custom_cleaning(
-    persons: pl.DataFrame,
-    days: pl.DataFrame,
-    unlinked_trips: pl.DataFrame
-    ) -> dict[str, pl.DataFrame]:
-    """Custom cleaning steps go here, not in the main pipeline."""
+CONFIG_PATH = Path(__file__).parent / "config.yaml"
 
-    # Do some stuff...
-    unlinked_trips = unlinked_trips.rename({"arrive_second": "arrive_seconds"})
-    days = days.with_columns(
-        travel_dow = pl.col("dow_that_starts_from_0") + 1
-    )
+# Every step the config names must be in this list. The config decides the order.
+processing_steps = [
+    load_data,
+    clean_2023_bats,
+    imputation,
+    link_trips,
+    detect_habitual_locations,
+    detect_joint_trips,
+    extract_tours,
+    add_zone_ids,
+    cascade_usability,
+    compute_weights,
+    format_ctramp,
+    format_daysim,
+    write_data,
+]
 
-    return {"unlinked_trips": unlinked_trips, "days": days}
-
-custom_steps = {
-    "custom_cleaning": custom_cleaning,
-}
-
-# Path to the YAML config file you provided
-CONFIG_PATH = Path(__file__).parent / "config_daysim.yaml"
-
-# ---------------------------------------------------------------------
 if __name__ == "__main__":
-    import argparse
-
-    # Parse command-line arguments
-    parser = argparse.ArgumentParser(description="Pipeline Runner")
-    parser.add_argument(
-        "--clear-cache",
-        action="store_true",
-        help="Clear the pipeline cache before running",
+    pipeline = Pipeline(
+        config_path=CONFIG_PATH,
+        steps=processing_steps,
     )
-    args = parser.parse_args()
-
-    logger.info("Starting FooBar Processing Pipeline")
-
-    # Clear cache if requested
-    cache_dir = Path(".cache")
-    if args.clear_cache and cache_dir.exists():
-        logger.info("Clearing pipeline cache")
-        import shutil
-        shutil.rmtree(cache_dir)
-
-    pipeline = Pipeline(config_path=CONFIG_PATH, custom_steps=custom_steps)
     result = pipeline.run()
-
-    logger.info("Pipeline finished successfully.")
-
 ```
 
 To run, press the green arrow in your IDE, or run from command line:
 
 ```bash
-uv run python projects/run.py
-
-# Clear cache before running
-uv run python projects/run.py --clear-cache
+uv run python projects/bats_2023/run.py
 ```
 
 **Logging**: The pipeline automatically creates a log file in the output directory (e.g., `output/pipeline.log`) that contains all console output plus additional debugging information.
@@ -401,7 +282,7 @@ uv run python projects/run.py --clear-cache
 ## Data Models and Validation
 
 There are four main components to the data models and validation framework. Three you will typically interact with directly, and one that is more internal:
-* **Data Models** - Define the expected schema for each data table, and the fields associated with each processing step
+* **Data Models** - Define the expected schema for each data table
 * **Enumerations and Codebook** - Define reusable enumerations and labeled values (e.g., mode types, purpose codes, etc.)
 * **Validators** - Implement the validation logic for rows, columns, and relational integrity
 * **CanonicalData class** - Manages the collection of data tables and runs validations. This is internal infrastructure used by the pipeline, but can also be used standalone to validate data outside the pipeline if desired (e.g., you want to validate some raw survey data before doing anything else with it).
@@ -412,35 +293,54 @@ The validation framework provides four layers of validation:
 * **Column Constraints** - Enforce constraints across entire columns (e.g., uniqueness of IDs, etc.)
 * **Relational Integrity** - Cross-table consistency checks (e.g., does each household have persons, etc.)
 * **Custom Validators** - User-defined validation logic (e.g., trip chaining logic, )
-* **Step Aware Validation** - Different fields can be explicitly tagged as required for specific processing steps
+* **Step Aware Validation** - Each step declares the fields it requires, and only those must be present when it runs
 
 
-Validation is run automatically at the start of each processing step via the `@step()` decorator. Fields must be tagged as required for the specific step to be enforced, but if a field is present it will always be validated for type and constraints regardless of whether it's required for that step. This permissive enforces data integrity throughout the pipeline, ensuring dat does not degrade.
+Validation is run automatically at the start of each processing step via the `@step()` decorator. Only the fields the step requires must be present, but a field that is present is always validated for type and constraints, whichever step it is. This permissive approach enforces data integrity throughout the pipeline, ensuring data does not degrade.
 
 
 ### `step` Decorator and Validation
-Data pipeline steps must be tagged with the `@step()` decorator. This lets the pipeline know it's a processing step and handles passing the params and validation automatically. It will parse the arguments based on the function signature, sending the canonical tables to the appropriate parameters, and any other config params defined in the YAML (e.g., households to households and other_arg1 to other_arg1, etc.).
-
-Notes:
-* The names of the parameters matter, they must match either canonical data model names or config param names in the YAML.
-* By default, the `@step()` decorator enables validation. You can override this in the config YAML per step with `validate: true/false`.*
+Data pipeline steps must be tagged with the `@step()` decorator. This lets the pipeline know it's a processing step and handles passing the params and validation automatically. It sends the canonical tables to the parameters named after them, and the YAML `params:` to the rest.
 
 ```python
+from pydantic import BaseModel, ConfigDict
+
 from pipeline.decoration import step
 
-@step(validate=True)
+
+class TripFilter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    min_minutes: float      # no default: the YAML must give it
+    drop_walk: bool = False
+
+
+@step(
+    requires={"persons": {"person_id", "age"}, "linked_trips": {"duration_minutes"}},
+)
 def new_processing_step(
-    households: pl.DataFrame, # Must be a canonical data model named "households"
-    persons: pl.DataFrame,    # Must be a canonical data model named "persons"
-    other_arg1: int,          # Must be defined in the config.yaml under params for the step
-    other_arg2: str           # Must be defined in the config.yaml under params for the step
+    persons: pl.DataFrame,       # a canonical table, passed from the pipeline's data
+    linked_trips: pl.DataFrame,  # likewise
+    trip_filter: TripFilter,     # built from the step's params
+    label: str,                  # a plain setting, also from params
 ) -> dict[str, pl.DataFrame]:
     """A new processing step example."""
-    # Do some processing...
-    persons = persons.filter(pl.col("age") >= 18)
-    return {"persons": persons}
+    ...
+    return {"linked_trips": linked_trips}
 ```
 
+```yaml
+- name: new_processing_step
+  params:
+    label: "short trips"
+    min_minutes: 2   # flat keys are routed to the model that owns them;
+    drop_walk: true  # a `trip_filter:` block holding them works too
+```
+
+Notes:
+* The names of the parameters matter: each must be a canonical table name, a setting under `params:`, or a settings model built from them.
+* `requires` / `produces` declare the columns the step reads and writes. Input validation checks `requires` before the step runs, and the [Column Requirements](docs/COLUMN_REQUIREMENTS.md) page is generated from both.
+* Validation is on for inputs and off for outputs unless the decorator says otherwise. A step's YAML entry can set `validate_input` / `validate_output` to override that.
 
 ## Additional Documentation
 For more details, see:
@@ -459,7 +359,7 @@ For more details, see:
     - [x] Define canonical data models for households, persons, days, trips, tours, vehicles
     - [x] Implement validation framework with row, column, relational, and custom validators
   - [x] Core pipeline orchestration
-  - [x] Basic pipeline to match existing legacy pipeline functionality. See [Daysim Comparison Analysis - Key Findings](projects/bats_2023/compare/comparison_findings.qmd) for a detailed comparison of the new pipeline versus the legacy pipeline, including methodology, key differences, and validation results.
+  - [x] Basic pipeline to match existing legacy pipeline functionality
 - **Align and iterate** data models with upstream/downstream needs
   - [x] Engage with downstream stakeholders to identify needs and requirements
   - [x] Engage with upstream data providers to set expectations and requirements
@@ -468,7 +368,7 @@ For more details, see:
   - [x] Implement joint trips detection algorithm processing step
   - [x] Implement tour extraction processing step
     - [x] enhanced tour extraction to handle joint tours/trips
-  - [x] Implement imputation processing step (KNN and MICE methods)
+  - [x] Implement imputation processing step (KNN, random forest and MICE methods)
   - [x] Implement weighting processing step
   - [ ] Implement bespoke output formats
     - [x] Implement Daysim output format
@@ -489,25 +389,34 @@ The plan to handle this is to create tours with maximum granularity and flexibil
 
 ```
 travel-diary-survey-tools/
-├── scripts/                        # One-off helper scripts
-├── projects/                       # Example configs and runners.
+├── scripts/                        # Helper scripts (column matrix generator, module length check, ...)
+├── projects/                       # One folder per survey: config.yaml, run.py, its cleaning step
+│   ├── bats_2019/
+│   └── bats_2023/
 ├── src/
 │   ├── data_canon/
-|   |   ├── validation <----------- # Column, row, relational, and custom validators here!
+│   │   ├── validation/ <---------- # Column, row, relational, and custom validators here!
 │   │   ├── codebook/ <------------ # Categorical Enums defined here!
-|   |   ├── models/ <-------------- # Data models defined here!
-│   │   └── core/
-│   └── pipeline/ <---------------- # Pipeline orchestration code.
-│   |   ├── pipeline.py
-│   |   ├── decoration.py
-│   └── processing/ <-------------- # Processing code go here!
-│       ├── read_write/
-│       ├── imputation/             # Not yet implemented
-│       ├── joint_trips/
-│       ├── link_trips/
-│       ├── extract_tours/
-│       ├── weighting/              # Not yet implemented
-│       └── formatting/ <---------- # Define bespoke output formatting here!
+│   │   ├── models/ <-------------- # Data models defined here!
+│   │   └── core/                   # CanonicalData, schema_field, exceptions
+│   ├── pipeline/ <---------------- # Pipeline orchestration code.
+│   │   ├── pipeline.py             # Pipeline: runs the configured steps
+│   │   ├── config.py               # Config loading and {{ }} templates
+│   │   ├── decoration.py           # @step(): validation, contracts
+│   │   └── step_registry.py        # What each step requires and produces
+│   ├── processing/ <-------------- # Processing steps go here, one package each!
+│   │   ├── read_write/
+│   │   ├── imputation/
+│   │   ├── link_trips/
+│   │   ├── habitual_locations/
+│   │   ├── joint_trips/
+│   │   ├── tours/
+│   │   ├── add_zone_ids/
+│   │   ├── usability/
+│   │   ├── weighting/
+│   │   ├── final_check/
+│   │   └── formatting/ <---------- # Define bespoke output formatting here!
+│   └── utils/
 ├── tests/                          # Test suite
 └── docs/                           # Documentation
 ```
@@ -529,7 +438,7 @@ uv run mkdocs serve --livereload --watch src
 **How it works:**
 - `mkdocstrings[python]` auto-generates docs from Python docstrings and type hints
 - `griffe-pydantic` extension handles Pydantic model documentation
-- `mkdocs-include-markdown-plugin` embeds algorithm documentation from processing module READMEs
+- `mkdocs-include-markdown-plugin` embeds sections of this README, such as the architecture and diagram on the Pipeline page
 - Documentation structure defined in `mkdocs.yml`
 - Source files in `docs/` directory (markdown files reference Python modules)
 

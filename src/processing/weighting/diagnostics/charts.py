@@ -1,19 +1,21 @@
 """Plotly chart builders for the diagnostics report."""
 
 import math
-from collections import defaultdict
-from collections.abc import Mapping
 
-import geopandas as gpd
+import numpy as np
 import plotly.graph_objects as go
 import polars as pl
 from plotly.subplots import make_subplots
 
 from processing.weighting.controls.registry import CONTROLS, resolve_targets
 
-_MAP_SIMPLIFY_M = 10  # boundary tolerance; sub-pixel at regional zoom
-_WARN_PCT = 15  # fallback red threshold when MOE is unavailable or zero
-_MIN_MOE = 5  # floor for MOE-based red trigger (avoids over-sensitivity on precise targets)
+from .data import with_diff
+
+_MOE_Z = 1.645  # ACS 90% margin of error = 1.645 x the replicate-weight standard error
+_FLOOR_PCT = 5  # never red within this, however small the margin of error
+_WARN_PCT = 15  # red threshold for a group with no standard error
+_SINA_HALF_WIDTH = 0.42  # half a zone's column, reached by its densest weights
+_SINA_SEED = 0  # fixed, so the same weights always draw the same chart
 
 
 def _add_panel_traces(
@@ -42,13 +44,9 @@ def _add_panel_traces(
         y.append(lbl)
         x.append(pct)
 
-        effective_moe = max(moe, _MIN_MOE) if moe is not None and moe > 0 else None
-        if effective_moe is not None and abs(pct) <= effective_moe:
-            colors.append("#999")
-        elif (effective_moe is not None and abs(pct) > effective_moe) or abs(pct) > _WARN_PCT:
-            colors.append("#c33")
-        else:
-            colors.append("#999")
+        margin = _MOE_Z * moe if moe is not None and moe > 0 else None
+        is_red = abs(pct) > (max(margin, _FLOOR_PCT) if margin is not None else _WARN_PCT)
+        colors.append("#c33" if is_red else "#999")
 
         hover_lines = [
             f"<b>{lbl}</b>",
@@ -57,10 +55,12 @@ def _add_panel_traces(
             f"Diff: {r['diff']:+,.1f}",
             f"Diff %: {pct:+.1f}%",
         ]
-        if moe is not None:
-            hover_lines.append(f"PUMS SE: \u00b1{moe:.1f}%")
+        if margin is not None:
+            hover_lines.append(f"ACS 90% MOE: \u00b1{margin:.1f}%")
+        else:
+            hover_lines.append(f"No ACS margin of error: red past \u00b1{_WARN_PCT}%")
         hovers.append("<br>".join(hover_lines))
-        moe_values.append(moe)
+        moe_values.append(margin)
 
     fig.add_trace(
         go.Bar(
@@ -120,8 +120,65 @@ def _add_group_prefixes(cat_labels: list[str], ctrl_per_label: list[str]) -> lis
     return ticktext
 
 
+def _overall_fit(fit: pl.DataFrame) -> pl.DataFrame:
+    """The fit table summed over zones, for the Overall panel."""
+    has_moe = "moe_pct" in fit.columns
+    # Overall aggregation — sum targets/weighted across zones
+    agg_exprs = [pl.col("target_total").sum(), pl.col("weighted_total").sum()]
+    if has_moe:
+        # Propagate MOE: SE_overall = sqrt(Σ SE_i²), then moe_pct = SE / target * 100
+        # SE_i = moe_pct_i / 100 * target_i. An area with a target but no SE leaves none.
+        no_se = (pl.col("moe_pct").is_null() & pl.col("target_total").is_not_null()).any()
+        agg_exprs.append(
+            pl.when(no_se)
+            .then(None)
+            .otherwise(
+                ((pl.col("moe_pct") / 100 * pl.col("target_total")) ** 2).sum().sqrt()
+                / pl.col("target_total").sum()
+                * 100
+            )
+            .fill_nan(None)
+            .alias("moe_pct")
+        )
+
+    overall = with_diff(fit.group_by("control_name", "category", "label").agg(*agg_exprs)).sort(
+        "control_name", "category", "label"
+    )
+
+    # Re-sort: structural controls first (h_total, p_total), then alphabetical
+    _structural = {n for n, c in CONTROLS.items() if c.structural}
+    return (
+        overall.with_columns(
+            pl.when(pl.col("control_name").is_in(_structural)).then(0).otherwise(1).alias("_prio")
+        )
+        .sort("_prio", "control_name", "category", "label")
+        .drop("_prio")
+    )
+
+
+def fit_x_limit(fits: list[pl.DataFrame]) -> float:
+    """One x range for every profile's fit chart, so equal errors look equal.
+
+    Wide enough for the largest error in any zone or overall at 1.5x, and for the
+    median margin of error; at least 5%, in steps of 5.
+    """
+    limit = 5.0
+    for fit in fits:
+        overall = _overall_fit(fit)
+        max_err = max(
+            fit["diff_pct"].drop_nulls().abs().max() or 0,
+            overall["diff_pct"].drop_nulls().abs().max() or 0,
+        )
+        median_margin = (
+            _MOE_Z * (fit["moe_pct"].drop_nulls().median() or 0) if "moe_pct" in fit.columns else 0
+        )
+        limit = max(limit, median_margin, max_err * 1.5)
+    return math.ceil(limit / 5) * 5
+
+
 def fit_diverging_figure(
     fit: pl.DataFrame,
+    x_limit: float | None = None,
 ) -> go.Figure:
     """Grid of horizontal diverging bar charts (% error, one panel per zone + overall).
 
@@ -131,48 +188,12 @@ def fit_diverging_figure(
     so the y-axis remains consistent across panels.
 
     When ``moe_pct`` is present (from PUMS replicate weights), horizontal
-    error bars show the sampling margin of error on each target.
+    error bars show the sampling margin of error on each target. *x_limit* is
+    the range either side of zero, from `fit_x_limit`; ``None`` fits this chart alone.
     """
     has_moe = "moe_pct" in fit.columns
-    zones = sorted(fit["geo_id"].unique().to_list())
-
-    # Overall aggregation — sum targets/weighted across zones
-    agg_exprs = [pl.col("target_total").sum(), pl.col("weighted_total").sum()]
-    if has_moe:
-        # Propagate MOE: SE_overall = sqrt(Σ SE_i²), then moe_pct = SE / target * 100
-        # SE_i = moe_pct_i / 100 * target_i
-        agg_exprs.append(
-            (
-                ((pl.col("moe_pct") / 100 * pl.col("target_total")) ** 2).sum().sqrt()
-                / pl.col("target_total").sum()
-                * 100
-            )
-            .fill_nan(None)
-            .alias("moe_pct")
-        )
-
-    overall = (
-        fit.group_by("control_name", "category", "label")
-        .agg(*agg_exprs)
-        .with_columns(
-            ((pl.col("weighted_total") - pl.col("target_total")) / pl.col("target_total") * 100)
-            .fill_nan(0)
-            .fill_null(0)
-            .alias("diff_pct"),
-            (pl.col("weighted_total") - pl.col("target_total")).alias("diff"),
-        )
-        .sort("control_name", "category", "label")
-    )
-
-    # Re-sort: structural controls first (h_total, p_total), then alphabetical
-    _structural = {n for n, c in CONTROLS.items() if c.structural}
-    overall = (
-        overall.with_columns(
-            pl.when(pl.col("control_name").is_in(_structural)).then(0).otherwise(1).alias("_prio")
-        )
-        .sort("_prio", "control_name", "category", "label")
-        .drop("_prio")
-    )
+    zones = sorted(fit["zone_group_id"].unique().to_list())
+    overall = _overall_fit(fit)
 
     panels = [*zones, "Overall"]
     n_cols = min(4, len(panels))
@@ -198,18 +219,13 @@ def fit_diverging_figure(
         pdf = (
             overall
             if panel == "Overall"
-            else fit.filter(pl.col("geo_id") == panel).sort("control_name", "category", "label")
+            else fit.filter(pl.col("zone_group_id") == panel).sort(
+                "control_name", "category", "label"
+            )
         )
         _add_panel_traces(fig, pdf, has_moe, row=r_idx + 1, col=c_idx + 1)
 
-    # Data-driven x-range: show errors at readable scale while
-    # keeping typical PUMS MOE whiskers partially visible.
-    _max_err = max(
-        fit["diff_pct"].drop_nulls().abs().max() or 0,
-        overall["diff_pct"].drop_nulls().abs().max() or 0,
-    )
-    _median_moe = (fit["moe_pct"].drop_nulls().median() or 0) if has_moe else 0
-    _x_limit = math.ceil(max(_median_moe, _max_err * 1.5, 5) / 5) * 5
+    _x_limit = x_limit if x_limit is not None else fit_x_limit([fit])
 
     fig.update_xaxes(
         range=[-_x_limit, _x_limit],
@@ -219,9 +235,7 @@ def fit_diverging_figure(
         title_text="% Error",
         matches="x",  # shared x-range across all panels
     )
-    # Control group labels on the y-axis (bold prefix on first tick per group).
-    # categoryarray + autorange="reversed" ensures first-in-list renders at the
-    # top of the chart, so the group prefix appears above its members.
+    # Bold control prefix on each group's first tick; reversed, so it sits above its members
     ticktext = _add_group_prefixes(cat_labels, ctrl_per_label)
     fig.update_yaxes(
         categoryorder="array",
@@ -243,28 +257,71 @@ def fit_diverging_figure(
     return fig
 
 
-def violins_figure(weighted: pl.DataFrame) -> go.Figure:
-    """Violin plot of ``hh_weight`` by zone (log scale)."""
-    zones = sorted(weighted["ctrl_geoid"].unique().to_list())
+def _sina_offsets(values: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+    """Sideways offsets for one zone's points, as wide as the weights are dense there.
+
+    Each point moves a uniform random share of the density at its own value, scaled
+    so the densest value fills ``_SINA_HALF_WIDTH``. A zone of under five
+    households has no density to speak of, so its points get a narrow even jitter.
+    """
+    if len(values) < 5:  # noqa: PLR2004
+        return rng.uniform(-0.1, 0.1, len(values))
+    bandwidth = 1.06 * float(values.std()) * len(values) ** -0.2 or 1e-9  # Silverman's rule
+    grid = np.linspace(values.min(), values.max(), 512)
+    density = np.exp(-0.5 * ((grid[:, None] - values[None, :]) / bandwidth) ** 2).sum(axis=1)
+    at_value = np.interp(values, grid, density)
+    return rng.uniform(-1, 1, len(values)) * at_value / density.max() * _SINA_HALF_WIDTH
+
+
+def weight_distribution_figure(weighted: pl.DataFrame) -> go.Figure:
+    """``hh_weight`` by zone: one point per household, spread by density, and the mean.
+
+    The spread follows the density on the scale shown: the Log and Linear buttons
+    switch the axis and the points' sideways positions together.
+    """
+    zones = sorted(weighted["zone_group_id"].unique().to_list())
+    rng = np.random.default_rng(_SINA_SEED)
     fig = go.Figure()
-    for z in zones:
-        w = weighted.filter(pl.col("ctrl_geoid") == z)["hh_weight"].to_list()
+    x_linear: list[list[float]] = []
+    x_log: list[list[float]] = []
+    for i, z in enumerate(zones):
+        w = weighted.filter(pl.col("zone_group_id") == z)["hh_weight"].to_numpy()
+        on_linear = (i + _sina_offsets(w, rng)).tolist()
+        on_log = (i + _sina_offsets(np.log(np.maximum(w, 1e-9)), rng)).tolist()
         fig.add_trace(
-            go.Violin(
+            go.Scatter(
+                x=on_linear,
                 y=w,
+                mode="markers",
                 name=str(z),
-                box_visible=True,
-                meanline_visible=True,
-                bandwidth=max(0.05, (max(w) - min(w)) / 40) if w else 0.1,
-                spanmode="manual",
-                span=[max(1e-6, min(w)), max(w)],
+                marker={"size": 3, "opacity": 0.45},
+                hovertemplate=f"{z}<br>weight %{{y:,.1f}}<extra></extra>",
             )
         )
+        mean = float(w.mean()) if len(w) else 0.0
+        edges = [i - _SINA_HALF_WIDTH, i + _SINA_HALF_WIDTH]
+        fig.add_trace(
+            go.Scatter(
+                x=edges,
+                y=[mean, mean],
+                mode="lines",
+                name=f"{z} mean",
+                line={"color": "black", "width": 2},
+                hovertemplate=f"{z}<br>mean %{{y:,.1f}}<extra></extra>",
+            )
+        )
+        x_linear += [on_linear, edges]
+        x_log += [on_log, edges]
     fig.update_layout(
         showlegend=False,
         title="Household Weight Distribution by Zone",
         yaxis_title="hh_weight",
         yaxis_type="linear",
+        xaxis={
+            "tickvals": list(range(len(zones))),
+            "ticktext": [str(z) for z in zones],
+            "range": [-0.6, len(zones) - 0.4],
+        },
         autosize=False,
         width=960,
         height=max(400, 60 * len(zones)),
@@ -278,8 +335,16 @@ def violins_figure(weighted: pl.DataFrame) -> go.Figure:
                 "xanchor": "right",
                 "yanchor": "bottom",
                 "buttons": [
-                    {"label": "Log", "method": "relayout", "args": [{"yaxis.type": "log"}]},
-                    {"label": "Linear", "method": "relayout", "args": [{"yaxis.type": "linear"}]},
+                    {
+                        "label": "Log",
+                        "method": "update",
+                        "args": [{"x": x_log}, {"yaxis.type": "log"}],
+                    },
+                    {
+                        "label": "Linear",
+                        "method": "update",
+                        "args": [{"x": x_linear}, {"yaxis.type": "linear"}],
+                    },
                 ],
             }
         ],
@@ -290,18 +355,13 @@ def violins_figure(weighted: pl.DataFrame) -> go.Figure:
     return fig
 
 
-# ---------------------------------------------------------------------------
-# Fractional seed imputation chart
-# ---------------------------------------------------------------------------
-
-
 def imputation_distribution_figure(
     seed_incidence: pl.DataFrame,
     pums_incidence: pl.DataFrame,
     target_names: list[str],
     imputed_controls: list[str],
     *,
-    pre_imputation: pl.DataFrame | None = None,
+    pre_imputation: pl.DataFrame,
 ) -> go.Figure:
     """Stacked bar chart: observed + imputed contribution vs PUMS shares.
 
@@ -310,9 +370,6 @@ def imputation_distribution_figure(
     (the RF-predicted fractional contribution), so the second segment
     shows how much of a category's mass is prediction rather than
     response.  A separate PUMS bar provides the reference distribution.
-
-    When *pre_imputation* is ``None`` the chart falls back to a single
-    post-imputation bar (no stacking).
     """
     all_ctrls = resolve_targets(target_names)
     ctrl_map = {c.name: c for c in all_ctrls}
@@ -338,11 +395,8 @@ def imputation_distribution_figure(
         post_total = sum(post_sums) or 1
 
         # Pre-imputation sums (unweighted, zeros where null)
-        if pre_imputation is not None:
-            pre_cols = [c for c in present_cols if c in pre_imputation.columns]
-            pre_sums = pre_imputation.select(pre_cols).sum().row(0) if pre_cols else post_sums
-        else:
-            pre_sums = post_sums
+        pre_cols = [c for c in present_cols if c in pre_imputation.columns]
+        pre_sums = pre_imputation.select(pre_cols).sum().row(0) if pre_cols else post_sums
 
         # PUMS shares (WGTP-weighted if available)
         has_wgtp = "WGTP" in pums_incidence.columns
@@ -419,19 +473,14 @@ def imputation_distribution_figure(
     return fig
 
 
-# ---------------------------------------------------------------------------
-# Expansion-factor tradeoff chart
-# ---------------------------------------------------------------------------
-
-
 def ef_tradeoff_figure(
     grid_results: list,
     selected_ef: float,
 ) -> go.Figure:
-    """Small-multiples chart: four stacked subplots sharing the x-axis.
+    """Small-multiples chart: three stacked subplots sharing the x-axis.
 
     Hovering at an EF value on any subplot shows aligned tooltips on
-    all four panels via ``hovermode="x unified"`` and spike lines.
+    all three panels via ``hovermode="x unified"`` and spike lines.
 
     Args:
         grid_results: One entry per expansion-factor value with aggregate metrics.
@@ -440,16 +489,14 @@ def ef_tradeoff_figure(
     """
     efs = [g.max_expansion_factor for g in grid_results]
 
-    # Panel 1: Fit error metrics (all on same % scale)
-    fit_traces: list[tuple[str, list[float], str, str]] = [
-        ("MAPE (%)", [g.mape for g in grid_results], "#1f77b4", ",.2f"),
-        ("P90 (%)", [g.p90 for g in grid_results], "#ff7f0e", ",.2f"),
-        ("Max Error (%)", [g.max_error for g in grid_results], "#9467bd", ",.2f"),
-    ]
-    # Panels 2-3: Weight quality
-    quality_panels: list[tuple[str, list[float], str, str]] = [
-        ("CV", [g.cv for g in grid_results], "#d62728", ",.3f"),
-        ("ESS (%)", [g.ess_pct for g in grid_results], "#2ca02c", ",.1f"),
+    # (panel row, name, values, colour, hover format): fit errors overlaid on row 1,
+    # then CV and ESS on rows 2 and 3
+    traces: list[tuple[int, str, list[float], str, str]] = [
+        (1, "MAPE (%)", [g.mape for g in grid_results], "#1f77b4", ",.2f"),
+        (1, "P90 (%)", [g.p90 for g in grid_results], "#ff7f0e", ",.2f"),
+        (1, "Max Error (%)", [g.max_error for g in grid_results], "#9467bd", ",.2f"),
+        (2, "CV", [g.cv for g in grid_results], "#d62728", ",.3f"),
+        (3, "ESS (%)", [g.ess_pct for g in grid_results], "#2ca02c", ",.1f"),
     ]
 
     fig = make_subplots(
@@ -460,8 +507,7 @@ def ef_tradeoff_figure(
         subplot_titles=["Fit Error (%)", "CV", "ESS (%)"],
     )
 
-    # Panel 1 — three fit-error traces overlaid
-    for name, values, color, fmt in fit_traces:
+    for row, name, values, color, fmt in traces:
         fig.add_trace(
             go.Scatter(
                 x=efs,
@@ -471,26 +517,9 @@ def ef_tradeoff_figure(
                 line={"color": color, "width": 2},
                 marker={"size": 6},
                 hovertemplate=f"{name}: %{{y:{fmt}}}<extra></extra>",
-                showlegend=True,
+                showlegend=row == 1,
             ),
-            row=1,
-            col=1,
-        )
-
-    # Panels 2-3 — CV and ESS
-    for i, (name, values, color, fmt) in enumerate(quality_panels, 2):
-        fig.add_trace(
-            go.Scatter(
-                x=efs,
-                y=values,
-                mode="lines+markers",
-                name=name,
-                line={"color": color, "width": 2},
-                marker={"size": 6},
-                hovertemplate=f"{name}: %{{y:{fmt}}}<extra></extra>",
-                showlegend=False,
-            ),
-            row=i,
+            row=row,
             col=1,
         )
 
@@ -533,340 +562,4 @@ def ef_tradeoff_figure(
     )
     fig.update_xaxes(fixedrange=True)
     fig.update_yaxes(fixedrange=True)
-    return fig
-
-
-# ---------------------------------------------------------------------------
-# Crosswalk map
-# ---------------------------------------------------------------------------
-
-# Target zones — per-zone traces for group-aware colouring
-_GROUP_FILLS = [
-    "rgba(70,130,180,0.15)",  # steel blue (default / ungrouped)
-    "rgba(180,100,50,0.15)",  # burnt orange
-    "rgba(100,170,80,0.15)",  # olive green
-    "rgba(150,80,160,0.15)",  # plum
-    "rgba(200,170,50,0.15)",  # gold
-    "rgba(80,170,170,0.15)",  # teal
-]
-_GROUP_BORDERS = [
-    "steelblue",
-    "rgb(180,100,50)",
-    "rgb(100,170,80)",
-    "rgb(150,80,160)",
-    "rgb(200,170,50)",
-    "rgb(80,170,170)",
-]
-
-
-def _build_tooltips(
-    target_4326: gpd.GeoDataFrame,
-    xw: pl.DataFrame,
-    sample_counts: dict[str | None, dict[str, int]],
-) -> dict[str, str]:
-    """Build per-zone tooltips showing PUMA allocation weights.
-
-    The map is rendered once for the whole run, so every profile's sample count
-    for a zone is listed together rather than the map being drawn per profile.
-    """
-    tooltips: dict[str, str] = {}
-    for geo_id in target_4326["study_geoid"]:
-        rows = xw.filter(pl.col("study_geoid") == geo_id).sort(
-            "allocation_weight",
-            descending=True,
-        )
-        if rows.is_empty():
-            tooltips[geo_id] = f"Zone {geo_id}: no PUMA overlap"
-            continue
-        zone_pop = rows["population"].sum()
-        header = f"Zone {geo_id} (BG 2020 person pop {zone_pop:,.0f})"
-        seeded = [
-            f"{profile or 'survey'} {counts[geo_id]:,}"
-            for profile, counts in sample_counts.items()
-            if geo_id in counts
-        ]
-        if seeded:
-            header += " — sample households: " + " · ".join(seeded)
-        lines = [header]
-        for r in rows.iter_rows(named=True):
-            aw = r["allocation_weight"] * 100
-            # Drop slivers below 0.01% allocation to reduce tooltip noise (outer joins)
-            if aw < 0.01:  # noqa: PLR2004
-                continue
-            lines.append(f"  PUMA {r['puma_id']}: {aw:.2f}%")
-        tooltips[geo_id] = "<br>".join(lines)
-    return tooltips
-
-
-def _build_zone_labels_and_colors(
-    target_4326: gpd.GeoDataFrame,
-    zone_to_group_idx: dict[str, int],
-    zone_to_group_name: dict[str, str],
-) -> tuple[list[str], list[str]]:
-    """Build zone labels and colors for centroid labels."""
-    zone_labels: list[str] = []
-    zone_colors: list[str] = []
-    for gid in target_4326["study_geoid"]:
-        gname = zone_to_group_name.get(gid)
-        label = f"Zone {gid} ({gname})" if gname else f"Zone {gid}"
-        zone_labels.append(label)
-        gi = zone_to_group_idx.get(gid, 0)
-        zone_colors.append(_GROUP_BORDERS[gi])
-    return zone_labels, zone_colors
-
-
-def _build_zone_group_index(
-    target_4326: gpd.GeoDataFrame,
-    zone_groups: dict[str, list[str]] | None = None,
-) -> dict[str, int]:
-    """Build mapping from zone ID to group index."""
-    zone_to_group_idx: dict[str, int] = {}
-    next_idx = 1  # 0 is reserved; explicit groups start at 1
-    if zone_groups:
-        for zones in zone_groups.values():
-            idx = next_idx % len(_GROUP_FILLS)
-            for z in zones:
-                zone_to_group_idx[z] = idx
-            next_idx += 1
-
-    # Assign each ungrouped zone its own cycling colour
-    for _, row in target_4326.iterrows():
-        gid = row["study_geoid"]
-        if gid not in zone_to_group_idx:
-            zone_to_group_idx[gid] = next_idx % len(_GROUP_FILLS)
-            next_idx += 1
-
-    return zone_to_group_idx
-
-
-def _add_zone_traces(
-    fig: go.Figure,
-    target_4326: gpd.GeoDataFrame,
-    zone_to_group_idx: dict[str, int],
-) -> None:
-    """Add target zone traces grouped by color."""
-    group_rows: dict[int, list] = defaultdict(list)
-    group_tooltips: dict[int, list[str]] = defaultdict(list)
-    for _, row in target_4326.iterrows():
-        gi = zone_to_group_idx.get(row["study_geoid"], 0)
-        group_rows[gi].append(row)
-        group_tooltips[gi].append(row["tooltip"])
-
-    for gi, rows in group_rows.items():
-        fill = _GROUP_FILLS[gi]
-        border = _GROUP_BORDERS[gi]
-        batch = gpd.GeoDataFrame(rows, crs=target_4326.crs)
-        fig.add_trace(
-            go.Choroplethmap(
-                geojson=batch.__geo_interface__,
-                locations=batch.index,
-                z=[0] * len(batch),
-                colorscale=[[0, fill], [1, fill]],
-                marker_line_color=border,
-                marker_line_width=2,
-                showscale=False,
-                text=group_tooltips[gi],
-                hoverinfo="text",
-            )
-        )
-
-
-def _add_zone_label_traces(
-    fig: go.Figure,
-    zone_centroids: gpd.GeoSeries,
-    zone_labels: list[str],
-    zone_colors: list[str],
-) -> None:
-    """Add zone label traces grouped by color."""
-    label_groups: dict[str, tuple[list[float], list[float], list[str]]] = defaultdict(
-        lambda: ([], [], [])
-    )
-    for i, pt in enumerate(zone_centroids):
-        c = zone_colors[i]
-        lons, lats, texts = label_groups[c]
-        lons.append(pt.x)  # pyright: ignore[reportAttributeAccessIssue]
-        lats.append(pt.y)  # pyright: ignore[reportAttributeAccessIssue]
-        texts.append(zone_labels[i])
-
-    for color, (lons, lats, texts) in label_groups.items():
-        fig.add_trace(
-            go.Scattermap(
-                lon=lons,
-                lat=lats,
-                mode="text",
-                text=texts,
-                textfont={"size": 12, "color": color},
-                hoverinfo="skip",
-                showlegend=False,
-            )
-        )
-
-
-def _simplified(gdf: gpd.GeoDataFrame, tolerance_m: float) -> gpd.GeoDataFrame:
-    """Reproject to WGS84, thinning the boundary to *tolerance_m* on the way.
-
-    TIGER polygons carry far more vertices than a regional map can resolve, and
-    they dominate the report's size -- on a Bay Area run, 72 PUMAs account for
-    95% of the file. Douglas-Peucker at a few metres is imperceptible at this
-    zoom and removes most of them. ``preserve_topology`` keeps each polygon
-    valid; adjacent polygons are still simplified independently, so a tolerance
-    far above a pixel would start to show hairlines between zones.
-    """
-    if tolerance_m <= 0:
-        return gdf.to_crs("EPSG:4326")
-    metric = gdf.estimate_utm_crs()
-    thinned = gdf.to_crs(metric)
-    thinned = thinned.set_geometry(thinned.geometry.simplify(tolerance_m))
-    return thinned.to_crs("EPSG:4326")
-
-
-def crosswalk_figure(
-    puma_gdf: gpd.GeoDataFrame,
-    target_gdf: gpd.GeoDataFrame,
-    crosswalk_df: pl.DataFrame,
-    seeds: Mapping[str | None, pl.DataFrame] | None = None,
-    zone_groups: dict[str, list[str]] | None = None,
-    simplify_tolerance_m: float = _MAP_SIMPLIFY_M,
-) -> go.Figure:
-    """Build an interactive Plotly map of the crosswalk.
-
-    Layers:
-    - PUMA boundaries (dashed grey) — full extent
-    - Study area outline (bold black)
-    - Target zones (solid border, transparent fill) with tooltip
-      showing PUMA allocation weights from the crosswalk.
-
-    The geometry is run-level: it comes from the crosswalk, which is built once
-    however many profiles are fitted, so the map is drawn once and every
-    profile's per-zone seed count is listed in the same tooltip.
-
-    Args:
-        puma_gdf: PUMA boundary polygons (must have ``puma_id`` column).
-        target_gdf: Target zone polygons (must have ``study_geoid`` column).
-        crosswalk_df: Crosswalk table with ``puma_id``, ``study_geoid``,
-            ``population``, ``allocation_weight``.
-        seeds: Each profile's seed, keyed by profile name (must contain
-            ``study_geoid``).  Per-zone counts appear in the tooltip.
-        zone_groups: Optional zone group mapping.  When provided, grouped zones
-            share a fill colour and labels include the group name.
-        simplify_tolerance_m: Boundary simplification tolerance in metres.
-            Zero keeps full TIGER precision.
-
-    Returns:
-        go.Figure
-    """
-    puma_4326 = _simplified(puma_gdf, simplify_tolerance_m)
-    target_4326 = _simplified(target_gdf, simplify_tolerance_m)
-    study_boundary = target_4326.dissolve()
-
-    # Build tooltip per target zone showing allocation weights
-    xw = crosswalk_df.select(
-        "puma_id",
-        "study_geoid",
-        "population",
-        "allocation_weight",
-    )
-
-    # Per-zone seed counts, one entry per fitted profile (Polars only)
-    sample_counts: dict[str | None, dict[str, int]] = {}
-    for profile, seed in (seeds or {}).items():
-        if "study_geoid" not in seed.columns:
-            continue
-        sample_counts[profile] = dict(
-            seed.filter(pl.col("study_geoid").is_not_null())
-            .group_by("study_geoid")
-            .len()
-            .iter_rows()
-        )
-
-    tooltips = _build_tooltips(target_4326, xw, sample_counts)
-    target_4326 = target_4326.copy()
-    target_4326["tooltip"] = target_4326["study_geoid"].map(tooltips)
-
-    fig = go.Figure()
-
-    # PUMAs -- full boundaries, outline only
-    fig.add_trace(
-        go.Choroplethmap(
-            geojson=puma_4326.__geo_interface__,
-            locations=puma_4326.index,
-            z=[0] * len(puma_4326),
-            colorscale=[[0, "rgba(0,0,0,0)"], [1, "rgba(0,0,0,0)"]],
-            marker_line_color="rgba(100,100,100,0.7)",
-            marker_line_width=1,
-            showscale=False,
-            hoverinfo="skip",
-        )
-    )
-
-    # Study area -- bold black outline
-    fig.add_trace(
-        go.Choroplethmap(
-            geojson=study_boundary.__geo_interface__,
-            locations=study_boundary.index,
-            z=[0] * len(study_boundary),
-            colorscale=[[0, "rgba(0,0,0,0)"], [1, "rgba(0,0,0,0)"]],
-            marker_line_color="black",
-            marker_line_width=3,
-            showscale=False,
-            hoverinfo="skip",
-        )
-    )
-
-    # Build zone grouping
-    zone_to_group_idx = _build_zone_group_index(target_4326, zone_groups)
-
-    # Add target zone traces
-    _add_zone_traces(fig, target_4326, zone_to_group_idx)
-
-    # PUMA labels at centroids (grey)
-    puma_centroids = puma_4326.to_crs("EPSG:5070").centroid.to_crs("EPSG:4326")
-    fig.add_trace(
-        go.Scattermap(
-            lon=[p.x for p in puma_centroids],  # pyright: ignore[reportAttributeAccessIssue]
-            lat=[p.y for p in puma_centroids],  # pyright: ignore[reportAttributeAccessIssue]
-            mode="text",
-            text=[f"PUMA {pid}" for pid in puma_4326["puma_id"]],
-            textfont={"size": 10, "color": "gray"},
-            hoverinfo="skip",
-            showlegend=False,
-        )
-    )
-
-    # Zone labels at centroids — colour-matched to group
-    zone_centroids = target_4326.to_crs("EPSG:5070").centroid.to_crs("EPSG:4326")
-    zone_to_group_name: dict[str, str] = {}
-    if zone_groups:
-        for gname, zones in zone_groups.items():
-            for z in zones:
-                zone_to_group_name[z] = gname
-
-    zone_labels, zone_colors = _build_zone_labels_and_colors(
-        target_4326, zone_to_group_idx, zone_to_group_name
-    )
-
-    # Add zone label traces
-    _add_zone_label_traces(fig, zone_centroids, zone_labels, zone_colors)
-
-    # Layout -- centre on PUMA extent and estimate zoom from longitude span.
-    bounds = puma_4326.total_bounds  # (minx, miny, maxx, maxy)
-    center_lon = (bounds[0] + bounds[2]) / 2
-    center_lat = (bounds[1] + bounds[3]) / 2
-    lon_span = bounds[2] - bounds[0]
-    # Mercator zoom: 360 / 2^z ≈ visible longitude span at the equator.
-    # Adjust for map width (960 px / 256 px tile) and add padding.
-    zoom = math.log2(360 / max(lon_span, 0.01)) + math.log2(960 / 256) - 0.5
-    fig.update_layout(
-        map={
-            "style": "carto-positron",
-            "center": {"lon": center_lon, "lat": center_lat},
-            "zoom": max(zoom, 3),
-        },
-        autosize=False,
-        width=960,
-        height=700,
-        margin={"l": 0, "r": 0, "t": 30, "b": 0},
-        title="Crosswalk: PUMA to Target Zones",
-    )
-
     return fig

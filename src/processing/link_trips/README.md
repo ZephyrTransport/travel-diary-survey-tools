@@ -4,7 +4,7 @@
 
 This module links individual trip segments into complete journey records (linked trips), aggregating sequential trips made during mode changes or transfers.
 
-For detailed API documentation including function signatures, parameters, and algorithms, see: [Trip Linking API Documentation](https://bayareametro.github.io/travel-diary-survey-tools/processing/#trip-linking)
+For detailed API documentation including function signatures, parameters, and algorithms, see: [Trip Linking API Documentation](https://bayareametro.github.io/travel-diary-survey-tools/pipeline_steps/link_trips/)
 
 The documentation includes:
 - `link_trips()` - Link unlinked trip segments into complete journey records

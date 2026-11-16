@@ -39,7 +39,9 @@ from itertools import combinations
 import numpy as np
 import polars as pl
 
-from processing.weighting.core.hierarchy import HIERARCHY, LEVELS, Flow, Level
+from processing.weighting.core.hierarchy import HIERARCHY, Level
+
+from .table_html import profile_key, profile_label
 
 logger = logging.getLogger(__name__)
 
@@ -57,11 +59,6 @@ MAX_POINTS = 700
 
 # Fixed so that rerunning on unchanged data rewrites an identical file.
 SAMPLE_SEED = 20260915
-
-# A child weight this close to its parent's counts as inherited unchanged.
-# Loose enough to swallow floating-point representation, which bitwise equality
-# would not, and tight enough that no one could act on the difference.
-AGREEMENT_TOL = 0.01
 
 
 @dataclass(frozen=True)
@@ -172,8 +169,8 @@ def fitted_weight_sets(profiles: Sequence[str | None]) -> list[WeightSet]:
     """
     return [
         WeightSet(
-            name=profile or "survey",
-            label=profile or "the survey",
+            name=profile_key(profile),
+            label=profile_label(profile),
             columns={level.table: level.weight_col_for(profile) for level in HIERARCHY},
             fitted=True,
         )
@@ -186,7 +183,7 @@ def reference_weight_sets(spec: Mapping[str, Mapping] | None) -> list[WeightSet]
 
     Named rather than discovered, because neither half of a supplied column's
     name is reliable. A vendor suffix is indistinguishable from a profile suffix
-    -- ``hh_weight_rmove_only`` parses as a profile called ``rmove_only`` that
+    -- ``hh_weight_vendor_only`` parses as a profile called ``vendor_only`` that
     was never fitted -- and a supplied column may not share the level's base name
     at all, as the vendor's ``trip_weight`` does not match the hierarchy's
     ``unlinked_trip_weight``. An un-suffixed column is worse still: it may be the
@@ -248,7 +245,7 @@ def _deciles(log_a: np.ndarray, log_b: np.ndarray) -> list[Decile]:
     edges = np.unique(np.quantile(log_b, np.linspace(0, 1, N_DECILES + 1)))
     if edges.size < 2:  # noqa: PLR2004 - a single distinct value has no deciles
         return []
-    # right=False with the final edge nudged so the maximum lands in the last bin.
+    # Bin by the interior edges, so the maximum lands in the last bin.
     index = np.searchsorted(edges[1:-1], log_b, side="right")
     deciles: list[Decile] = []
     for bin_id in range(edges.size - 1):
@@ -395,159 +392,6 @@ def all_pairs(
 def _decile_payload(deciles: list[Decile]) -> list[list[float]]:
     """Deciles as ``[mean ln, median ratio, IQR]`` triples, rounded for the wire."""
     return [[round(d.x_mid, 4), round(d.median, 4), round(d.iqr, 4)] for d in deciles]
-
-
-# A ratio spread wider than this within one parent means the children were not
-# all scaled by the same factor. Loose enough to ignore float noise, tight enough
-# that a real per-record adjustment cannot hide under it.
-_SAME_FACTOR_TOL = 1e-9
-
-
-@dataclass(frozen=True)
-class Inheritance:
-    """How a level's weight descends from its parent, for one weight set.
-
-    Attributes:
-        level: The child table.
-        parent: The table its weight descends from.
-        set_name: Which weight set this describes.
-        n: Records carrying a weight at both levels.
-        n_close: Records whose weight matches their parent's to within
-            ``AGREEMENT_TOL``.
-        n_scopes: Parent records with at least one weighted child.
-        n_scopes_varying: Parent records whose children do **not** all stand in
-            the same ratio to it. Zero under any rule that scales a whole scope
-            at once; non-zero only if something touched children individually.
-        max_scope_spread: Largest ratio between the highest and lowest factor
-            within a single parent. 1.0 when every scope is internally uniform.
-    """
-
-    level: str
-    parent: str
-    set_name: str
-    n: int
-    n_close: int
-    n_scopes: int
-    n_scopes_varying: int
-    max_scope_spread: float
-
-    @property
-    def share(self) -> float:
-        """Percentage of records inheriting the parent weight unchanged."""
-        return 100.0 * self.n_close / self.n if self.n else 0.0
-
-    @property
-    def mode(self) -> str:
-        """Which of the three mechanisms produced this level's weights.
-
-        ``copied`` -- every child carries its parent's weight unchanged, so the level adds
-        nothing of its own and comparing two sets here restates the level above.
-
-        ``redistributed`` -- children depart from the parent, but every child in
-        a scope departs by the same factor. That is conservation: the admitted
-        records absorb the share of any sibling the gate removed, and the level
-        stays a faithful expansion of its parent.
-
-        ``adjusted`` -- children in the same scope carry different factors, so
-        something rescaled records individually after the weights descended. The
-        level no longer nests inside its parent: two children of one parent now
-        claim to represent different amounts of it.
-        """
-        if self.n_scopes_varying:
-            return "adjusted"
-        return "copied" if self.n_close == self.n else "redistributed"
-
-
-def inheritance(
-    tables: Mapping[str, pl.DataFrame | None],
-    sets: Sequence[WeightSet],
-) -> list[Inheritance]:
-    """Per set and copy-down level, how the weight descends from the parent.
-
-    Distinguishes conservation from post-hoc adjustment, which look alike in any
-    summary that only counts departures from the parent weight. Both leave most
-    children unequal to their parent; only one leaves the level coherent.
-
-    The discriminator is whether the child-to-parent ratio is constant *within*
-    each parent. Conservation rescales a whole scope by one factor -- every
-    usable sibling absorbs the same share of what the gate removed -- so the
-    ratio cannot vary between siblings. A factor applied to individual records
-    can, and does: measured on bats_2023, the vendor's trip weights vary within
-    1,102 of 25,312 days, by up to exactly 2x, while every fitted profile and the
-    vendor's own rMove weights vary within none.
-
-    Split levels are excluded: days divide their person's weight rather than
-    copying it, so sibling ratios differ there by design.
-
-    Args:
-        tables: Canonical tables by name, after propagation.
-        sets: The weight sets to describe.
-
-    Returns:
-        One entry per (level, set) that could be measured, in hierarchy order.
-    """
-    rows: list[Inheritance] = []
-    for level in HIERARCHY:
-        if level.flow is not Flow.DOWN or level.split or level.parent is None:
-            continue
-        child_df, parent_df = tables.get(level.table), tables.get(level.parent)
-        if child_df is None or parent_df is None:
-            continue
-        key = LEVELS[level.parent].id_col
-        if key not in child_df.columns or key not in parent_df.columns:
-            continue
-        for weight_set in sets:
-            row = _inheritance_row(child_df, parent_df, key, level, weight_set)
-            if row is not None:
-                rows.append(row)
-    return rows
-
-
-def _inheritance_row(
-    child_df: pl.DataFrame,
-    parent_df: pl.DataFrame,
-    key: str,
-    level: Level,
-    weight_set: WeightSet,
-) -> Inheritance | None:
-    """One set's inheritance at one level, or None if it cannot be measured."""
-    child_col = weight_set.columns.get(level.table)
-    parent_col = weight_set.columns.get(level.parent)
-    if child_col is None or parent_col is None:
-        return None
-    if child_col not in child_df.columns or parent_col not in parent_df.columns:
-        return None
-
-    joined = (
-        child_df.select(key, pl.col(child_col).alias("c"))
-        .join(parent_df.select(key, pl.col(parent_col).alias("p")), on=key, how="inner")
-        .filter(
-            pl.col("c").is_not_null()
-            & pl.col("p").is_not_null()
-            & (pl.col("c") > 0)
-            & (pl.col("p") > 0)
-        )
-        .with_columns((pl.col("c") / pl.col("p")).alias("ratio"))
-    )
-    if joined.height < MIN_OVERLAP:
-        return None
-
-    # Compared as a spread rather than a distinct count, so float noise in the
-    # division cannot masquerade as siblings on different factors.
-    scopes = joined.group_by(key).agg(
-        (pl.col("ratio").max() / pl.col("ratio").min()).alias("spread")
-    )
-    varying = scopes.filter(pl.col("spread") > 1 + _SAME_FACTOR_TOL)
-    return Inheritance(
-        level=level.table,
-        parent=level.parent,
-        set_name=weight_set.name,
-        n=joined.height,
-        n_close=joined.filter((pl.col("ratio") - 1).abs() <= AGREEMENT_TOL).height,
-        n_scopes=scopes.height,
-        n_scopes_varying=varying.height,
-        max_scope_spread=float(scopes["spread"].max()) if scopes.height else 1.0,
-    )
 
 
 def payload(comparison: Comparison) -> dict:

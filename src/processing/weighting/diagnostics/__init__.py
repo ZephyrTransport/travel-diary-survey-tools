@@ -18,11 +18,9 @@ one-line summary, with the longer guidance collapsed beneath it.
    means two balancing runs produced one answer.
 2. **Crosswalk Map** — geographic crosswalk visualization, with every profile's
    seed count in each zone's tooltip. Boundaries are simplified to a few metres.
-3. **Weight Cascade** — per level, what each profile admitted and what carries
-   weight, all profiles side by side; plus the redistribution each survivor
-   absorbs, whether each weight set's lower levels were copied, redistributed
-   or adjusted per record, the day-split identity, and control-geography
-   coverage.
+3. **Weight Cascade** — per level, the records each profile keeps, all
+   profiles side by side; the records the cleaner excluded, by reason; and the
+   weight each kept record carries for dropped ones.
 4. **Weight Set Comparer** — any two weight sets compared at any level: this
    run's fits against each other, or against weights supplied with the survey
    and named in ``diagnostics.compare_weights``. Run-level because a comparison
@@ -40,7 +38,7 @@ one-line summary, with the longer guidance collapsed beneath it.
 6. **Balancer Performance** — per-zone convergence status, target fit (MAPE,
    P90, Max), CV and ESS%.
 7. **Weight Quality** — per-zone weight and expansion-factor statistics, with
-   violin plots of ``final_weight / base_weight``.
+   each zone's household weights as points spread by density, and their mean.
 8. **Expansion Factor Calibration** — MAPE vs CV across a grid of
    ``max_expansion_factor`` values. Enabled by setting ``expansion_factor_grid``
    in the weighting config.
@@ -70,11 +68,9 @@ diagnostics:
       columns: {households: hh_weight, unlinked_trips: trip_weight}
 ```
 
-When `output_path` is omitted the report is written to
-``<cache_dir>/diagnostics.html``. One file per run, with no profile suffix.
+`output_path` is required. One file per run, with no profile suffix.
 """
 
-from .charts import crosswalk_figure
 from .report import generate_report
 
-__all__ = ["crosswalk_figure", "generate_report"]
+__all__ = ["generate_report"]

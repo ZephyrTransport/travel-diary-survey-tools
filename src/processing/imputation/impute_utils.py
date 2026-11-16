@@ -34,6 +34,54 @@ from utils.enum_helpers import resolve_enum_labels
 
 logger = logging.getLogger(__name__)
 
+# Foreign keys between canonical tables: (table, the table it belongs to) -> key.
+FK_RELATIONSHIPS: dict[tuple[str, str], str] = {
+    ("persons", "households"): "hh_id",
+    ("person_days", "persons"): "person_id",
+    ("person_days", "households"): "hh_id",
+    ("unlinked_trips", "person_days"): "person_day_id",
+    ("unlinked_trips", "persons"): "person_id",
+    ("unlinked_trips", "households"): "hh_id",
+    ("linked_trips", "person_days"): "person_day_id",
+    ("linked_trips", "persons"): "person_id",
+    ("linked_trips", "households"): "hh_id",
+    ("tours", "persons"): "person_id",
+    ("tours", "households"): "hh_id",
+}
+
+# Hyperparameter defaults per method, for whatever a config block leaves out.
+METHOD_DEFAULTS: dict[str, dict[str, Any]] = {
+    "knn": {"n_neighbors": 5, "neighbor_weights": "distance"},
+    "rf": {"n_estimators": 100, "max_depth": None},
+    "mice": {"max_iter": 10},
+}
+
+# Validation metrics, in report column order: categorical, then continuous.
+METRIC_KEYS = ("accuracy", "precision", "recall", "f1", "rmse", "mae", "r2")
+
+
+def method_params(config: dict[str, Any], method: str) -> dict[str, Any]:
+    """The method's hyperparameters: the config block's values over the defaults."""
+    return {key: config.get(key, default) for key, default in METHOD_DEFAULTS[method].items()}
+
+
+def missing_labels(missing_values: dict[str, list[str]] | list[str], column: str) -> list[str]:
+    """The labels treated as missing for *column*: per-column dict or one shared list."""
+    return missing_values.get(column, []) if isinstance(missing_values, dict) else missing_values
+
+
+def metric_row(table: str, column: str, method: str, metrics: dict[str, Any]) -> dict[str, Any]:
+    """One row of a validation or comparison summary."""
+    return {
+        "table": table,
+        "variable": column,
+        "method": method,
+        "type": metrics.get("type", "unknown"),
+        "n_samples": metrics.get("n_samples", 0),
+        "n_folds": metrics.get("n_folds", 0),
+        **{key: metrics.get(key) for key in METRIC_KEYS},
+    }
+
 
 def log_imputation_stats(
     method: str,
@@ -99,6 +147,41 @@ def validate_features_exist(
         raise ValueError(msg)
 
 
+def count_missing(
+    df: pl.DataFrame,
+    column: str,
+    numeric_features: list[str] | None,
+    categorical_features: list[str] | None,
+) -> tuple[int, float, dict[str, Any] | None]:
+    """Check a single-column imputation's inputs and count what it has to fill.
+
+    Returns:
+        ``(n_missing, pct_missing, skip_stats)``: *skip_stats* is the stats
+        dict to return unchanged when there is nothing to impute (no value
+        missing, or every value missing), else None.
+
+    Raises:
+        ValueError: If *column* or a feature column is absent, or no feature
+            is named.
+    """
+    if column not in df.columns:
+        msg = f"Column '{column}' not found in DataFrame"
+        raise ValueError(msg)
+
+    validate_features_exist(df, numeric_features, categorical_features)
+
+    n_missing = df[column].null_count()
+    pct_missing = (n_missing / len(df)) * 100
+    if n_missing == 0:
+        logger.info("Column '%s': No missing values, skipping imputation", column)
+        return 0, pct_missing, {"n_missing": 0, "n_imputed": 0, "pct_imputed": 0.0}
+    if n_missing == len(df):
+        logger.warning("Column '%s': All values are missing, cannot impute", column)
+        skip = {"n_missing": n_missing, "n_imputed": 0, "pct_imputed": 100.0}
+        return n_missing, pct_missing, skip
+    return n_missing, pct_missing, None
+
+
 def is_categorical(df: pl.DataFrame, column: str) -> bool:
     """Determine if a column should be treated as categorical.
 
@@ -110,17 +193,7 @@ def is_categorical(df: pl.DataFrame, column: str) -> bool:
         True if column is categorical (non-float numeric or string), False otherwise
     """
     dtype = df[column].dtype
-    return dtype in (
-        pl.Int8,
-        pl.Int16,
-        pl.Int32,
-        pl.Int64,
-        pl.UInt8,
-        pl.UInt16,
-        pl.UInt32,
-        pl.UInt64,
-        pl.Utf8,
-    )
+    return dtype.is_integer() or dtype == pl.String
 
 
 def prepare_column_for_imputation(
@@ -167,7 +240,6 @@ def prepare_column_for_imputation(
         )
         return df, []
 
-    # Log what we're doing
     logger.info(
         "Replacing missing values %s with null for column '%s' (from labels %s)",
         missing_values,
@@ -175,13 +247,7 @@ def prepare_column_for_imputation(
         missing_value_labels,
     )
 
-    # Replace missing values with null inline
-    expr = pl.col(column)
-    for value in missing_values:
-        expr = expr.replace(value, None)
-    df_prepared = df.with_columns(expr)
-
-    return df_prepared, missing_values
+    return df.with_columns(pl.col(column).replace(missing_values, None)), missing_values
 
 
 # ---------------------------------------------------------------------------
@@ -189,15 +255,16 @@ def prepare_column_for_imputation(
 # ---------------------------------------------------------------------------
 
 
-def _decode_rounded(
+def decode_rounded(
     imputed_values: np.ndarray,
     mapping: dict[int, Any],
 ) -> list[Any]:
-    """Round imputed floats and look up in a code mapping.
+    """Decode imputed floats back to codes or labels through a code mapping.
 
-    This is the shared implementation for both ``decode_integer_to_string``
-    and ``decode_dense_to_integer``.  Each float is rounded to the nearest
-    integer, clamped to ``[min_key, max_key]``, and resolved via *mapping*.
+    Reverses ``encode_string_columns`` (int -> label) and
+    ``encode_integer_categoricals`` (dense int -> original code). Each float
+    is rounded to the nearest integer, clamped to ``[min_key, max_key]``, and
+    resolved via *mapping*.
 
     Args:
         imputed_values: 1-D array of imputed float values
@@ -213,28 +280,22 @@ def _decode_rounded(
     return [mapping.get(max(min_key, min(round(v), max_key)), fallback) for v in imputed_values]
 
 
-def decode_integer_to_string(
-    imputed_values: np.ndarray,
-    int_to_label: dict[int, str],
-) -> list[str]:
-    """Decode imputed float values back to string labels.
+def decode_target(
+    values: np.ndarray,
+    column: str,
+    dtype: pl.DataType,
+    int_encodings: dict[str, dict[int, int]],
+) -> pl.Series:
+    """Turn an imputed column back into its original codes and dtype.
 
-    Rounds each value to the nearest integer and clamps to the valid
-    range of encoded labels.
+    A dense-encoded column is decoded through its mapping; any other integer
+    column is rounded; a float column is returned as imputed.
     """
-    return _decode_rounded(imputed_values, int_to_label)
-
-
-def decode_dense_to_integer(
-    imputed_values: np.ndarray,
-    dense_to_original: dict[int, int],
-) -> list[int]:
-    """Decode dense 0..N predictions back to original integer codes.
-
-    Rounds each value to the nearest integer and clamps to the valid
-    range of dense keys before looking up the original code.
-    """
-    return _decode_rounded(imputed_values, dense_to_original)
+    if column in int_encodings:
+        return pl.Series(column, decode_rounded(values, int_encodings[column])).cast(dtype)
+    if dtype.is_integer():
+        return pl.Series(column, values).round().cast(dtype)
+    return pl.Series(column, values)
 
 
 def encode_string_columns(
@@ -415,21 +476,16 @@ def build_feature_matrix(
     )
 
 
-# Foreign key relationships between canonical tables.
-# Maps (child_table, parent_table) -> join_key column name.
-FK_RELATIONSHIPS: dict[tuple[str, str], str] = {
-    ("persons", "households"): "hh_id",
-    ("days", "persons"): "person_id",
-    ("days", "households"): "hh_id",
-    ("unlinked_trips", "days"): "day_id",
-    ("unlinked_trips", "persons"): "person_id",
-    ("unlinked_trips", "households"): "hh_id",
-    ("linked_trips", "days"): "day_id",
-    ("linked_trips", "persons"): "person_id",
-    ("linked_trips", "households"): "hh_id",
-    ("tours", "persons"): "person_id",
-    ("tours", "households"): "hh_id",
-}
+def _join_key(table: str, owner: str) -> str:
+    """The key joining *table* to the table its rows belong to, *owner*."""
+    key = FK_RELATIONSHIPS.get((table, owner))
+    if key is None:
+        msg = (
+            f"No foreign key relationship defined for {table} -> {owner}. "
+            f"Known relationships: {list(FK_RELATIONSHIPS.keys())}"
+        )
+        raise ValueError(msg)
+    return key
 
 
 def join_parent_tables(
@@ -461,19 +517,10 @@ def join_parent_tables(
 
     for parent_name in join_tables:
         if parent_name not in tables:
-            logger.warning("join_tables: parent table '%s' not available, skipping", parent_name)
+            logger.warning("join_tables: table '%s' not available, skipping", parent_name)
             continue
 
-        fk_key = (table_name, parent_name)
-        if fk_key not in FK_RELATIONSHIPS:
-            msg = (
-                f"No foreign key relationship defined for "
-                f"{table_name} -> {parent_name}. "
-                f"Known relationships: {list(FK_RELATIONSHIPS.keys())}"
-            )
-            raise ValueError(msg)
-
-        join_col = FK_RELATIONSHIPS[fk_key]
+        join_col = _join_key(table_name, parent_name)
         parent_df = tables[parent_name]
 
         # Select parent columns that don't already exist on the child
@@ -508,35 +555,32 @@ def join_parent_tables(
 def add_household_agg_features(
     df: pl.DataFrame,
     target_columns: list[str],
-    hh_id_col: str = "hh_id",
-    person_id_col: str = "person_id",
 ) -> tuple[pl.DataFrame, list[str]]:
-    """Add household-aggregated features for target columns.
+    """Count the rest of each person's household in each code of each target column.
 
-    For each target column, computes the mode of that column among *other*
-    household members (excluding the current person). This captures
-    within-household correlation (e.g., siblings likely share race/ethnicity).
+    Captures within-household correlation (e.g., siblings likely share
+    race/ethnicity). Column ``gender`` gains ``n_hh_gender=1``,
+    ``n_hh_gender=2``, ...: how many members of the person's household, not
+    counting the person, have that code. A child of a man and a woman counts
+    one of each; a person living alone counts zero. Members with a null value
+    are not counted.
 
-    The new columns are named ``hh_mode_{column}``.
+    The person is left out because their own value is the target: counting it
+    would hand the model the answer on the rows it learns from, and not on the
+    rows it predicts.
 
-    For single-person households or when all other members have null values,
-    the aggregated value will be null.
+    Counts, not the most common value: a tie (one man, one woman) has no single
+    answer, and settling it by row order made imputation differ run to run.
 
     Args:
         df: DataFrame with person-level records (must contain hh_id and person_id)
         target_columns: List of columns to compute household aggregates for
-        hh_id_col: Name of the household ID column
-        person_id_col: Name of the person ID column
 
     Returns:
         Tuple of (enriched_df, list of added column names)
     """
-    if hh_id_col not in df.columns or person_id_col not in df.columns:
-        logger.info(
-            "Skipping household aggregation: '%s' or '%s' not in columns",
-            hh_id_col,
-            person_id_col,
-        )
+    if "hh_id" not in df.columns or "person_id" not in df.columns:
+        logger.info("Skipping household aggregation: 'hh_id' or 'person_id' not in columns")
         return df, []
 
     added_columns: list[str] = []
@@ -545,46 +589,21 @@ def add_household_agg_features(
         if col not in df.columns:
             continue
 
-        agg_col_name = f"hh_mode_{col}"
-
-        # For each person, compute the mode of `col` among other HH members
-        # Step 1: Build a lookup of hh_id + person_id -> value
-        # Step 2: Self-join excluding current person, group by hh_id+person_id, take mode
-
-        # Get all (hh_id, person_id, col_value) with non-null values
-        valid = df.select([hh_id_col, person_id_col, col]).filter(pl.col(col).is_not_null())
-
-        if valid.is_empty():
-            # No valid values to aggregate
-            df = df.with_columns(pl.lit(None).alias(agg_col_name))
-            added_columns.append(agg_col_name)
-            continue
-
-        # Cross-join within household: for each person, get other members' values
-        # Rename to avoid column conflicts
-        others = valid.rename({person_id_col: f"_other_{person_id_col}", col: f"_other_{col}"})
-
-        # Join on hh_id, then filter out self
-        crossed = (
-            df.select([hh_id_col, person_id_col])
-            .join(others, on=hh_id_col, how="left")
-            .filter(pl.col(person_id_col) != pl.col(f"_other_{person_id_col}"))
+        values = df[col].drop_nulls().unique().sort().to_list()
+        names = [f"n_hh_{col}={val}" for val in values]
+        # The household's count of each code, less the person's own.
+        df = df.with_columns(
+            (
+                (pl.col(col) == val).fill_null(value=False).sum().over("hh_id")
+                - (pl.col(col) == val).fill_null(value=False)
+            )
+            .cast(pl.Int32)
+            .alias(name)
+            for val, name in zip(values, names, strict=True)
         )
+        added_columns.extend(names)
 
-        # Compute mode per person
-        hh_agg = crossed.group_by([hh_id_col, person_id_col]).agg(
-            pl.col(f"_other_{col}").mode().first().alias(agg_col_name)
-        )
-
-        # Join back
-        df = df.join(hh_agg, on=[hh_id_col, person_id_col], how="left")
-        added_columns.append(agg_col_name)
-
-        logger.info(
-            "Added household aggregate feature '%s' for column '%s'",
-            agg_col_name,
-            col,
-        )
+        logger.info("Added %d household count features for column '%s'", len(names), col)
 
     return df, added_columns
 
@@ -594,7 +613,6 @@ def aggregate_from_children(
     table_name: str,
     tables: dict[str, pl.DataFrame],
     aggregate_config: dict[str, dict[str, list[str]]],
-    verbose: bool = True,
 ) -> tuple[pl.DataFrame, list[str]]:
     """Aggregate child table columns onto a parent table via pivot counts.
 
@@ -613,7 +631,6 @@ def aggregate_from_children(
         aggregate_config: Mapping of child table name to aggregation spec.
             Each spec supports:
             - ``pivot_count``: list of child column names to pivot-count
-        verbose: Whether to log aggregation details
 
     Returns:
         Tuple of (enriched_df, list of added column names)
@@ -626,22 +643,12 @@ def aggregate_from_children(
     for child_name, agg_spec in aggregate_config.items():
         if child_name not in tables:
             logger.warning(
-                "aggregate_from: child table '%s' not available, skipping",
+                "aggregate_from: table '%s' not available, skipping",
                 child_name,
             )
             continue
 
-        # Look up the FK from child → parent
-        fk_key = (child_name, table_name)
-        if fk_key not in FK_RELATIONSHIPS:
-            msg = (
-                f"No foreign key relationship defined for "
-                f"{child_name} -> {table_name}. "
-                f"Known relationships: {list(FK_RELATIONSHIPS.keys())}"
-            )
-            raise ValueError(msg)
-
-        join_col = FK_RELATIONSHIPS[fk_key]
+        join_col = _join_key(child_name, table_name)
         child_df = tables[child_name]
         pivot_count_fields = agg_spec.get("pivot_count", [])
 
@@ -676,34 +683,14 @@ def aggregate_from_children(
 
             added_columns.extend(pivot_col_names)
 
-            if verbose:
-                logger.info(
-                    "Added %d pivot_count columns for '%s.%s'",
-                    len(pivot_col_names),
-                    child_name,
-                    field,
-                )
+            logger.info(
+                "Added %d pivot_count columns for '%s.%s'",
+                len(pivot_col_names),
+                child_name,
+                field,
+            )
 
     return df, added_columns
-
-
-def strip_joined_columns(
-    df: pl.DataFrame,
-    added_columns: list[str],
-) -> pl.DataFrame:
-    """Remove columns that were temporarily added for imputation.
-
-    Args:
-        df: DataFrame with extra columns
-        added_columns: List of column names to remove
-
-    Returns:
-        DataFrame with added columns removed
-    """
-    cols_to_drop = [c for c in added_columns if c in df.columns]
-    if cols_to_drop:
-        df = df.drop(cols_to_drop)
-    return df
 
 
 def enrich_dataframe(
@@ -712,8 +699,8 @@ def enrich_dataframe(
     tables: dict[str, pl.DataFrame] | None,
     join_tables_list: list[str],
     target_columns: list[str],
-    categorical_features: list[str] | None,
     aggregate_from_config: dict[str, dict[str, list[str]]] | None = None,
+    numeric_features: list[str] | None = None,
 ) -> tuple[pl.DataFrame, list[str], list[str] | None]:
     """Enrich a DataFrame with parent joins and child aggregations.
 
@@ -721,8 +708,13 @@ def enrich_dataframe(
       - Parent→child joins via ``join_tables`` config
       - Child→parent aggregations via ``aggregate_from`` config
 
+    The added counts (household counts, ``pivot_count``) are numeric features:
+    a count is a number, and as a category it would split into one column per
+    count value.
+
     Returns:
-        Tuple of (enriched_df, added_column_names, updated_categorical_features)
+        Tuple of (enriched_df, added_column_names, numeric_features), the last
+        with the added counts in place.
     """
     added_columns: list[str] = []
 
@@ -734,13 +726,13 @@ def enrich_dataframe(
         df, agg_cols = add_household_agg_features(df, target_columns)
         added_columns.extend(agg_cols)
         if agg_cols:
-            categorical_features = list(categorical_features or []) + agg_cols
+            numeric_features = list(numeric_features or []) + agg_cols
 
     # Child aggregations (e.g. households aggregating from persons)
     if aggregate_from_config and tables:
         df, child_cols = aggregate_from_children(df, table_name, tables, aggregate_from_config)
         added_columns.extend(child_cols)
         if child_cols:
-            categorical_features = list(categorical_features or []) + child_cols
+            numeric_features = list(numeric_features or []) + child_cols
 
-    return df, added_columns, categorical_features
+    return df, added_columns, numeric_features

@@ -1,6 +1,5 @@
 """KNN-based imputation for missing values."""
 
-import logging
 from typing import Any, Literal
 
 import polars as pl
@@ -8,12 +7,10 @@ from sklearn.impute import KNNImputer
 
 from .impute_utils import (
     build_feature_matrix,
-    decode_dense_to_integer,
+    count_missing,
+    decode_target,
     encode_integer_categoricals,
-    validate_features_exist,
 )
-
-logger = logging.getLogger(__name__)
 
 
 def impute_knn(
@@ -66,25 +63,11 @@ def impute_knn(
         Tuple of (imputed DataFrame, stats dict).  The stats dict contains
         ``n_missing``, ``n_imputed``, and ``pct_imputed``.
     """
-    if column not in df.columns:
-        msg = f"Column '{column}' not found in DataFrame"
-        raise ValueError(msg)
-
-    validate_features_exist(df, numeric_features, categorical_features)
-
-    n_missing = df[column].null_count()
-    n_total = len(df)
-    pct_imputed = (n_missing / n_total) * 100
-
-    if n_missing == 0:
-        logger.info("Column '%s': No missing values, skipping imputation", column)
-        return df, {"n_missing": 0, "n_imputed": 0, "pct_imputed": 0.0}
-
-    if n_missing == n_total:
-        logger.warning("Column '%s': All values are missing, cannot impute", column)
-        return df, {"n_missing": n_missing, "n_imputed": 0, "pct_imputed": 100.0}
-
-    original_dtype = df[column].dtype
+    n_missing, pct_imputed, skip_stats = count_missing(
+        df, column, numeric_features, categorical_features
+    )
+    if skip_stats is not None:
+        return df, skip_stats
 
     # Encode non-contiguous integer codes to dense 0..N for distance calc
     df_work, int_encodings = encode_integer_categoricals(df, [column])
@@ -99,15 +82,7 @@ def impute_knn(
     imputer = KNNImputer(n_neighbors=n_neighbors, weights=neighbor_weights)
     imputed_values = imputer.fit_transform(feature_matrix)[:, target_idx]
 
-    # Decode back to original codes
-    if column in int_encodings:
-        decoded = decode_dense_to_integer(imputed_values, int_encodings[column])
-        imputed_series = pl.Series(column, decoded).cast(original_dtype)
-    elif original_dtype.is_integer():
-        imputed_series = pl.Series(column, imputed_values).round().cast(original_dtype)
-    else:
-        imputed_series = pl.Series(column, imputed_values)
-
+    imputed_series = decode_target(imputed_values, column, df[column].dtype, int_encodings)
     return df.with_columns(imputed_series), {
         "n_missing": n_missing,
         "n_imputed": n_missing,

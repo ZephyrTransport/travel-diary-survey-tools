@@ -67,6 +67,16 @@ class Employment(LabeledEnum):
     # UNEMPLOYED_RETIRED = (8, "Not employed and not working, retired")
 
 
+# Employment codes the model formatters treat as having a job: who can make a work
+# tour and have a usual workplace. Furloughed is left out: not working now.
+EMPLOYED = (
+    Employment.EMPLOYED_FULLTIME,
+    Employment.EMPLOYED_PARTTIME,
+    Employment.EMPLOYED_SELF,
+    Employment.EMPLOYED_UNPAID,
+)
+
+
 class Ethnicity(LabeledEnum):
     """ethnicity value labels."""
 
@@ -273,6 +283,17 @@ class Student(LabeledEnum):
     NONSTUDENT = (2, "Not a student")
     PARTTIME_ONLINE = (3, "Part-time student, ONLY online classes")
     FULLTIME_ONLINE = (4, "Full-time student, ONLY online classes")
+    MISSING = (995, "Missing Response")
+
+
+class SurveyTech(LabeledEnum):
+    """survey_tech value labels: the technology that collected a person's travel."""
+
+    canonical_field_name = "survey_tech"
+
+    CALL_CENTER = (1, "Call center")
+    BROWSER = (2, "Browser")
+    GPS = (3, "GPS: phone app")
     MISSING = (995, "Missing Response")
 
 

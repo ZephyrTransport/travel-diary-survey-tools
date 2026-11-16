@@ -141,6 +141,9 @@ class CTRAMPModeType(LabeledEnum):
     TAXI = 19, "Taxi"
     TNC = 20, "TNC - single party"
     TNC2 = 21, "TNC - shared"
+    # These modes were added for calibration purpose. They are not used in CTRAMP
+    WLK_FERRY_WLK = 22, "Walk to ferry"
+    DRV_FERRY_WLK = 23, "Drive to ferry"
 
 
 class CTRAMPTourCategory(LabeledEnum):
@@ -192,30 +195,6 @@ class CTRAMPTourPurpose(LabeledEnum):
     SOCIAL = "social", "Social/recreational"
     OTHMAINT = "othmaint", "Other maintenance"
     OTHDISCR = "othdiscr", "Other discretionary"
-
-    @property
-    def simple_purpose(self) -> "CTRAMPSimplePurpose | None":
-        """Map detailed purpose to simplified category."""
-        mapping = {
-            self.ATWORK_BUSINESS: CTRAMPSimplePurpose.ATWORK,
-            self.ATWORK_EAT: CTRAMPSimplePurpose.ATWORK,
-            self.ATWORK_MAINT: CTRAMPSimplePurpose.ATWORK,
-            self.EATOUT: CTRAMPSimplePurpose.IND_DISC,
-            self.ESCORT_KIDS: CTRAMPSimplePurpose.IND_MAINT,
-            self.ESCORT_NO_KIDS: CTRAMPSimplePurpose.IND_MAINT,
-            self.OTHDISCR: CTRAMPSimplePurpose.IND_DISC,
-            self.OTHMAINT: CTRAMPSimplePurpose.IND_MAINT,
-            self.SCHOOL_GRADE: CTRAMPSimplePurpose.SCHOOL,
-            self.SCHOOL_HIGH: CTRAMPSimplePurpose.SCHOOL,
-            self.SHOPPING: CTRAMPSimplePurpose.IND_MAINT,
-            self.SOCIAL: CTRAMPSimplePurpose.IND_DISC,
-            self.UNIVERSITY: CTRAMPSimplePurpose.UNIVERSITY,
-            self.WORK_HIGH: CTRAMPSimplePurpose.WORK,
-            self.WORK_LOW: CTRAMPSimplePurpose.WORK,
-            self.WORK_MED: CTRAMPSimplePurpose.WORK,
-            self.WORK_VERY_HIGH: CTRAMPSimplePurpose.WORK,
-        }
-        return mapping.get(self)
 
 
 class CTRAMPTripPurpose(LabeledEnum):
@@ -310,25 +289,6 @@ class INMFAlternative:
     eatout: int
     social: int
 
-    def to_label(self) -> str:
-        """Generate human-readable label from tour counts."""
-        if self.code == 0:
-            return "no non-mandatory tours"
-        parts = []
-        if self.escort > 0:
-            parts.append(f"{self.escort} escort")
-        if self.shopping > 0:
-            parts.append(f"{self.shopping} shopping")
-        if self.othmaint > 0:
-            parts.append(f"{self.othmaint} other maint")
-        if self.othdiscr > 0:
-            parts.append(f"{self.othdiscr} other discr")
-        if self.eatout > 0:
-            parts.append(f"{self.eatout} eat out")
-        if self.social > 0:
-            parts.append(f"{self.social} social")
-        return ", ".join(parts) if parts else "no tours"
-
 
 # Load alternatives from CSV file
 def load_alternatives_from_csv(path: str | Path) -> dict[int, INMFAlternative]:
@@ -351,29 +311,16 @@ def load_alternatives_from_csv(path: str | Path) -> dict[int, INMFAlternative]:
 
 
 # Build alternatives programmatically
-def build_alternatives(
-    *, sizes: dict[str, int] | None = None, maxes: dict[str, int] | None = None
-) -> dict[int, INMFAlternative]:
+def build_alternatives(*, maxes: dict[str, int]) -> dict[int, INMFAlternative]:
     """Build all combinations of alternatives.
 
-    Provide either:
-    - `sizes`: mapping field -> number of levels (e.g. 2 for 0..1), OR
-    - `maxes`: mapping field -> maximum value (inclusive), which will be converted to sizes by +1.
-
-    The iteration order matches the CSV with fields varying at these rates
-    (slowest -> fastest): escort, shopping, othmaint, eatout, social, othdiscr.
+    ``maxes`` maps each field to its maximum count (inclusive); a field left out
+    ranges over 0..1. The iteration order matches the CSV with fields varying at
+    these rates (slowest -> fastest): escort, shopping, othmaint, eatout, social,
+    othdiscr.
     """
-    if sizes is None and maxes is None:
-        msg = "either sizes or maxes must be provided"
-        raise ValueError(msg)
-
     fields = ["escort", "shopping", "othmaint", "eatout", "social", "othdiscr"]
-
-    # Convert maxes to sizes if needed
-    if maxes is not None:
-        sizes_map = {k: (maxes.get(k) or 1) + 1 for k in fields}
-    else:
-        sizes_map = {k: (sizes or {}).get(k) or 2 for k in fields}
+    sizes_map = {k: (maxes.get(k) or 1) + 1 for k in fields}
 
     # Generate all combinations
     mapping: dict[int, INMFAlternative] = {}
@@ -400,45 +347,12 @@ _INMF_REVERSE_LOOKUP: dict[tuple[int, int, int, int, int, int], int] = {
     for code, alt in _INMF_ALTERNATIVES.items()
 }
 
-# Compute max values for each field (for capping)
+# Max value of each field (for capping)
 _INMF_MAXES = {
-    "escort": max(alt.escort for alt in _INMF_ALTERNATIVES.values()),
-    "shopping": max(alt.shopping for alt in _INMF_ALTERNATIVES.values()),
-    "othmaint": max(alt.othmaint for alt in _INMF_ALTERNATIVES.values()),
-    "othdiscr": max(alt.othdiscr for alt in _INMF_ALTERNATIVES.values()),
-    "eatout": max(alt.eatout for alt in _INMF_ALTERNATIVES.values()),
-    "social": max(alt.social for alt in _INMF_ALTERNATIVES.values()),
+    f: max(getattr(alt, f) for alt in _INMF_ALTERNATIVES.values())
+    for f in ("escort", "shopping", "othmaint", "othdiscr", "eatout", "social")
 }
 
 
 # Exported names
 __all__ = ["_INMF_ALTERNATIVES", "_INMF_MAXES", "_INMF_REVERSE_LOOKUP"]
-
-
-if __name__ == "__main__":
-    # Example usage: print all alternatives
-    csv_alternatives = load_alternatives_from_csv(
-        "tests\\fixtures\\CTRAMP_IndividualNonMandatoryTourFrequencyAlternatives.csv"
-    )
-    # Use `maxes` (inclusive max frequencies) with the new API
-    py_alternatives = build_alternatives(
-        maxes={
-            "escort": 2,
-            "shopping": 1,
-            "othmaint": 1,
-            "othdiscr": 1,
-            "eatout": 1,
-            "social": 1,
-        }
-    )
-
-    # Compare
-    bads = 0
-    for code in sorted(set(csv_alternatives.keys()).union(py_alternatives.keys())):
-        alt_csv = csv_alternatives.get(code)
-        alt_py = py_alternatives.get(code)
-        if alt_csv != alt_py:
-            bads += 1
-            print(f"Code {code}: CSV={alt_csv}, PY={alt_py}")  # noqa: T201
-
-    print(f"CTRAMP codebook module executed. Differences found: {bads}")  # noqa: T201

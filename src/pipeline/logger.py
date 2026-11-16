@@ -29,21 +29,12 @@ def setup_logging(
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG)
 
-    # Remove only our own StreamHandler and FileHandler instances
-    # Preserve pytest's caplog handler (LogCaptureHandler) and other special handlers
-    handlers_to_remove = []
-    for h in root_logger.handlers:
-        handler_class_name = h.__class__.__name__
-
-        # Skip pytest's LogCaptureHandler and LogCaptureFixture
-        if "LogCapture" in handler_class_name:
-            continue
-
-        # Remove our StreamHandlers and FileHandlers
-        if isinstance(h, (logging.FileHandler, logging.StreamHandler)):
-            handlers_to_remove.append(h)
-
-    for h in handlers_to_remove:
+    # Replace earlier stream/file handlers (FileHandler is a StreamHandler); keep pytest's caplog
+    for h in [
+        h
+        for h in root_logger.handlers
+        if isinstance(h, logging.StreamHandler) and "LogCapture" not in type(h).__name__
+    ]:
         root_logger.removeHandler(h)
 
     # Console handler with Unicode error handling for Windows
@@ -59,8 +50,7 @@ def setup_logging(
 
     # File handler
     if log_file is not None:
-        if not Path(log_file).exists():
-            Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+        Path(log_file).parent.mkdir(parents=True, exist_ok=True)
 
         file_handler = logging.FileHandler(log_file, mode=log_file_mode, encoding="utf-8")
         file_handler.setLevel(file_level)

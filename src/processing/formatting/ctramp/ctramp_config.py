@@ -4,17 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class CTRAMPConfig(BaseModel):
-    """Configuration for CT-RAMP formatting.
-
-    Attributes:
-        income_low_threshold: Income threshold for low income bracket
-        income_med_threshold: Income threshold for medium income bracket
-        income_high_threshold: Income threshold for high income bracket
-        age_adult: Age threshold for adult vs child in joint tour composition
-        income_survey_year_to_ctramp_year: Factor converting survey-year dollars
-            to CT-RAMP-year dollars
-        gender_default_for_missing: Default gender for missing/non-binary
-    """
+    """Configuration for CT-RAMP formatting; each field's description says what it sets."""
 
     income_low_threshold: int = Field(
         ge=0,
@@ -46,13 +36,12 @@ class CTRAMPConfig(BaseModel):
     )
 
     taz_field: str = Field(
-        default="taz",
         description="The field name in the household data that contains the TAZ ID for CTRAMP formatting.",  # noqa: E501
     )
 
     usability_profile: str = Field(
         description=(
-            "Which usability profile stamped by cascade_completeness decides the "
+            "Which usability profile stamped by cascade_usability decides the "
             "record universe. Required, and must name a profile that run stamped: "
             "a looser profile admits more, at the cost of no longer matching "
             "whichever profile the weighting and the other formatters were given."
@@ -61,12 +50,10 @@ class CTRAMPConfig(BaseModel):
 
     # Age thresholds
     age_adult: int = Field(
-        default=4,
         ge=0,
         description=(
             "Age category threshold for adult vs child in joint tours. "
-            "Use AgeCategory enum value (e.g., 4 = AGE_18_TO_24 and higher are adults). "
-            "Default: 4 (18+)"
+            "Use AgeCategory enum value (e.g., 4 = AGE_18_TO_24 and higher are adults)."
         ),
     )
 
@@ -83,11 +70,10 @@ class CTRAMPConfig(BaseModel):
 
     # Gender handling
     gender_default_for_missing: str = Field(
-        default="f",
         pattern="^[mf]$",
         description=(
-            "Default gender ('m' or 'f') for missing/non-binary values "
-            "when CT-RAMP requires binary gender. Default: 'f'"
+            "Gender ('m' or 'f') given to missing/non-binary values, since "
+            "CT-RAMP requires binary gender."
         ),
     )
 

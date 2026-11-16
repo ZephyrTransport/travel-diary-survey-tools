@@ -19,6 +19,12 @@ from pipeline.decoration import step
 
 logger = logging.getLogger(__name__)
 
+# Codebooks of travel-model output codes, not survey labels; left out of the enum codebook
+_EXCLUDE_CODEBOOK_MODULES = {
+    "data_canon.codebook.ctramp",
+    "data_canon.codebook.daysim",
+}
+
 
 def _extract_enum_from_type(annotation: object) -> type[LabeledEnum] | None:
     """Extract a LabeledEnum class from a type annotation, handling Unions.
@@ -40,12 +46,6 @@ def _extract_enum_from_type(annotation: object) -> type[LabeledEnum] | None:
     if inspect.isclass(annotation) and issubclass(annotation, LabeledEnum):
         return annotation
     return None
-
-
-_EXCLUDE_CODEBOOK_MODULES = {
-    "data_canon.codebook.ctramp",
-    "data_canon.codebook.daysim",
-}
 
 
 def _collect_enums_for_tables(
@@ -119,7 +119,7 @@ def load_data(
 
     Returns:
         Dictionary of table names to DataFrames (pl.DataFrame or gpd.GeoDataFrame).
-        Typical tables include households, persons, days, unlinked_trips, etc.
+        Typical tables include households, persons, person_days, unlinked_trips, etc.
 
     Algorithm:
         1. Iterate through each table name and file path in input_paths
@@ -221,8 +221,23 @@ def _select_canonical_columns(
     return df.select(keep)
 
 
+def _write_file(df: pl.DataFrame | gpd.GeoDataFrame | str, table: str, path: str) -> None:
+    """Write one table to *path* in the format its extension names."""
+    if path.endswith(".csv"):
+        df.write_csv(path)
+    elif path.endswith(".parquet"):
+        df.write_parquet(path)
+    elif path.endswith((".shp", ".shp.zip", ".geojson")):
+        df.to_file(path)
+    elif path.endswith(".txt"):
+        Path(path).write_text(df, encoding="utf-8")
+    else:
+        msg = f"Unsupported file format for table {table}: {path}"
+        raise ValueError(msg)
+
+
 @step()
-def write_data(  # noqa: C901, PLR0912
+def write_data(
     output_paths: dict[str, str],
     canonical_data: CanonicalData,
     validate_input: bool,
@@ -253,6 +268,10 @@ def write_data(  # noqa: C901, PLR0912
         1. If validate_input=True, validate each table using canonical data models
         2. For each table in output_paths:
             - Retrieve DataFrame from canonical_data
+            - Sort polars frames by hh_id then person_id where present, so
+              related tables come out in the same order and can be compared
+              or joined without an extra sort (text and geo outputs are
+              left as they are)
             - Create parent directories if needed
             - Write data based on file extension:
                 - .csv → DataFrame.write_csv()
@@ -281,16 +300,11 @@ def write_data(  # noqa: C901, PLR0912
         logger.info("Writing %s to:\n%s...", table, path)
 
         df = getattr(canonical_data, table)
-        file_path = Path(path)
 
         if write_only_canonical and isinstance(df, pl.DataFrame):
             df = _select_canonical_columns(df, table, canonical_data)
 
-        # Sort by hh_id then person_id where available so related tables
-        # (e.g. householdData and personData) are in the same order and
-        # can be visually compared or joined without an extra sort step.
-        # Only polars frames: text outputs are plain strings, and geo outputs
-        # are GeoDataFrames, which sort via a different API.
+        # Sort polars frames by hh_id, person_id (see docstring)
         if isinstance(df, pl.DataFrame):
             sort_cols = [c for c in ("hh_id", "person_id") if c in df.columns]
             if sort_cols:
@@ -301,19 +315,8 @@ def write_data(  # noqa: C901, PLR0912
             _write_checks(canonical_data, table)
 
         if create_dirs:
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-
-        if path.endswith(".csv"):
-            df.write_csv(path)
-        elif path.endswith(".parquet"):
-            df.write_parquet(path)
-        elif path.endswith((".shp", ".shp.zip", ".geojson")):
-            df.to_file(path)
-        elif path.endswith(".txt"):
-            file_path.write_text(df, encoding="utf-8")
-        else:
-            msg = f"Unsupported file format for table {table}: {path}"
-            raise ValueError(msg)
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+        _write_file(df, table, path)
 
     if enum_codebook_path is not None:
         if not enum_codebook_path.endswith(".xlsx"):

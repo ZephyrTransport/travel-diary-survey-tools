@@ -1,733 +1,145 @@
-"""Tests tour extraction edge cases that previously caused validation errors.
+"""Tour extraction on edge-case days.
 
-This test module ensures that tour extraction handles edge cases correctly:
-- Single-trip tours (tour has only one trip before returning home)
-- Partial tours (tour starts away from home, no initial home departure)
-- Tours starting with tour_num=1 (not 0)
-- Distance threshold fallback for destination timing
+Single trips, days starting away from home, distant stops, and arrivals home
+coded as an activity.
 """
 
-from datetime import datetime
-
 import polars as pl
-import pytest
 
-from data_canon.codebook.days import TravelDow
 from data_canon.codebook.generic import LocationType
-from data_canon.codebook.persons import (
-    AgeCategory,
-    Employment,
-    Student,
+from data_canon.codebook.tours import TourCategory, TourDataQuality
+from data_canon.codebook.trips import ModeType, Purpose, PurposeCategory
+from tests.fixtures.tour_pipeline import (
+    HOME,
+    HOUSEHOLDS,
+    LUNCH,
+    SHOP,
+    WORK,
+    at,
+    leg,
+    link_and_extract_tours,
+    person,
 )
-from data_canon.codebook.tours import TourDataQuality
-from data_canon.codebook.trips import Driver, ModeType, Purpose, PurposeCategory
-from processing import link_trips
-from processing.tours.extraction import extract_tours
+
+CORNER_SHOP = (37.81, -122.41)
+DOWNTOWN = (37.79, -122.39)
+ACROSS_THE_BAY = (37.6, -122.2)
+
+H, W, S = Purpose.HOME, Purpose.PRIMARY_WORKPLACE, Purpose.SHOPPING_ERRANDS
+SOCIAL = Purpose.OTHER_SOCIAL
 
 
-@pytest.fixture
-def single_trip_tour_data():
-    """Person makes a single trip to grocery store and back home.
+def _tours(legs: list[dict], **kwargs) -> pl.DataFrame:
+    """The tours extracted from the worker's legs."""
+    return link_and_extract_tours(person(), HOUSEHOLDS, legs, **kwargs)["tours"]
 
-    This tests the edge case where a tour consists of only one trip.
-    Previously, this caused tour_purpose=None because the logic filtered
-    out "last trips" which left no trips to determine purpose from.
-    """
-    persons = pl.DataFrame(
-        {
-            "person_id": [1],
-            "hh_id": [1],
-            "age": [AgeCategory.AGE_35_TO_44.value],
-            "employment": [Employment.EMPLOYED_FULLTIME.value],
-            "student": [Student.NONSTUDENT.value],
-            "school_type": [None],
-            "work_lat": [37.85],
-            "work_lon": [-122.45],
-            "school_lat": [None],
-            "school_lon": [None],
-        }
+
+def test_tour_destination_type_matches_destination_coords():
+    """For home -> shop -> home, d_location_type and d_lat/d_lon both describe the shop."""
+    tours = _tours(
+        [
+            leg(HOME, SHOP, H, S, at(9), at(9, 15)),
+            leg(SHOP, HOME, S, H, at(11), at(11, 15)),
+        ]
     )
 
-    households = pl.DataFrame(
-        {
-            "hh_id": [1],
-            "home_lat": [37.8],
-            "home_lon": [-122.4],
-        }
-    )
-
-    # Single trip: home -> grocery store
-    unlinked_trips = pl.DataFrame(
-        {
-            "unlinked_trip_id": [1],
-            "day_id": [1],
-            "person_id": [1],
-            "hh_id": [1],
-            "travel_dow": [TravelDow.WEDNESDAY.value],
-            "depart_time": [datetime(2024, 1, 15, 9, 0, 0)],
-            "arrive_time": [datetime(2024, 1, 15, 9, 15, 0)],
-            "o_purpose_category": [PurposeCategory.HOME.value],
-            "d_purpose_category": [PurposeCategory.SHOP.value],
-            "o_purpose": [Purpose.HOME.value],
-            "d_purpose": [Purpose.SHOPPING_ERRANDS.value],
-            "mode_type": [ModeType.CAR.value],
-            "o_lat": [37.8],
-            "o_lon": [-122.4],
-            "d_lat": [37.82],
-            "d_lon": [-122.42],
-            "unlinked_trip_weight": [1.0],
-            "distance_meters": [2000.0],
-            "duration_minutes": [15.0],
-            "num_travelers": [1],
-            "driver": [Driver.DRIVER.value],
-        }
-    )
-
-    # Link trips
-    link_result = link_trips(
-        unlinked_trips=unlinked_trips,
-        change_mode_enum=PurposeCategory.CHANGE_MODE.value,
-        transit_mode_enums=[ModeType.TRANSIT.value],
-        split_on_occupancy=False,
-    )
-    unlinked_trips_with_ids = link_result["unlinked_trips"]
-    linked_trips = link_result["linked_trips"].with_columns(
-        pl.lit(None).cast(pl.Int64).alias("joint_trip_id")
-    )
-
-    return persons, households, unlinked_trips_with_ids, linked_trips
-
-
-@pytest.fixture
-def partial_tour_data():
-    """Person starts day away from home, makes trips, then goes home.
-
-    This tests the edge case where the first trip doesn't originate from home.
-    Previously, this could cause tour_num=0 for trips before the first
-    "leaving home" flag was set.
-    """
-    persons = pl.DataFrame(
-        {
-            "person_id": [1],
-            "hh_id": [1],
-            "age": [AgeCategory.AGE_35_TO_44.value],
-            "employment": [Employment.EMPLOYED_FULLTIME.value],
-            "student": [Student.NONSTUDENT.value],
-            "school_type": [None],
-            "work_lat": [37.85],
-            "work_lon": [-122.45],
-            "school_lat": [None],
-            "school_lon": [None],
-        }
-    )
-
-    households = pl.DataFrame(
-        {
-            "hh_id": [1],
-            "home_lat": [37.8],
-            "home_lon": [-122.4],
-        }
-    )
-
-    # Trips: work -> lunch -> work -> home
-    unlinked_trips = pl.DataFrame(
-        {
-            "unlinked_trip_id": [1, 2, 3],
-            "day_id": [1, 1, 1],
-            "person_id": [1, 1, 1],
-            "hh_id": [1, 1, 1],
-            "travel_dow": [TravelDow.WEDNESDAY.value] * 3,
-            "depart_time": [
-                datetime(2024, 1, 15, 12, 0, 0),
-                datetime(2024, 1, 15, 12, 30, 0),
-                datetime(2024, 1, 15, 13, 30, 0),
-            ],  # 12:00 PM, 12:30 PM, 1:30 PM
-            "arrive_time": [
-                datetime(2024, 1, 15, 12, 15, 0),
-                datetime(2024, 1, 15, 12, 45, 0),
-                datetime(2024, 1, 15, 14, 0, 0),
-            ],  # 12:15 PM, 12:45 PM, 2:00 PM
-            "o_purpose_category": [
-                PurposeCategory.WORK.value,
-                PurposeCategory.MEAL.value,
-                PurposeCategory.WORK.value,
-            ],
-            "d_purpose_category": [
-                PurposeCategory.MEAL.value,
-                PurposeCategory.WORK.value,
-                PurposeCategory.HOME.value,
-            ],
-            "o_purpose": [
-                Purpose.PRIMARY_WORKPLACE.value,
-                Purpose.DINING.value,
-                Purpose.PRIMARY_WORKPLACE.value,
-            ],
-            "d_purpose": [
-                Purpose.DINING.value,
-                Purpose.PRIMARY_WORKPLACE.value,
-                Purpose.HOME.value,
-            ],
-            "mode_type": [
-                ModeType.WALK.value,
-                ModeType.WALK.value,
-                ModeType.CAR.value,
-            ],
-            "o_lat": [37.85, 37.86, 37.85],
-            "o_lon": [-122.45, -122.46, -122.45],
-            "d_lat": [37.86, 37.85, 37.8],
-            "d_lon": [-122.46, -122.45, -122.4],
-            "unlinked_trip_weight": [1.0, 1.0, 1.0],
-            "distance_meters": [1000.0, 1000.0, 5000.0],
-            "duration_minutes": [15.0, 15.0, 30.0],
-            "num_travelers": [1, 1, 1],
-            "driver": [
-                Driver.DRIVER.value,
-                Driver.DRIVER.value,
-                Driver.DRIVER.value,
-            ],
-        }
-    )
-
-    # Link trips
-    link_result = link_trips(
-        unlinked_trips=unlinked_trips,
-        change_mode_enum=PurposeCategory.CHANGE_MODE.value,
-        transit_mode_enums=[ModeType.TRANSIT.value],
-        split_on_occupancy=False,
-    )
-    unlinked_trips_with_ids = link_result["unlinked_trips"]
-    linked_trips = link_result["linked_trips"].with_columns(
-        pl.lit(None).cast(pl.Int64).alias("joint_trip_id")
-    )
-
-    return persons, households, unlinked_trips_with_ids, linked_trips
-
-
-@pytest.fixture
-def distant_destinations_data():
-    """Person makes tour with destinations far from each other.
-
-    This tests the edge case where destination distance thresholds might
-    exclude all trips, causing dest_arrive_time and dest_depart_time to be None.
-    """
-    persons = pl.DataFrame(
-        {
-            "person_id": [1],
-            "hh_id": [1],
-            "age": [AgeCategory.AGE_35_TO_44.value],
-            "employment": [Employment.EMPLOYED_FULLTIME.value],
-            "student": [Student.NONSTUDENT.value],
-            "school_type": [None],
-            "work_lat": [37.85],
-            "work_lon": [-122.45],
-            "school_lat": [None],
-            "school_lon": [None],
-        }
-    )
-
-    households = pl.DataFrame(
-        {
-            "hh_id": [1],
-            "home_lat": [37.8],
-            "home_lon": [-122.4],
-        }
-    )
-
-    # Tour with widely scattered destinations:
-    # home -> SF -> Oakland -> SJ -> home
-    unlinked_trips = pl.DataFrame(
-        {
-            "unlinked_trip_id": [1, 2, 3],
-            "day_id": [1, 1, 1],
-            "person_id": [1, 1, 1],
-            "hh_id": [1, 1, 1],
-            "travel_dow": [TravelDow.WEDNESDAY.value] * 3,
-            "depart_time": [
-                datetime(2024, 1, 15, 8, 0, 0),
-                datetime(2024, 1, 15, 10, 0, 0),
-                datetime(2024, 1, 15, 12, 0, 0),
-            ],  # 8:00 AM, 10:00 AM, 12:00 PM
-            "arrive_time": [
-                datetime(2024, 1, 15, 9, 0, 0),
-                datetime(2024, 1, 15, 11, 0, 0),
-                datetime(2024, 1, 15, 14, 0, 0),
-            ],  # 9:00 AM, 11:00 AM, 2:00 PM
-            "o_purpose_category": [
-                PurposeCategory.HOME.value,
-                PurposeCategory.WORK.value,
-                PurposeCategory.SOCIALREC.value,
-            ],
-            "d_purpose_category": [
-                PurposeCategory.WORK.value,
-                PurposeCategory.SOCIALREC.value,
-                PurposeCategory.HOME.value,
-            ],
-            "o_purpose": [
-                Purpose.HOME.value,
-                Purpose.PRIMARY_WORKPLACE.value,
-                Purpose.OTHER_SOCIAL.value,
-            ],
-            "d_purpose": [
-                Purpose.PRIMARY_WORKPLACE.value,
-                Purpose.OTHER_SOCIAL.value,
-                Purpose.HOME.value,
-            ],
-            "mode_type": [
-                ModeType.CAR.value,
-                ModeType.CAR.value,
-                ModeType.CAR.value,
-            ],
-            "o_lat": [37.8, 37.79, 37.6],  # Home, SF, Oakland
-            "o_lon": [-122.4, -122.39, -122.2],
-            "d_lat": [37.79, 37.6, 37.8],  # SF, Oakland, Home
-            "d_lon": [-122.39, -122.2, -122.4],
-            "unlinked_trip_weight": [1.0, 1.0, 1.0],
-            "distance_meters": [10000.0, 20000.0, 30000.0],
-            "duration_minutes": [60.0, 60.0, 120.0],
-            "num_travelers": [1, 1, 1],
-            "driver": [
-                Driver.DRIVER.value,
-                Driver.DRIVER.value,
-                Driver.DRIVER.value,
-            ],
-        }
-    )
-
-    # Link trips
-    link_result = link_trips(
-        unlinked_trips=unlinked_trips,
-        change_mode_enum=PurposeCategory.CHANGE_MODE.value,
-        transit_mode_enums=[ModeType.TRANSIT.value],
-        split_on_occupancy=False,
-    )
-    unlinked_trips_with_ids = link_result["unlinked_trips"]
-    linked_trips = link_result["linked_trips"].with_columns(
-        pl.lit(None).cast(pl.Int64).alias("joint_trip_id")
-    )
-
-    return persons, households, unlinked_trips_with_ids, linked_trips
-
-
-HOME = (37.8, -122.4)
-SHOP = (37.82, -122.42)
-
-
-@pytest.fixture
-def round_trip_tour_data():
-    """Person goes home -> shop -> home, so the tour's destination is the shop.
-
-    The last trip of the tour ends at home, so anything reading the tour
-    destination off the final trip reports home rather than where the person
-    actually went.
-    """
-    persons = pl.DataFrame(
-        {
-            "person_id": [1],
-            "hh_id": [1],
-            "age": [AgeCategory.AGE_35_TO_44.value],
-            "employment": [Employment.EMPLOYED_FULLTIME.value],
-            "student": [Student.NONSTUDENT.value],
-            "school_type": [None],
-            "work_lat": [37.85],
-            "work_lon": [-122.45],
-            "school_lat": [None],
-            "school_lon": [None],
-        }
-    )
-
-    households = pl.DataFrame({"hh_id": [1], "home_lat": [HOME[0]], "home_lon": [HOME[1]]})
-
-    unlinked_trips = pl.DataFrame(
-        {
-            "unlinked_trip_id": [1, 2],
-            "day_id": [1, 1],
-            "person_id": [1, 1],
-            "hh_id": [1, 1],
-            "travel_dow": [TravelDow.WEDNESDAY.value] * 2,
-            "depart_time": [
-                datetime(2024, 1, 15, 9, 0, 0),
-                datetime(2024, 1, 15, 11, 0, 0),
-            ],
-            "arrive_time": [
-                datetime(2024, 1, 15, 9, 15, 0),
-                datetime(2024, 1, 15, 11, 15, 0),
-            ],
-            "o_purpose_category": [PurposeCategory.HOME.value, PurposeCategory.SHOP.value],
-            "d_purpose_category": [PurposeCategory.SHOP.value, PurposeCategory.HOME.value],
-            "o_purpose": [Purpose.HOME.value, Purpose.SHOPPING_ERRANDS.value],
-            "d_purpose": [Purpose.SHOPPING_ERRANDS.value, Purpose.HOME.value],
-            "mode_type": [ModeType.CAR.value] * 2,
-            "o_lat": [HOME[0], SHOP[0]],
-            "o_lon": [HOME[1], SHOP[1]],
-            "d_lat": [SHOP[0], HOME[0]],
-            "d_lon": [SHOP[1], HOME[1]],
-            "unlinked_trip_weight": [1.0] * 2,
-            "distance_meters": [2000.0] * 2,
-            "duration_minutes": [15.0] * 2,
-            "num_travelers": [1, 1],
-            "driver": [Driver.DRIVER.value] * 2,
-        }
-    )
-
-    link_result = link_trips(
-        unlinked_trips=unlinked_trips,
-        change_mode_enum=PurposeCategory.CHANGE_MODE.value,
-        transit_mode_enums=[ModeType.TRANSIT.value],
-        split_on_occupancy=False,
-    )
-    unlinked_trips_with_ids = link_result["unlinked_trips"]
-    linked_trips = link_result["linked_trips"].with_columns(
-        pl.lit(None).cast(pl.Int64).alias("joint_trip_id")
-    )
-
-    return persons, households, unlinked_trips_with_ids, linked_trips
-
-
-def test_tour_destination_is_primary_destination_not_home(round_trip_tour_data):
-    """The tour destination should be the shop, not the home it returns to."""
-    persons, households, unlinked_trips, linked_trips = round_trip_tour_data
-
-    result = extract_tours(persons, households, unlinked_trips, linked_trips)
-    tours_df = result["tours"]
-
-    assert len(tours_df) == 1
-    tour = tours_df.row(0, named=True)
-
-    assert (tour["d_lat"], tour["d_lon"]) == SHOP, (
-        "Tour destination should be the primary destination (the shop), not the "
-        "last trip's destination (home)"
-    )
-
-
-def test_tour_destination_type_matches_destination_coords(round_trip_tour_data):
-    """d_location_type must describe the same place as d_lat/d_lon.
-
-    For home -> shop -> home the destination is the shop (OTHER). d_location_type
-    is taken from the primary destination, like d_lat/d_lon, so the two agree.
-    Previously d_location_type came from the last trip (home) while d_lat came
-    from the primary destination, so a tour zoned to the shop was labelled HOME.
-    """
-    persons, households, unlinked_trips, linked_trips = round_trip_tour_data
-
-    tour = extract_tours(persons, households, unlinked_trips, linked_trips)["tours"].row(
-        0, named=True
-    )
-
+    assert len(tours) == 1
+    tour = tours.row(0, named=True)
     assert (tour["d_lat"], tour["d_lon"]) == SHOP
-    assert tour["d_location_type"] == LocationType.OTHER.value, (
-        "d_location_type should describe the primary destination (shop=OTHER), "
-        "consistent with d_lat/d_lon, not the last trip's home"
-    )
+    assert tour["d_location_type"] == LocationType.OTHER.value
 
 
-def test_single_trip_tour_destination_falls_back_to_last_trip(single_trip_tour_data):
-    """A single-trip tour has no non-last trip, so it falls back to that trip's end.
+def test_single_trip_tour():
+    """A lone trip out is kept as a tour numbered 1, ending at the diary edge.
 
-    Guards the fallback: without it the tour would have no primary destination to
-    draw from and its coordinates would come out null.
+    Its stop is the primary destination, so the tour takes its purpose and
+    coordinates from that one trip.
     """
-    persons, households, unlinked_trips, linked_trips = single_trip_tour_data
+    tours = _tours([leg(HOME, SHOP, H, S, at(9), at(9, 15))])
 
-    result = extract_tours(persons, households, unlinked_trips, linked_trips)
-    tour = result["tours"].row(0, named=True)
-
-    assert tour["d_lat"] is not None, "Fallback should keep the destination populated"
+    assert len(tours) == 1
+    tour = tours.row(0, named=True)
+    assert tour["trip_count"] == 1
+    assert tour["tour_data_quality"] == TourDataQuality.PARTIAL_DIARY_EDGE.value
+    assert tour["tour_num"] == 1
+    assert tour["tour_purpose"] == PurposeCategory.SHOP.value
     assert (tour["d_lat"], tour["d_lon"]) == SHOP
 
 
-def test_single_trip_tour(single_trip_tour_data):
-    """Test that single-trip tours are flagged appropriately."""
-    persons, households, unlinked_trips, linked_trips = single_trip_tour_data
-
-    result = extract_tours(persons, households, unlinked_trips, linked_trips)
-    tours_df = result["tours"]
-
-    # Single-trip tours should be kept but flagged
-    assert len(tours_df) == 1
-
-    # Kept, with the count on the tour and a reason for being open-ended. Here
-    # nothing precedes or follows it in the diary, so that is where it stops.
-    assert tours_df["trip_count"][0] == 1
-    assert tours_df["tour_data_quality"][0] == TourDataQuality.PARTIAL_DIARY_EDGE.value
-
-    # Tour number should be 1, not 0
-    assert tours_df["tour_num"][0] == 1
-
-    # The one trip leaves home and stops at the shop without returning, so the
-    # shop is a genuine primary destination -- not a return leg to be skipped.
-    assert tours_df["tour_purpose"][0] == PurposeCategory.SHOP.value
-
-
-def test_partial_tour(partial_tour_data):
-    """Test that tours starting away from home get valid tour numbers."""
-    persons, households, unlinked_trips, linked_trips = partial_tour_data
-
-    result = extract_tours(persons, households, unlinked_trips, linked_trips)
-    tours_df = result["tours"]
-
-    # All tour numbers should be >= 1
-    assert (tours_df["tour_num"] >= 1).all()
-
-    # Should not have any tour_num = 0
-    assert (tours_df["tour_num"] == 0).sum() == 0
-
-
-def test_distant_destinations(distant_destinations_data):
-    """Test that tours with distant destinations still get valid times."""
-    persons, households, unlinked_trips, linked_trips = distant_destinations_data
-
-    # Pin the hierarchy method: this fixture's work and social stops are both
-    # 60 min, and under the scoring method a 60-min stay reads as a normal social
-    # visit but an atypically brief work visit, so social would win. This test is
-    # about destination-time fallback, not purpose selection.
-    result = extract_tours(
-        persons, households, unlinked_trips, linked_trips, tour_purpose_method="hierarchy"
+def test_partial_tour():
+    """A day that starts away from home is one tour, numbered from 1, partial at the start."""
+    walk = {"distance_meters": 1000.0, "mode_type": ModeType.WALK.value}
+    tours = _tours(
+        [
+            leg(WORK, LUNCH, W, Purpose.DINING, at(12), at(12, 15), **walk),
+            leg(LUNCH, WORK, Purpose.DINING, W, at(12, 30), at(12, 45), **walk),
+            leg(WORK, HOME, W, H, at(13, 30), at(14)),
+        ]
     )
-    tours_df = result["tours"]
 
-    assert len(tours_df) == 1
+    assert len(tours) == 1
+    tour = tours.row(0, named=True)
+    assert tour["tour_num"] == 1, "Tour numbering starts at 1, never 0"
+    assert tour["trip_count"] == 3
+    assert (tour["o_lat"], tour["o_lon"]) == WORK, "The day opens away from home"
+    assert tour["tour_category"] == TourCategory.PARTIAL_START.value
+    assert tour["tour_data_quality"] == TourDataQuality.PARTIAL_DIARY_EDGE.value
+    assert tour["tour_purpose"] == PurposeCategory.WORK.value
 
-    # Even with distant destinations, should have destination times
-    # (fallback logic should apply)
-    assert tours_df["dest_arrive_time"][0] is not None
-    assert tours_df["dest_depart_time"][0] is not None
 
-    # Tour purpose should be WORK (highest priority non-home purpose)
-    assert tours_df["tour_purpose"][0] == PurposeCategory.WORK.value
+def test_distant_destinations():
+    """A tour whose stops are far apart still gets destination times."""
+    # Pin the hierarchy method: under scoring a 60-min social visit outranks a
+    # 60-min work visit, and this test is about destination times, not purpose.
+    tours = _tours(
+        [
+            leg(HOME, DOWNTOWN, H, W, at(8), at(9), distance_meters=10000.0),
+            leg(DOWNTOWN, ACROSS_THE_BAY, W, SOCIAL, at(10), at(11), distance_meters=20000.0),
+            leg(ACROSS_THE_BAY, HOME, SOCIAL, H, at(12), at(14), distance_meters=30000.0),
+        ],
+        tour_purpose_method="hierarchy",
+    )
+
+    assert len(tours) == 1
+    assert tours["dest_arrive_time"][0] is not None
+    assert tours["dest_depart_time"][0] is not None
+    assert tours["tour_purpose"][0] == PurposeCategory.WORK.value
 
 
 def test_tour_num_sequential():
-    """Test that tour numbers are sequential (1, 2, 3...) for multiple tours."""
-    persons = pl.DataFrame(
-        {
-            "person_id": [1],
-            "hh_id": [1],
-            "age": [AgeCategory.AGE_35_TO_44.value],
-            "employment": [Employment.EMPLOYED_FULLTIME.value],
-            "student": [Student.NONSTUDENT.value],
-            "school_type": [None],
-            "work_lat": [37.85],
-            "work_lon": [-122.45],
-            "school_lat": [None],
-            "school_lon": [None],
-        }
+    """Tour numbers run 1, 2, 3 over a day, and every tour has its origin times."""
+    tours = _tours(
+        [
+            leg(HOME, WORK, H, W, at(8), at(8, 30)),
+            leg(WORK, HOME, W, H, at(9), at(9, 30)),
+            leg(HOME, CORNER_SHOP, H, Purpose.GROCERY, at(10), at(10, 15)),
+            leg(CORNER_SHOP, HOME, Purpose.GROCERY, H, at(11), at(11, 15)),
+            leg(HOME, SHOP, H, Purpose.SOCIAL, at(13), at(13, 15)),
+        ]
     )
 
-    households = pl.DataFrame(
-        {
-            "hh_id": [1],
-            "home_lat": [37.8],
-            "home_lon": [-122.4],
-        }
-    )
-
-    # Three complete tours:
-    # home->work->home, home->shop->home, home->social->home
-    unlinked_trips = pl.DataFrame(
-        {
-            "unlinked_trip_id": [1, 2, 3, 4, 5],
-            "day_id": [1, 1, 1, 1, 1],
-            "person_id": [1, 1, 1, 1, 1],
-            "hh_id": [1, 1, 1, 1, 1],
-            "travel_dow": [TravelDow.WEDNESDAY.value] * 5,
-            "depart_time": [
-                datetime(2024, 1, 15, 8, 0, 0),
-                datetime(2024, 1, 15, 9, 0, 0),
-                datetime(2024, 1, 15, 10, 0, 0),
-                datetime(2024, 1, 15, 11, 0, 0),
-                datetime(2024, 1, 15, 13, 0, 0),
-            ],
-            "arrive_time": [
-                datetime(2024, 1, 15, 8, 30, 0),
-                datetime(2024, 1, 15, 9, 30, 0),
-                datetime(2024, 1, 15, 10, 15, 0),
-                datetime(2024, 1, 15, 11, 15, 0),
-                datetime(2024, 1, 15, 13, 15, 0),
-            ],
-            "o_purpose_category": [
-                PurposeCategory.HOME.value,
-                PurposeCategory.WORK.value,
-                PurposeCategory.HOME.value,
-                PurposeCategory.SHOP.value,
-                PurposeCategory.HOME.value,
-            ],
-            "d_purpose_category": [
-                PurposeCategory.WORK.value,
-                PurposeCategory.HOME.value,
-                PurposeCategory.SHOP.value,
-                PurposeCategory.HOME.value,
-                PurposeCategory.SOCIALREC.value,
-            ],
-            "o_purpose": [
-                Purpose.HOME.value,
-                Purpose.PRIMARY_WORKPLACE.value,
-                Purpose.HOME.value,
-                Purpose.GROCERY.value,
-                Purpose.HOME.value,
-            ],
-            "d_purpose": [
-                Purpose.PRIMARY_WORKPLACE.value,
-                Purpose.HOME.value,
-                Purpose.GROCERY.value,
-                Purpose.HOME.value,
-                Purpose.SOCIAL.value,
-            ],
-            "mode_type": [ModeType.CAR.value] * 5,
-            "o_lat": [37.8, 37.85, 37.8, 37.81, 37.8],
-            "o_lon": [-122.4, -122.45, -122.4, -122.41, -122.4],
-            "d_lat": [37.85, 37.8, 37.81, 37.8, 37.82],
-            "d_lon": [-122.45, -122.4, -122.41, -122.4, -122.42],
-            "unlinked_trip_weight": [1.0, 1.0, 1.0, 1.0, 1.0],
-            "distance_meters": [5000.0, 5000.0, 1000.0, 1000.0, 2000.0],
-            "duration_minutes": [30.0, 30.0, 15.0, 15.0, 15.0],
-            "num_travelers": [1, 1, 1, 1, 1],
-            "driver": [Driver.DRIVER.value] * 5,
-        }
-    )
-
-    # Link trips first
-    link_result = link_trips(
-        unlinked_trips=unlinked_trips,
-        change_mode_enum=PurposeCategory.CHANGE_MODE.value,
-        transit_mode_enums=[ModeType.TRANSIT.value],
-        split_on_occupancy=False,
-    )
-    unlinked_trips_with_ids = link_result["unlinked_trips"]
-    linked_trips = link_result["linked_trips"].with_columns(
-        pl.lit(None).cast(pl.Int64).alias("joint_trip_id")
-    )
-
-    result = extract_tours(persons, households, unlinked_trips_with_ids, linked_trips)
-    tours_df = result["tours"]
-
-    # Should have 3 tours
-    # (note: last trip to SOCIALREC destination creates partial tour)
-    tour_nums = sorted(tours_df["tour_num"].unique().to_list())
-
-    # Tour numbers should start at 1 and be sequential
-    assert tour_nums[0] == 1
-    for i in range(1, len(tour_nums)):
-        assert tour_nums[i] == tour_nums[i - 1] + 1
+    tour_nums = sorted(tours["tour_num"].unique().to_list())
+    assert tour_nums == list(range(1, len(tour_nums) + 1))
+    assert tours["origin_depart_time"].null_count() == 0
+    assert tours["origin_arrive_time"].null_count() == 0
 
 
-def test_all_tours_have_required_fields():
-    """Test that all extracted tours have non-null required fields."""
-    persons = pl.DataFrame(
-        {
-            "person_id": [1, 2],
-            "hh_id": [1, 1],
-            "age": [
-                AgeCategory.AGE_35_TO_44.value,
-                AgeCategory.AGE_25_TO_34.value,
-            ],
-            "employment": [
-                Employment.EMPLOYED_FULLTIME.value,
-                Employment.EMPLOYED_PARTTIME.value,
-            ],
-            "student": [Student.NONSTUDENT.value, Student.NONSTUDENT.value],
-            "school_type": [None, None],
-            "work_lat": [37.85, 37.85],
-            "work_lon": [-122.45, -122.45],
-            "school_lat": [None, None],
-            "school_lon": [None, None],
-        }
-    )
+def test_two_trips_out_and_back_are_two_tours_whatever_the_purpose_says():
+    """Out and back twice is two tours, even when an arrival home is coded as an activity.
 
-    households = pl.DataFrame(
-        {
-            "hh_id": [1],
-            "home_lat": [37.8],
-            "home_lon": [-122.4],
-        }
-    )
+    Within the home's own address the purpose describes the activity, not a
+    different place.
+    """
+    tours = link_and_extract_tours(
+        person(work=None),
+        HOUSEHOLDS,
+        [
+            leg(HOME, SHOP, H, S, at(9), at(9, 15)),
+            leg(SHOP, HOME, S, Purpose.EXERCISE, at(11), at(11, 15)),
+            leg(HOME, SHOP, Purpose.EXERCISE, S, at(14), at(14, 15)),
+            leg(SHOP, HOME, S, H, at(16), at(16, 15)),
+        ],
+    )["tours"]
 
-    # Mix of scenarios: normal tours, single-trip tours, partial tours
-    unlinked_trips = pl.DataFrame(
-        {
-            "unlinked_trip_id": [1, 2, 3, 4],
-            "day_id": [1, 1, 2, 2],
-            "person_id": [1, 1, 2, 2],
-            "hh_id": [1, 1, 1, 1],
-            "travel_dow": [
-                TravelDow.WEDNESDAY.value,
-                TravelDow.WEDNESDAY.value,
-                TravelDow.THURSDAY.value,
-                TravelDow.THURSDAY.value,
-            ],
-            "depart_time": [
-                datetime(2024, 1, 15, 8, 0, 0),
-                datetime(2024, 1, 15, 9, 0, 0),
-                datetime(2024, 1, 16, 10, 0, 0),
-                datetime(2024, 1, 16, 11, 0, 0),
-            ],
-            "arrive_time": [
-                datetime(2024, 1, 15, 8, 30, 0),
-                datetime(2024, 1, 15, 9, 30, 0),
-                datetime(2024, 1, 16, 10, 30, 0),
-                datetime(2024, 1, 16, 11, 30, 0),
-            ],
-            "o_purpose_category": [
-                PurposeCategory.HOME.value,
-                PurposeCategory.WORK.value,
-                PurposeCategory.HOME.value,
-                PurposeCategory.SHOP.value,
-            ],
-            "d_purpose_category": [
-                PurposeCategory.WORK.value,
-                PurposeCategory.HOME.value,
-                PurposeCategory.SHOP.value,
-                PurposeCategory.HOME.value,
-            ],
-            "o_purpose": [
-                Purpose.HOME.value,
-                Purpose.PRIMARY_WORKPLACE.value,
-                Purpose.HOME.value,
-                Purpose.GROCERY.value,
-            ],
-            "d_purpose": [
-                Purpose.PRIMARY_WORKPLACE.value,
-                Purpose.HOME.value,
-                Purpose.GROCERY.value,
-                Purpose.HOME.value,
-            ],
-            "mode_type": [ModeType.CAR.value] * 4,
-            "o_lat": [37.8, 37.85, 37.8, 37.81],
-            "o_lon": [-122.4, -122.45, -122.4, -122.41],
-            "d_lat": [37.85, 37.8, 37.81, 37.8],
-            "d_lon": [-122.45, -122.4, -122.41, -122.4],
-            "unlinked_trip_weight": [1.0, 1.0, 1.0, 1.0],
-            "distance_meters": [5000.0, 5000.0, 1000.0, 1000.0],
-            "duration_minutes": [30.0, 30.0, 30.0, 30.0],
-            "num_travelers": [1, 1, 1, 1],
-            "driver": [Driver.DRIVER.value] * 4,
-        }
-    )
-
-    # Link trips first
-    link_result = link_trips(
-        unlinked_trips=unlinked_trips,
-        change_mode_enum=PurposeCategory.CHANGE_MODE.value,
-        transit_mode_enums=[ModeType.TRANSIT.value],
-        split_on_occupancy=False,
-    )
-    unlinked_trips_with_ids = link_result["unlinked_trips"]
-    linked_trips = link_result["linked_trips"].with_columns(
-        pl.lit(None).cast(pl.Int64).alias("joint_trip_id")
-    )
-
-    result = extract_tours(persons, households, unlinked_trips_with_ids, linked_trips)
-    tours_df = result["tours"]
-
-    # All tours should have tour_num >= 1
-    assert (tours_df["tour_num"] >= 1).all()
-
-    # All non-single-trip tours should have non-null tour_purpose and dest times
-    non_single_trip_tours = tours_df.filter(pl.col("trip_count") > 1)
-    if len(non_single_trip_tours) > 0:
-        assert non_single_trip_tours["tour_purpose"].null_count() == 0
-        assert non_single_trip_tours["dest_arrive_time"].null_count() == 0
-        assert non_single_trip_tours["dest_depart_time"].null_count() == 0
-
-    # All tours should have non-null origin depart/arrive times
-    assert tours_df["origin_depart_time"].null_count() == 0
-    assert tours_df["origin_arrive_time"].null_count() == 0
+    assert tours.height == 2
+    assert tours["tour_data_quality"].to_list() == [TourDataQuality.VALID.value] * 2

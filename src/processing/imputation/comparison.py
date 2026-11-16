@@ -10,22 +10,16 @@ from typing import Any
 
 import polars as pl
 
-from .impute_utils import enrich_dataframe, prepare_column_for_imputation
-from .validation import (
-    log_validation_results,
-    validate_knn_imputation,
-    validate_mice_imputation,
-    validate_rf_imputation,
+from .impute_utils import (
+    METHOD_DEFAULTS,
+    enrich_dataframe,
+    metric_row,
+    missing_labels,
+    prepare_column_for_imputation,
 )
+from .validation import log_validation_results, validate_method
 
 logger = logging.getLogger(__name__)
-
-# Methods to benchmark and their default hyper-parameters
-_COMPARISON_METHODS: dict[str, dict[str, Any]] = {
-    "knn": {"n_neighbors": 5, "neighbor_weights": "distance"},
-    "rf": {"n_estimators": 100, "max_depth": None},
-    "mice": {"max_iter": 10},
-}
 
 
 def _flatten_configs(
@@ -43,8 +37,6 @@ def _flatten_configs(
     for table_name, configs in impute_columns.items():
         for config in configs:
             method = config.get("method", "knn")
-
-            # Determine the target column(s)
             columns = config.get("columns", []) if method == "mice" else [config["column"]]
 
             for col in columns:
@@ -53,15 +45,11 @@ def _flatten_configs(
                     continue
                 seen.add(key)
 
-                # Build missing_values for this single column
-                raw_mv = config.get("missing_values", [])
-                col_mv = raw_mv.get(col, []) if isinstance(raw_mv, dict) else raw_mv
-
                 entries.append(
                     {
                         "table": table_name,
                         "column": col,
-                        "missing_values": col_mv,
+                        "missing_values": missing_labels(config.get("missing_values", []), col),
                         "numeric_features": config.get("numeric_features"),
                         "categorical_features": config.get("categorical_features"),
                         "join_tables": config.get("join_tables", []),
@@ -70,56 +58,6 @@ def _flatten_configs(
                 )
 
     return entries
-
-
-def _validate_one_method(
-    prepared: pl.DataFrame,
-    column: str,
-    method: str,
-    n_folds: int,
-    sample_pct: float,
-    random_state: int | None,
-    numeric_features: list[str] | None,
-    categorical_features: list[str] | None,
-) -> dict[str, Any]:
-    """Run k-fold validation for a single (column, method) pair."""
-    defaults = _COMPARISON_METHODS[method]
-
-    if method == "knn":
-        return validate_knn_imputation(
-            prepared,
-            column,
-            n_folds,
-            sample_pct,
-            defaults["n_neighbors"],
-            defaults["neighbor_weights"],
-            random_state,
-            numeric_features,
-            categorical_features,
-        )
-    if method == "rf":
-        return validate_rf_imputation(
-            prepared,
-            column,
-            n_folds,
-            sample_pct,
-            defaults["n_estimators"],
-            defaults["max_depth"],
-            random_state,
-            numeric_features,
-            categorical_features,
-        )
-    # mice — single-column validation
-    return validate_mice_imputation(
-        prepared,
-        [column],
-        n_folds,
-        sample_pct,
-        defaults["max_iter"],
-        random_state,
-        numeric_features,
-        categorical_features,
-    )
 
 
 def compare_imputation_methods(
@@ -133,8 +71,9 @@ def compare_imputation_methods(
     """Run k-fold validation for every method on every imputed column.
 
     For each unique (table, column) found in *impute_columns*, KNN, RF, and
-    MICE are each evaluated using the same enrichment and feature set.  This
-    produces a comparison table that helps choose the best method per field.
+    MICE are each evaluated with their default hyperparameters, using the same
+    enrichment and feature set.  This produces a comparison table that helps
+    choose the best method per field.
 
     Args:
         impute_columns: The same config dict passed to ``imputation()``.
@@ -148,10 +87,9 @@ def compare_imputation_methods(
         Polars DataFrame with columns: table, variable, method, type,
         n_samples, n_folds, accuracy, precision, recall, f1, rmse, mae, r2.
     """
-    entries = _flatten_configs(impute_columns)
     rows: list[dict[str, Any]] = []
 
-    for entry in entries:
+    for entry in _flatten_configs(impute_columns):
         table_name = entry["table"]
         column = entry["column"]
 
@@ -160,43 +98,33 @@ def compare_imputation_methods(
             continue
 
         df = tables[table_name].clone()
+        if entry["missing_values"]:
+            df, _ = prepare_column_for_imputation(df, table_name, column, entry["missing_values"])
 
-        # Prepare missing values (replace enum labels with null)
-        mv = entry["missing_values"]
-        if mv:
-            df, _ = prepare_column_for_imputation(df, table_name, column, mv)
-
-        # Enrich with joins / aggregations (same as imputation pipeline)
-        categorical_features = entry["categorical_features"]
-        df, _, categorical_features = enrich_dataframe(
+        # Same enrichment as the imputation itself
+        df, _, numeric_features = enrich_dataframe(
             df,
             table_name,
             tables,
             entry["join_tables"],
             [column],
-            categorical_features,
             entry["aggregate_from"],
+            entry["numeric_features"],
         )
 
-        numeric_features = entry["numeric_features"]
+        for method, params in METHOD_DEFAULTS.items():
+            logger.info("Comparing %s for %s.%s", method.upper(), table_name, column)
 
-        for method in _COMPARISON_METHODS:
-            logger.info(
-                "Comparing %s for %s.%s",
-                method.upper(),
-                table_name,
-                column,
-            )
-
-            metrics = _validate_one_method(
-                df,
-                column,
+            metrics = validate_method(
                 method,
+                df,
+                [column],
                 n_folds,
                 sample_pct,
+                params,
                 random_state,
                 numeric_features,
-                categorical_features,
+                entry["categorical_features"],
             )
 
             # MICE returns {col: {...}} — normalise to flat dict
@@ -213,18 +141,7 @@ def compare_imputation_methods(
                 )
                 continue
 
-            row: dict[str, Any] = {
-                "table": table_name,
-                "variable": column,
-                "method": method,
-                "type": metrics.get("type", "unknown"),
-                "n_samples": metrics.get("n_samples", 0),
-                "n_folds": metrics.get("n_folds", 0),
-            }
-            for key in ("accuracy", "precision", "recall", "f1", "rmse", "mae", "r2"):
-                row[key] = metrics.get(key)
-            rows.append(row)
-
+            rows.append(metric_row(table_name, column, method, metrics))
             log_validation_results(metrics)
 
     if not rows:
@@ -232,26 +149,6 @@ def compare_imputation_methods(
         return pl.DataFrame()
 
     summary = pl.DataFrame(rows)
-    col_order = [
-        c
-        for c in [
-            "table",
-            "variable",
-            "method",
-            "type",
-            "n_samples",
-            "n_folds",
-            "accuracy",
-            "precision",
-            "recall",
-            "f1",
-            "rmse",
-            "mae",
-            "r2",
-        ]
-        if c in summary.columns
-    ]
-    summary = summary.select(col_order)
 
     if output_path:
         summary.write_csv(output_path)

@@ -1,13 +1,26 @@
+# Extract Tours
 
-::: processing.tours.extraction
+::: processing.tours.extraction.extract_tours
     options:
-      show_root_heading: true
+      show_root_heading: false
       show_root_toc_entry: false
-      members:
-        - extract_tours
-      filters:
-        - "!^logger$"
-        - "!^_"
+      show_signature: false
+      show_docstring_parameters: false
+      show_docstring_returns: false
+      show_docstring_raises: false
+
+## Example
+
+```yaml title="Example"
+- name: extract_tours
+  params:
+    spatial_gap_threshold_meters: 1000.0
+    buffer_meters: 300  # how near a trip end must be to a habitual location to match it
+```
+
+## Settings
+
+<!-- step-settings: extract_tours -->
 
 ## Determining tour purpose
 
@@ -64,3 +77,5 @@ tours move to the real activity), and re-sorts discretionary tours by duration.
 
 This figure is a BATS-2023 snapshot, regenerated from the committed counts in
 `docs/assets/data/` by `scripts/plot_purpose_reclassification.py`.
+
+Code: [processing.tours](../reference/processing/tours.md)

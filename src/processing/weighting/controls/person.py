@@ -45,6 +45,7 @@ from processing.weighting.controls.enums import (
     CommuteModeCategory,
     EmploymentCategory,
     GenderCategory,
+    RaceEthnicityCategory,
     StudentCategory,
     TotalCategory,
 )
@@ -107,7 +108,6 @@ class EmploymentControl(ControlTarget):
     }
 
     _pums_employed_esr: list[int] = PumsEsr.EMPLOYED
-    _pums_not_employed_esr: list[int] = PumsEsr.NOT_EMPLOYED
 
     def survey_expr(self) -> pl.Expr:
         emp = pl.col("employment")
@@ -244,8 +244,7 @@ class CommuteModeControl(ControlTarget):
         cf = pl.col("commute_freq")
         wm = pl.col("work_mode")
 
-        # Codes are inverse-ordered: 1 = most frequent, 8 = least frequent
-        # Higher code → lower frequency.  So commute_freq > telework_freq + 1
+        # Codes run from most frequent (1) to least (8), so commute_freq > telework_freq + 1
         # means "commutes much less often than teleworks" → mostly remote.
         is_mostly_remote = (
             # (a) job_type == WFH always
@@ -289,7 +288,6 @@ class CommuteModeControl(ControlTarget):
         jwtrns = pl.col("JWTRNS")
         base = jwtrns.replace_strict(
             self._pums_map,
-            # default=CommuteModeCategory.OTHER, # defaults are dangerous...
             return_dtype=pl.Int16,
         )
         return (
@@ -316,7 +314,7 @@ class StudentControl(ControlTarget):
         4. Childcare / at-home (not school in the Census sense) → NOT_STUDENT
         5. Age-based fallback when both student & school_type are missing:
            school-age children (5-17) → K12, everyone else → NOT_STUDENT
-        6. Active student with missing school_type → COLLEGE (adult default)
+        6. Anything else → null, so the recode null check reports it
 
     The ``student`` field is only collected for persons age 16+ in the
     survey instrument; younger children have ``student = 995`` (MISSING)
@@ -331,9 +329,8 @@ class StudentControl(ControlTarget):
     survey_fields = ("student", "school_type", "age")
     pums_fields = ("SCHG",)
 
-    # Aligns with Census SCHG: nursery/preschool (SCHG=1) through grade 12.
-    # DAYCARE and ATHOME are excluded — the Census does not count childcare
-    # as school enrollment.
+    # Census SCHG: nursery/preschool (SCHG=1) through grade 12. DAYCARE and ATHOME are
+    # excluded — the Census does not count childcare as school enrollment.
     _k12_school_types: frozenset[int] = frozenset(
         {
             SchoolType.PRESCHOOL.value,
@@ -423,14 +420,26 @@ class StudentControl(ControlTarget):
 
 
 class EducationControl(ControlTarget):
-    """Education attainment (canonical Education enum)."""
+    """Education attainment (canonical Education enum).
+
+    Children under 18 with no answer are less than high school, as are PUMS
+    persons with N/A ``SCHL`` (under 3), so both sides count every child.
+    """
 
     name = "p_education"
     level = ControlLevel.PERSON
     description = "Education attainment"
     categories = Education
-    survey_fields = ("education",)
+    survey_fields = ("education", "age")
     pums_fields = ("SCHL",)
+
+    _under_18: frozenset[int] = frozenset(
+        {
+            AgeCategory.AGE_UNDER_5.value,
+            AgeCategory.AGE_5_TO_15.value,
+            AgeCategory.AGE_16_TO_17.value,
+        }
+    )
 
     _schl_map: dict[int, int] = {  # type: ignore[dict-item]
         **dict.fromkeys(PumsSchl.LESS_THAN_HS, Education.LESS_HIGH_SCHOOL.value),
@@ -442,74 +451,81 @@ class EducationControl(ControlTarget):
     }
 
     def survey_expr(self) -> pl.Expr:
-        return identity_expr("education", Education)
+        education = identity_expr("education", Education)
+        return (
+            pl.when(education.is_null() & pl.col("age").is_in(list(self._under_18)))
+            .then(Education.LESS_HIGH_SCHOOL.value)
+            .otherwise(education)
+            .cast(pl.Int16)
+        )
 
     def pums_expr(self) -> pl.Expr:
-        return pl.col("SCHL").replace_strict(
-            self._schl_map,
-            default=None,
-            return_dtype=pl.Int16,
+        schl = pl.col("SCHL")
+        return (
+            pl.when(schl.is_null() | (schl == PumsSchl.NA.value))
+            .then(Education.LESS_HIGH_SCHOOL.value)
+            .otherwise(
+                schl.replace_strict(
+                    self._schl_map,
+                    default=None,
+                    return_dtype=pl.Int16,
+                ),
+            )
+            .cast(pl.Int16)
         )
 
 
-class RaceControl(ControlTarget):
-    """Race (canonical Race enum)."""
+class RaceEthnicityControl(ControlTarget):
+    """Hispanic persons of any race in one group; everyone else by race.
 
-    name = "p_race"
+    The census and the survey record the race of Hispanic persons differently
+    (#187), so they are counted by Hispanic origin alone.
+    """
+
+    name = "p_race_ethnicity"
     level = ControlLevel.PERSON
-    description = "Race"
-    categories = Race
-    survey_fields = ("race",)
-    pums_fields = ("RAC1P",)
+    description = "Race and Hispanic origin (race groups exclude Hispanic persons)"
+    categories = RaceEthnicityCategory
+    survey_fields = ("race", "ethnicity")
+    pums_fields = ("RAC1P", "HISP")
 
-    _pums_map: dict[int, int] = {  # type: ignore[dict-item]
-        PumsRac1p.WHITE.value: Race.WHITE.value,
-        PumsRac1p.BLACK.value: Race.AFAM.value,
-        PumsRac1p.AIAN.value: Race.NATIVE.value,
-        PumsRac1p.ALASKA_NATIVE.value: Race.NATIVE.value,
-        PumsRac1p.AIAN_BOTH.value: Race.NATIVE.value,
-        PumsRac1p.ASIAN.value: Race.ASIAN.value,
-        PumsRac1p.NHPI.value: Race.PACIFIC.value,
-        PumsRac1p.OTHER.value: Race.OTHER.value,
-        PumsRac1p.TWO_OR_MORE.value: Race.MULTI.value,
+    _hispanic: list[int] = [
+        Ethnicity.MEXICAN.value,
+        Ethnicity.PUERTO_RICAN.value,
+        Ethnicity.CUBAN.value,
+        Ethnicity.OTHER.value,
+    ]
+
+    _pums_race_map: dict[int, int] = {
+        PumsRac1p.WHITE.value: RaceEthnicityCategory.WHITE,
+        PumsRac1p.BLACK.value: RaceEthnicityCategory.AFAM,
+        PumsRac1p.AIAN.value: RaceEthnicityCategory.NATIVE,
+        PumsRac1p.ALASKA_NATIVE.value: RaceEthnicityCategory.NATIVE,
+        PumsRac1p.AIAN_BOTH.value: RaceEthnicityCategory.NATIVE,
+        PumsRac1p.ASIAN.value: RaceEthnicityCategory.ASIAN,
+        PumsRac1p.NHPI.value: RaceEthnicityCategory.PACIFIC,
+        PumsRac1p.OTHER.value: RaceEthnicityCategory.OTHER,
+        PumsRac1p.TWO_OR_MORE.value: RaceEthnicityCategory.MULTI,
     }
 
     def survey_expr(self) -> pl.Expr:
-        return identity_expr("race", Race)
-
-    def pums_expr(self) -> pl.Expr:
-        return pl.col("RAC1P").replace_strict(
-            self._pums_map,
-            default=Race.OTHER.value,
-            return_dtype=pl.Int16,
+        """Unknown Hispanic origin, or unknown race when not Hispanic, is left to imputation."""
+        eth = pl.col("ethnicity")
+        return (
+            pl.when(eth.is_in(self._hispanic))
+            .then(RaceEthnicityCategory.HISPANIC_ALLRACES)
+            .when(eth == Ethnicity.NOT_HISPANIC.value)
+            .then(identity_expr("race", Race))
+            .otherwise(None)
+            .cast(pl.Int16)
         )
 
-
-class EthnicityControl(ControlTarget):
-    """Hispanic/Latino ethnicity (canonical Ethnicity enum)."""
-
-    name = "p_ethnicity"
-    level = ControlLevel.PERSON
-    description = "Hispanic/Latino ethnicity"
-    categories = Ethnicity
-    survey_fields = ("ethnicity",)
-    pums_fields = ("HISP",)
-
-    _pums_map: dict[int, int] = {  # type: ignore[dict-item]
-        PumsHisp.NOT_HISPANIC.value: Ethnicity.NOT_HISPANIC.value,
-        PumsHisp.MEXICAN.value: Ethnicity.MEXICAN.value,
-        PumsHisp.PUERTO_RICAN.value: Ethnicity.PUERTO_RICAN.value,
-        PumsHisp.CUBAN.value: Ethnicity.CUBAN.value,
-    }
-
-    def survey_expr(self) -> pl.Expr:
-        return identity_expr("ethnicity", Ethnicity)
-
     def pums_expr(self) -> pl.Expr:
-        return pl.col("HISP").replace_strict(
-            self._pums_map,
-            default=Ethnicity.OTHER.value,
-            return_dtype=pl.Int16,
+        return (
+            pl.when(pl.col("HISP") != PumsHisp.NOT_HISPANIC.value)
+            .then(RaceEthnicityCategory.HISPANIC_ALLRACES)
+            .otherwise(pl.col("RAC1P").replace_strict(self._pums_race_map, return_dtype=pl.Int16))
+            .cast(pl.Int16)
         )
 
 
@@ -549,5 +565,4 @@ class PersonTotalControl(ControlTarget):
     def survey_expr(self) -> pl.Expr:
         return pl.lit(1).cast(pl.Int16)
 
-    def pums_expr(self) -> pl.Expr:
-        return pl.lit(1).cast(pl.Int16)
+    pums_expr = survey_expr

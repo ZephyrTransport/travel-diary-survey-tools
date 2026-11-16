@@ -1,8 +1,4 @@
-"""Schema utilities for generating Polars schemas from data models.
-
-Provides functions to convert Pydantic data models to Polars schemas and
-create properly-typed empty DataFrames for testing.
-"""
+"""Polars schemas from the canonical models, and the empty or derived tables a test leaves out."""
 
 from datetime import datetime
 from enum import Enum
@@ -11,241 +7,183 @@ from typing import get_args
 import polars as pl
 from pydantic import BaseModel
 
-from data_canon.models.survey import (
-    JointTourModel,
-    JointTripModel,
-    LinkedTripModel,
-    PersonDayModel,
-    TourModel,
-    UnlinkedTripModel,
-)
-from processing.weighting.core.hierarchy import WEIGHT_COLUMNS
+import processing  # noqa: F401 - registers every step's contract
+from data_canon.core.dataclass import CanonicalData
+from pipeline.step_registry import STEP_REGISTRY, is_config_named
+from processing.habitual_locations import reported_habitual_locations
+from processing.weighting.core.hierarchy import LEVELS
+from utils.create_ids import create_household_days
 
-# Which canonical table each model describes, for looking up its weight column.
-_TABLE_OF_MODEL = {
-    "HouseholdModel": "households",
-    "PersonModel": "persons",
-    "PersonDayModel": "days",
-    "UnlinkedTripModel": "unlinked_trips",
-    "LinkedTripModel": "linked_trips",
-    "JointTripModel": "joint_trips",
-    "TourModel": "tours",
-    "JointTourModel": "joint_tours",
+# Each canonical table's model.
+_MODELS = CanonicalData().models
+# The joint ids each table carries once joint detection and tour extraction ran.
+_JOINT_IDS = {"tours": "joint_tour_id", "linked_trips": "joint_trip_id"}
+_POLARS_TYPES = {
+    int: pl.Int64,
+    float: pl.Float64,
+    str: pl.String,
+    bool: pl.Boolean,
+    datetime: pl.Datetime,
 }
 
 
 def model_to_polars_schema(model: type[BaseModel]) -> dict[str, type]:
-    """Convert a Pydantic BaseModel to a Polars schema dictionary.
-
-    Introspects the model's field annotations to generate appropriate
-    Polars data types. Handles optional fields by preserving nullable types.
-
-    Args:
-        model: Pydantic BaseModel class to convert
-
-    Returns:
-        Dictionary mapping field names to Polars data types
-
-    Example:
-        >>> schema = model_to_polars_schema(LinkedTripModel)
-        >>> df = pl.DataFrame(schema=schema)
-    """
+    """The polars type of each of *model*'s fields; optional fields take their inner type."""
     schema = {}
-
-    for field_name, field_info in model.model_fields.items():
-        annotation = field_info.annotation
-
-        # Check if it's an optional type (has None in union)
-        type_args = get_args(annotation)
-        if type_args and type(None) in type_args:
-            # Extract the non-None type from the union
-            actual_type = next(t for t in type_args if t is not type(None))
+    for name, field in model.model_fields.items():
+        args = get_args(field.annotation)
+        if args and type(None) in args:
+            schema[name] = _python_type_to_polars(next(t for t in args if t is not type(None)))
         else:
-            actual_type = annotation
-
-        # Map Python/Pydantic types to Polars types
-        polars_type = _python_type_to_polars(actual_type)
-        schema[field_name] = polars_type
-
+            schema[name] = _python_type_to_polars(field.annotation)
     return schema
 
 
 def _python_type_to_polars(python_type) -> type:
-    """Map Python type annotations to Polars data types.
-
-    Args:
-        python_type: Python type annotation
-
-    Returns:
-        Corresponding Polars data type
-    """
-    # Map basic types to Polars types
-    type_mapping = {
-        int: pl.Int64,
-        float: pl.Float64,
-        str: pl.String,
-        bool: pl.Boolean,
-        datetime: pl.Datetime,
-    }
-
-    # Check direct type match
-    if python_type in type_mapping:
-        return type_mapping[python_type]
-
-    # Check for generic types with __origin__
-    if hasattr(python_type, "__origin__") and python_type.__origin__ in type_mapping:
-        return type_mapping[python_type.__origin__]
-
-    # Handle Enum types - check if values are integers
-    if hasattr(python_type, "__mro__") and Enum in python_type.__mro__:
-        # Check if this enum has integer values by inspecting first member
-        try:
-            first_member = next(iter(python_type))
-            if isinstance(first_member.value, int):
-                return pl.Int64
-        except (StopIteration, AttributeError):
-            pass
-
-    # Handle enums and other int-based types
-    if hasattr(python_type, "__bases__"):
-        if int in python_type.__bases__:
+    """Int64 for ints and enums with int values, String for anything unrecognised."""
+    if python_type in _POLARS_TYPES:
+        return _POLARS_TYPES[python_type]
+    if getattr(python_type, "__origin__", None) in _POLARS_TYPES:
+        return _POLARS_TYPES[python_type.__origin__]
+    if isinstance(python_type, type) and issubclass(python_type, Enum):
+        first = next(iter(python_type), None)
+        if first is not None and isinstance(first.value, int):
             return pl.Int64
-        if str in python_type.__bases__:
-            return pl.String
-
-    # Default to String for unknown types (can be extended as needed)
+    if int in getattr(python_type, "__bases__", ()):
+        return pl.Int64
     return pl.String
 
 
-def _with_generated(
-    schema: dict,
-    model,
-    usability_flag_col: str,
-) -> pl.DataFrame:
-    """An empty frame from *model*, plus the columns config names rather than the schema.
+def _generated(table: str) -> dict[str, type]:
+    """The usability flag and the weight: named by config, so not model fields.
 
-    The usability flag and the weight are both stamped under names a project
-    chooses, so neither is a model field. Every frame reaching a formatter has
-    been through the steps that write them, so a fixture standing in for one
-    carries them too. Weights take their base name here: that is what a consumer
-    reads once it has resolved its own profile.
+    Every frame reaching a formatter has been through the steps that write them.
+    The weight takes its base name, which is what a consumer reads once it has
+    resolved its own profile.
     """
-    schema = dict(schema)
-    schema[usability_flag_col] = pl.Boolean
-    table = _TABLE_OF_MODEL.get(model.__name__)
-    if table is not None and table in WEIGHT_COLUMNS:
-        schema[WEIGHT_COLUMNS[table]] = pl.Float64
-    return pl.DataFrame(schema=schema)
+    columns = {"usable_test": pl.Boolean}
+    if table in LEVELS:
+        columns[LEVELS[table].weight_col] = pl.Float64
+    return columns
 
 
-def empty_linked_trips(usability_flag_col: str = "usable_test") -> pl.DataFrame:
-    """Create empty linked_trips DataFrame with complete schema.
-
-    Returns properly typed empty DataFrame that passes @step validation checks
-    for LinkedTripModel.
-
-    Returns:
-        Empty DataFrame with LinkedTripModel schema
-    """
-    schema = model_to_polars_schema(LinkedTripModel)
-    return _with_generated(schema, LinkedTripModel, usability_flag_col)
+def empty(table: str) -> pl.DataFrame:
+    """An empty *table* frame: its model's columns, the usability flag and the weight."""
+    return pl.DataFrame(schema={**model_to_polars_schema(_MODELS[table]), **_generated(table)})
 
 
-def empty_tours(usability_flag_col: str = "usable_test") -> pl.DataFrame:
-    """Create empty tours DataFrame with complete schema.
-
-    Returns properly typed empty DataFrame that passes @step validation checks
-    for TourModel.
-
-    The usability flag is added on top of the model fields. It is stamped by
-    ``cascade_completeness`` under whatever name a project's usability profile
-    carries, so it cannot be a model field -- but every tours frame reaching a
-    formatter has been through that step, and the formatters now require it
-    rather than re-deriving a criterion of their own.
-
-    Args:
-        usability_flag_col: Name of the usability column to include.
-
-    Returns:
-        Empty DataFrame with TourModel schema plus the usability flag
-    """
-    schema = model_to_polars_schema(TourModel)
-    return _with_generated(schema, TourModel, usability_flag_col)
-
-
-def empty_unlinked_trips(usability_flag_col: str = "usable_test") -> pl.DataFrame:
-    """Create empty unlinked_trips DataFrame with complete schema.
-
-    Returns:
-        Empty DataFrame with UnlinkedTripModel schema
-    """
-    schema = model_to_polars_schema(UnlinkedTripModel)
-    return _with_generated(schema, UnlinkedTripModel, usability_flag_col)
-
-
-def empty_joint_tours(usability_flag_col: str = "usable_test") -> pl.DataFrame:
-    """Create empty joint_tours DataFrame with complete schema.
-
-    Returns:
-        Empty DataFrame with JointTourModel schema
-    """
-    schema = model_to_polars_schema(JointTourModel)
-    return _with_generated(schema, JointTourModel, usability_flag_col)
-
-
-def empty_days(usability_flag_col: str = "usable_test") -> pl.DataFrame:
-    """Create empty person-days DataFrame with complete schema.
-
-    Returns:
-        Empty DataFrame with PersonDayModel schema
-    """
-    schema = model_to_polars_schema(PersonDayModel)
-    return _with_generated(schema, PersonDayModel, usability_flag_col)
+def get_tour_schema() -> dict[str, type]:
+    """The schema of ``create_tour`` rows: the model's columns and the extra ones it fills."""
+    return {
+        **model_to_polars_schema(_MODELS["tours"]),
+        "person_num": pl.Int64,
+        "day_num": pl.Int64,
+        "o_taz": pl.Int64,
+        "d_taz": pl.Int64,
+        "o_TAZ1454": pl.Int64,
+        "d_TAZ1454": pl.Int64,
+        "travel_dow": pl.Int64,
+        "student_category": pl.String,
+        **_generated("tours"),
+    }
 
 
 def days_for_persons(
     persons: pl.DataFrame, day_num: int = 1, usability_flag_col: str = "usable_test"
 ) -> pl.DataFrame:
-    """Build a single-day person-day table covering every person given.
+    """One day per person, keyed ``person_id * 100 + day_num`` as the pipeline does.
 
-    ``format_ctramp`` expands households and persons to person-day rows with an
-    *inner* join on the ``days`` table, and restricts tours/trips to those days
-    with a semi-join. A test that passes a ``days`` table therefore gets empty
-    CT-RAMP output for every person not represented here.
-
-    ``day_id`` is a person-day key and must be unique, so it follows the same
-    convention as the pipeline and the e2e toy data: ``person_id * 100 + day_num``.
-    CT-RAMP ids derive from it, so a person's CT-RAMP ``person_id`` becomes that
-    ``day_id`` and its household becomes ``hh_id * 100 + day_num``.
-
-    Args:
-        persons: Canonical persons DataFrame with person_id and hh_id
-        day_num: Day number within the survey period
-        usability_flag_col: Name of the usability column to stamp. Every day
-            reaching a formatter has been through cascade_completeness, so the
-            fixtures carry the verdict the formatters read.
-
-    Returns:
-        One row per person, or an empty day frame if there are no persons
+    ``format_ctramp`` inner-joins persons to ``person_days``, so a person with no
+    row here gets no CT-RAMP output.
     """
     if persons.is_empty():
-        return empty_days()
+        return empty("person_days")
     return (
         persons.select(
-            (pl.col("person_id") * 100 + day_num).cast(pl.Int64).alias("day_id"),
+            (pl.col("person_id") * 100 + day_num).cast(pl.Int64).alias("person_day_id"),
             pl.col("person_id"),
             pl.col("hh_id"),
+            (pl.col("hh_id") * 100 + day_num).cast(pl.Int64).alias("hh_day_id"),
+            # One shared date per day number, so a household's members share it.
+            pl.lit(datetime(2024, 1, day_num).date()).alias("travel_date"),
         )
         .unique()
         .with_columns(pl.lit(value=True).alias(usability_flag_col))
     )
 
 
-def empty_joint_trips(usability_flag_col: str = "usable_test") -> pl.DataFrame:
-    """Create empty joint_trips DataFrame with complete schema.
+def add_household_days(tables: dict) -> dict:
+    """Build ``household_days`` and ``hh_day_id`` from ``tables["person_days"]``, in place.
 
-    Returns:
-        Empty DataFrame with JointTripModel schema
+    The pipeline gets them from the project cleaner; hand-built test tables need
+    them before the cascade, which requires both. A fixture without ``day_num``
+    has its household's dates numbered in order. Returns *tables*, so a call
+    can wrap the argument it prepares.
     """
-    schema = model_to_polars_schema(JointTripModel)
-    return _with_generated(schema, JointTripModel, usability_flag_col)
+    person_days = tables.get("person_days")
+    if person_days is None or "household_days" in tables:
+        return tables
+    numbered = "day_num" not in person_days.columns
+    if numbered:
+        person_days = person_days.with_columns(
+            pl.col("travel_date").rank("dense").over("hh_id").cast(pl.Int64).alias("day_num")
+        )
+    person_days, tables["household_days"] = create_household_days(person_days)
+    tables["person_days"] = person_days.drop("day_num") if numbered else person_days
+    return tables
+
+
+def step_tables(step: str, tables: dict) -> dict:
+    """The tables *step* takes, from *tables*, with an empty frame for each one left out.
+
+    A household with no unlinked trips, say, is a valid input, but a step that
+    reads the table needs the empty table rather than none. Each empty frame has
+    the table's model columns and the columns the step requires of it. An
+    optional table left out stays out.
+    """
+    out = {}
+    for name, contract in STEP_REGISTRY[step].taken.items():
+        if tables.get(name) is not None:
+            out[name] = tables[name]
+        elif not contract.optional:
+            types = model_to_polars_schema(_MODELS[name]) if name in _MODELS else {}
+            required = sorted(c for c in contract.requires if not is_config_named(c))
+            columns = list(dict.fromkeys([*types, *required]))
+            out[name] = pl.DataFrame(schema={c: types.get(c, pl.Int64) for c in columns})
+    return out
+
+
+def reported_locations(
+    households: pl.DataFrame, persons: pl.DataFrame, zones: list[str]
+) -> dict[str, pl.DataFrame]:
+    """The habitual tables survey cleaning delivers for *households* and *persons*.
+
+    Every location is a reported one, so none has days spent at it. Each zone
+    in *zones* gets its column, null: the formatters read the zones config names.
+    """
+    located = reported_habitual_locations(households, persons)
+    return {
+        "habitual_locations": located.with_columns(
+            pl.lit(None, dtype=pl.Int64).alias(zone) for zone in zones
+        ),
+        "habitual_location_days": pl.DataFrame(
+            schema=model_to_polars_schema(_MODELS["habitual_location_days"])
+        ),
+    }
+
+
+def add_missing_tables(tables: dict) -> dict:
+    """Give *tables* every table the cascade reads, an empty one where the test left it out.
+
+    Builds ``household_days`` from the person-days first (see
+    :func:`add_household_days`). A tour or trip table without its joint id gets
+    one, null: joint detection ran and found no joint travel. Returns *tables*,
+    in place.
+    """
+    add_household_days(tables)
+    for name, column in _JOINT_IDS.items():
+        df = tables.get(name)
+        if df is not None and column not in df.columns:
+            tables[name] = df.with_columns(pl.lit(None, dtype=pl.Int64).alias(column))
+    tables.update(step_tables("cascade_usability", tables))
+    return tables

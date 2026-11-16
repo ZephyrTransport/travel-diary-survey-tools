@@ -9,8 +9,8 @@ from sklearn.impute import IterativeImputer
 
 from .impute_utils import (
     build_feature_matrix,
-    decode_dense_to_integer,
-    decode_integer_to_string,
+    decode_rounded,
+    decode_target,
     encode_integer_categoricals,
     encode_string_columns,
     validate_features_exist,
@@ -128,30 +128,18 @@ def impute_mice(
         imputed_values = imputed_matrix[:, col_idx]
 
         if col in encodings:
-            decoded = decode_integer_to_string(imputed_values, encodings[col])
-            imputed_series = pl.Series(col, decoded)
-            original_series = df[col]
-            imputed_series = (
-                pl.when(original_series.is_null())
-                .then(imputed_series)
-                .otherwise(original_series)
-                .alias(col)
-            )
-        elif col in int_encodings:
-            decoded = decode_dense_to_integer(imputed_values, int_encodings[col])
-            imputed_series = pl.Series(col, decoded).cast(df[col].dtype)
-            original_series = df[col]
-            imputed_series = (
-                pl.when(original_series.is_null())
-                .then(imputed_series)
-                .otherwise(original_series)
-                .alias(col)
-            )
+            imputed_series = pl.Series(col, decode_rounded(imputed_values, encodings[col]))
         else:
-            original_dtype = df[col].dtype
-            imputed_series = pl.Series(col, imputed_values)
-            if original_dtype.is_integer():
-                imputed_series = imputed_series.round().cast(original_dtype)
+            imputed_series = decode_target(imputed_values, col, df[col].dtype, int_encodings)
+        if col in encodings or col in int_encodings:
+            # Decoded columns keep their observed values; only nulls take the imputed one
+            original_series = df[col]
+            imputed_series = (
+                pl.when(original_series.is_null())
+                .then(imputed_series)
+                .otherwise(original_series)
+                .alias(col)
+            )
 
         df_imputed = df_imputed.with_columns(imputed_series)
 

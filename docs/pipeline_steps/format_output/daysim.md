@@ -1,61 +1,25 @@
+[](){#daysim-format}
 # DaySim Formatting
 
-::: processing.formatting.daysim.format_daysim
+::: processing.formatting.daysim.format_daysim.format_daysim
     options:
-      show_root_heading: true
+      show_root_heading: false
       show_root_toc_entry: false
-      members:
-        - format_daysim
-      filters:
-        - "!^logger$"
-        - "!^_"
+      show_signature: false
+      show_docstring_parameters: false
+      show_docstring_returns: false
+      show_docstring_raises: false
 
-::: processing.formatting.daysim.format_persons
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - format_persons
-      filters:
-        - "!^logger$"
-        - "!^_"
+## Example
 
-::: processing.formatting.daysim.format_households
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - format_households
-      filters:
-        - "!^logger$"
-        - "!^_"
+```yaml title="Example"
+- name: format_daysim
+  params:
+    usability_profile: daysim  # the records kept, and the weights read
+```
 
-::: processing.formatting.daysim.format_trips
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - format_linked_trips
-      filters:
-        - "!^logger$"
-        - "!^_"
+## Settings
 
-::: processing.formatting.daysim.format_tours
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - format_tours
-      filters:
-        - "!^logger$"
-        - "!^_"
+<!-- step-settings: format_daysim -->
 
-::: processing.formatting.daysim.format_days
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - format_days
-      filters:
-        - "!^logger$"
-        - "!^_"
+Code: [processing.formatting.daysim](../../reference/processing/formatting/daysim.md)

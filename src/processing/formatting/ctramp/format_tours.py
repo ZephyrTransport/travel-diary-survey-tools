@@ -1,10 +1,4 @@
-"""Tour formatting for CT-RAMP.
-
-Transforms canonical tour data into CT-RAMP model format, including:
-
-- Individual tours (non-joint tours)
-- Joint tours (household member group tours)
-"""
+"""Individual tour formatting for CT-RAMP (joint tours: ``format_joint_tours``)."""
 
 import logging
 
@@ -12,30 +6,19 @@ import polars as pl
 
 from data_canon.codebook.ctramp import (
     AtWorkFreq,
-    CTRAMPEmploymentCategory,
     CTRAMPTourCategory,
     CTRAMPTourPurpose,
 )
 from data_canon.codebook.tours import TourDirection
 from data_canon.codebook.trips import PurposeCategory
-from processing.formatting.ctramp.mode_mappings import (
-    aggregate_transit_submode,
-    ctramp_mode_expression,
-)
-from processing.formatting.ctramp.person_mappings import EMPLOYMENT_TO_CTRAMP
-from processing.formatting.ctramp.purpose_mappings import ctramp_purpose_category_expression
-from processing.formatting.ctramp.student_mappings import ctramp_student_category_expression
 
 from .ctramp_config import CTRAMPConfig
-from .format_joint_tours import (
-    format_joint_tour,
-    identify_misclassified_joint_tours,
-)
-from .format_persons import enrich_persons_with_person_type
+from .format_persons import add_person_type
+from .mode_mappings import aggregate_transit_submode, ctramp_mode_expression
+from .output_columns import sample_rate
+from .purpose_mappings import ctramp_purpose_category_expression, is_work_purpose
 
 logger = logging.getLogger(__name__)
-
-__all__ = ["format_individual_tour", "format_joint_tour"]
 
 TWO_SUBTOURS = 2
 
@@ -54,29 +37,13 @@ def _prepare_individual_tours(
     already are, for the unified All* output. Nothing is exploded: a joint tour's
     participants each hold their own tour row and their own ``tour_weight``.
     """
-    tours = identify_misclassified_joint_tours(tours)
     if "person_type" not in persons.columns or "type" not in persons.columns:
         logger.info("Deriving person_type for tour formatting")
-        if "student_category" not in persons.columns:
-            persons = persons.with_columns(
-                ctramp_student_category_expression(school_taz_col="school_taz").alias(
-                    "student_category"
-                )
-            )
-        if "employment_category" not in persons.columns:
-            persons = persons.with_columns(
-                pl.col("employment")
-                .replace_strict(
-                    EMPLOYMENT_TO_CTRAMP,
-                    default=CTRAMPEmploymentCategory.NOT_EMPLOYED.value,
-                )
-                .alias("employment_category")
-            )
-        persons = enrich_persons_with_person_type(persons)
+        persons = add_person_type(persons, config)
 
     selected = tours if include_joint else tours.filter(pl.col("joint_tour_id").is_null())
     individual_tours = selected.join(
-        persons.select(["person_id", "person_num", "person_type", "school_type"]),
+        persons.select(["person_id", "person_num", "person_type", "school_type", "employment"]),
         on="person_id",
         how="left",
     ).join(
@@ -101,23 +68,23 @@ def _prepare_individual_tours(
             pl.col("tour_purpose"),
             pl.col("income"),
             pl.col("school_type"),
-            pl.col("person_type"),
-            config.income_low_threshold,
-            config.income_med_threshold,
-            config.income_high_threshold,
+            pl.col("employment"),
+            config,
             pl.col("_parent_tour_purpose"),
             pl.col("parent_tour_id") != pl.col("tour_id"),
         ).alias("tour_purpose_ctramp")
     )
 
-    mandatory_purposes = [PurposeCategory.WORK.value, PurposeCategory.SCHOOL.value]
     return individual_tours.with_columns(
         pl.when(
             (pl.col("parent_tour_id") != pl.col("tour_id"))
-            & (pl.col("_parent_tour_purpose") == PurposeCategory.WORK.value)
+            & is_work_purpose(pl.col("_parent_tour_purpose"), pl.col("employment"))
         )
         .then(pl.lit(CTRAMPTourCategory.AT_WORK.value))
-        .when(pl.col("tour_purpose").is_in(mandatory_purposes))
+        .when(
+            is_work_purpose(pl.col("tour_purpose"), pl.col("employment"))
+            | (pl.col("tour_purpose") == PurposeCategory.SCHOOL.value)
+        )
         .then(pl.lit(CTRAMPTourCategory.MANDATORY.value))
         .otherwise(pl.lit(CTRAMPTourCategory.INDIVIDUAL_NON_MANDATORY.value))
         .alias("tour_category_ctramp")
@@ -152,7 +119,11 @@ def _add_at_work_frequency(individual_tours: pl.DataFrame) -> pl.DataFrame:
             how="left",
         )
         .with_columns(
-            pl.when(pl.col("tour_purpose") != PurposeCategory.WORK.value)
+            # Only a home-based work tour has an at-work frequency; a subtour is not one.
+            pl.when(
+                (pl.col("parent_tour_id") != pl.col("tour_id"))
+                | ~is_work_purpose(pl.col("tour_purpose"), pl.col("employment"))
+            )
             .then(pl.lit(AtWorkFreq.NONE_NOT_WORK.value))
             .when(pl.col("_subtour_total").fill_null(0) == 0)
             .then(pl.lit(AtWorkFreq.NO_SUBTOUR.value))
@@ -340,8 +311,8 @@ def format_individual_tour(
     - Mode Translation: Maps canonical mode types to CT-RAMP mode codes
     - Time-of-Day: Extracts start/end hours from departure/arrival times
     - Stop Counts: Computes outbound and inbound stop counts from linked trips
-        - Subtour Frequency: Encodes atWork_freq using CT-RAMP categorical values
-            based on work subtour pattern
+    - Subtour Frequency: Encodes atWork_freq using CT-RAMP categorical values
+      based on work subtour pattern
     - Excludes: Model simulation fields (random numbers, wait times, logsums)
 
     Args:
@@ -353,9 +324,9 @@ def format_individual_tour(
             (1=outbound, 2=inbound, 3=subtour)
         unlinked_trips_canonical: Unlinked canonical trips used to derive transit
             submode; may be empty but must be provided
-        persons_canonical: Canonical persons DataFrame with person_id, person_num,
-            person_type (for mode mapping), school_type (for purpose mapping) are optional
-            but re-derived if missing or invalid
+        persons_canonical: Persons with person_id, person_num, employment and
+            school_type (for purpose mapping), and person_type, which is derived
+            with ``add_person_type`` when absent
         households_ctramp: Formatted CT-RAMP households DataFrame with hh_id, income
         config: CT-RAMP configuration with income thresholds
         include_joint: Keep joint-tour members as their own per-person tours,
@@ -477,14 +448,8 @@ def format_individual_tour(
         ]
     ).drop("_ctramp_tour_id")
 
-    # Add sampleRate if tour_weight exists
     if "tour_weight" in individual_tours.columns:
-        individual_tours = individual_tours.with_columns(
-            pl.when(pl.col("tour_weight") > 0)
-            .then(pl.col("tour_weight").pow(-1))
-            .otherwise(None)
-            .alias("sampleRate")
-        )
+        individual_tours = individual_tours.with_columns(sample_rate("tour_weight"))
 
     logger.info("Formatted %d individual tour records", len(individual_tours))
     return individual_tours

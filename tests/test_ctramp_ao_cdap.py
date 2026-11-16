@@ -1,9 +1,4 @@
-"""Tests for the aoResults and cdapResults CT-RAMP output formatters.
-
-Both derive their output from an already-formatted CT-RAMP table by selecting
-and renaming columns, matching the schema of aoResults.csv / cdapResults.csv
-written by the CT-RAMP Java model.
-"""
+"""aoResults and cdapResults: columns selected and renamed from formatted CT-RAMP tables."""
 
 import polars as pl
 
@@ -25,7 +20,7 @@ def test_format_ao_results_maps_autos_to_ao():
 
 
 def test_format_cdap_results_schema_and_person_type_is_int():
-    """CdapResults is HHID, PersonID, PersonNum, PersonType (int), ActivityString."""
+    """CdapResults is exactly HHID, PersonID, PersonNum, PersonType (int), ActivityString."""
     persons_ctramp = pl.DataFrame(
         {
             "hh_id": [101, 101],
@@ -68,20 +63,3 @@ def test_format_cdap_results_includes_person_weight_when_present():
 
     assert "person_weight" in result.columns
     assert result["person_weight"][0] == 2.5
-
-
-def test_format_cdap_results_omits_person_weight_when_absent():
-    """No person_weight column in, none out (it is not part of the CT-RAMP spec)."""
-    persons_ctramp = pl.DataFrame(
-        {
-            "hh_id": [101],
-            "person_id": [10101],
-            "person_num": [1],
-            "person_type": [1],
-            "activity_pattern": [CTRAMPActivityPattern.HOME.value],
-        }
-    )
-
-    result = format_cdap_results(persons_ctramp)
-
-    assert "person_weight" not in result.columns

@@ -5,10 +5,12 @@ This directory contains GitHub Actions workflows for continuous integration and 
 ## Workflows
 
 ### CI Workflow (`ci.yml`)
-Runs on push to main branches and on pull requests. Uses [uv](https://docs.astral.sh/uv/) for fast, reliable dependency management. Includes:
-- **Linting**: Runs Ruff to check code style and formatting
-- **Testing**: Runs pytest with coverage on multiple Python versions (3.11, 3.12, 3.13, 3.14)
-- **Coverage**: Uploads coverage reports to Codecov (optional)
+Runs on pushes to `main` and `develop`, and on pull requests into them. Uses [uv](https://docs.astral.sh/uv/) for fast, reliable dependency management. Jobs:
+- **Lint**: Ruff lint and format check
+- **Test (Python 3.11–3.14)**: `uv sync --group test`, then pytest with coverage on each version
+- **Coverage**: uploads the coverage report to Codecov (optional; never fails the build)
+- **Check Results**: passes only if Lint and every Test job passed; the one check to require
+- **Generate Column Matrix**: regenerates `docs/COLUMN_REQUIREMENTS.md`. On a pull request it fails if the committed file is out of date; on a push it commits the regenerated file
 
 **Why UV?**
 - ⚡ 10-100x faster than pip
@@ -16,8 +18,8 @@ Runs on push to main branches and on pull requests. Uses [uv](https://docs.astra
 - 💾 Automatic caching between runs
 - 🎯 Minimal, only installs what's needed
 
-### PR Checks Workflow (`pr-checks.yml`)
-Additional checks that run on pull requests to ensure CI passes before merging.
+### Docs Workflow (`docs.yml`)
+Builds the mkdocs site with `--strict` on pull requests into `develop` and `main`, so a broken cross-reference or missing page fails at review. Deploys it to GitHub Pages on pushes to `main`.
 
 ## Setting Up Branch Protection
 
@@ -35,7 +37,8 @@ To prevent merging PRs with failing tests or linting, configure branch protectio
      - `Test (Python 3.12)`
      - `Test (Python 3.13)`
      - `Test (Python 3.14)`
-     - `All checks passed`
+     - `Check Results`
+     - `Generate Column Matrix`
    - ✅ **Require branches to be up to date before merging** (recommended)
    - ✅ **Require conversation resolution before merging** (optional)
    - ✅ **Include administrators** (optional, but recommended)
@@ -70,50 +73,39 @@ uv run ruff format --check .
 uv run pytest
 
 # Run tests with coverage
-uv run pytest --cov=travel_diary_survey_tools --cov-report=html
+uv run pytest --cov=src --cov-report=html
 ```
 
-### Using pip (Alternative)
-```bash
-# Install in editable mode with dev dependencies
-pip install -e ".[dev]"
-
-# Run linting
-ruff check .
-ruff format --check .
-
-# Run tests
-pytest
-```
+The dev and test tools are uv dependency groups (`[dependency-groups]` in `pyproject.toml`), not pip extras, so `pip install -e ".[dev]"` does not install them. Use uv.
 
 ### Running Linting Locally
 ```bash
 # Check for issues
-ruff check .
+uv run ruff check .
 
 # Check formatting
-ruff format --check .
+uv run ruff format --check .
 
 # Auto-fix issues
-ruff check --fix .
+uv run ruff check --fix .
 
 # Auto-format code
-ruff format .
+uv run ruff format .
 ```
 
 ### Running Tests Locally
 ```bash
 # Run all tests with coverage
-pytest
+uv run pytest
 
 # Run specific test file
-pytest tests/test_linker.py
+uv run pytest tests/test_pipeline.py
 
 # Run with verbose output
-pytest -v
+uv run pytest -v
 
 # Run with coverage report
-pytest --cov=travel_diary_survey_tools --cov-report=html
+uv run pytest --cov=src --cov-report=html
 ```
 
 ## Codecov Integration (Optional)

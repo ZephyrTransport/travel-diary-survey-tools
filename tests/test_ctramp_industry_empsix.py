@@ -1,10 +1,4 @@
-"""Tests for industry_empsix derivation in the CT-RAMP formatter.
-
-industry_empsix (the six-category empsix employment sector) is derived in the
-CT-RAMP formatter from the canonical `industry` code, with a keyword fallback on
-the free-text `industry_other`. It is not a canonical field and is not derived
-in project cleaning steps.
-"""
+"""industry_empsix: the six-sector code from ``industry``, else keywords in ``industry_other``."""
 
 import polars as pl
 

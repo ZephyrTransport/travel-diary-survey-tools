@@ -103,8 +103,8 @@ def check_recode_nulls(
         strict: If ``True``, raise ``ValueError`` on null recodes instead
             of just logging a warning.  PUMS recodes should always be
             strict (every person must land in exactly one category);
-            survey recodes may tolerate nulls until imputation is
-            implemented.
+            survey recodes may tolerate nulls, which fractional imputation
+            later spreads across the control's categories.
     """
     rows: list[tuple[str | int, str]] = []
     null_ids: set[str | int] = set()
@@ -168,52 +168,37 @@ def check_incidence_sums(
     hh_id_col = "hh_id" if "hh_id" in seed.columns else "SERIALNO"
     rows: list[tuple[int | str, str, float, float]] = []
 
-    # --- Person-level controls (expected = p_total) ----------------------
-    p_total_available = "p_total" in seed.columns
-    for name, _ctrl in _resolve(targets, ControlLevel.PERSON):
-        if _ctrl.structural:
-            continue
-        inc_cols = [c for c in seed.columns if c.startswith(f"{name}__")]
-        if not inc_cols:
-            continue
-        if not p_total_available:
-            logger.warning(
-                "Skipping person-control checksum for '%s': "
-                "p_total column missing from incidence table "
-                "(add 'p_total' to targets to enable this check)",
-                name,
+    # Person controls sum to p_total, household controls to 1 per household.
+    expected_sums = (
+        (ControlLevel.PERSON, pl.col("p_total").cast(pl.Float64)),
+        (ControlLevel.HOUSEHOLD, pl.lit(1.0)),
+    )
+    for level, expected in expected_sums:
+        for name, ctrl in _resolve(targets, level):
+            if ctrl.structural:
+                continue
+            inc_cols = [c for c in seed.columns if c.startswith(f"{name}__")]
+            if not inc_cols:
+                continue
+            if level is ControlLevel.PERSON and "p_total" not in seed.columns:
+                logger.warning(
+                    "Skipping person-control checksum for '%s': "
+                    "p_total column missing from incidence table "
+                    "(add 'p_total' to targets to enable this check)",
+                    name,
+                )
+                continue
+
+            check = seed.select(
+                pl.col(hh_id_col),
+                pl.sum_horizontal(inc_cols).cast(pl.Float64).alias("actual"),
+                expected.alias("expected"),
+            ).filter((pl.col("actual") - pl.col("expected")).abs() > tolerance)
+
+            rows.extend(
+                (row[hh_id_col], name, row["actual"], row["expected"])
+                for row in check.iter_rows(named=True)
             )
-            continue
-
-        check = seed.select(
-            pl.col(hh_id_col),
-            pl.sum_horizontal(inc_cols).cast(pl.Float64).alias("actual"),
-            pl.col("p_total").cast(pl.Float64).alias("expected"),
-        ).filter((pl.col("actual") - pl.col("expected")).abs() > tolerance)
-
-        rows.extend(
-            (row[hh_id_col], name, row["actual"], row["expected"])
-            for row in check.iter_rows(named=True)
-        )
-
-    # --- Household-level controls (expected = 1.0 per HH) ---------------
-    for name, _ctrl in _resolve(targets, ControlLevel.HOUSEHOLD):
-        if _ctrl.structural:
-            continue
-        inc_cols = [c for c in seed.columns if c.startswith(f"{name}__")]
-        if not inc_cols:
-            continue
-
-        check = seed.select(
-            pl.col(hh_id_col),
-            pl.sum_horizontal(inc_cols).cast(pl.Float64).alias("actual"),
-            pl.lit(1.0).alias("expected"),
-        ).filter((pl.col("actual") - pl.col("expected")).abs() > tolerance)
-
-        rows.extend(
-            (row[hh_id_col], name, row["actual"], row["expected"])
-            for row in check.iter_rows(named=True)
-        )
 
     if not rows:
         logger.info(

@@ -1,10 +1,7 @@
-"""Data models for trip linking and tour building.
+"""Pydantic models for the canonical survey tables.
 
-This module uses Pydantic for data validation.
-
-Models represent individual records (rows) rather than entire DataFrames.
-Use the validate_* functions to validate Polars DataFrames by iterating
-through rows.
+Models represent individual records (rows) rather than entire DataFrames;
+``CanonicalData.validate`` checks a table against its model row by row.
 
 Any field without None as an allowed type is considered required core data.
 
@@ -23,7 +20,7 @@ The usability columns are deliberately **not** declared below. A project names
 its profiles in config -- ``ctramp`` and ``analysis`` are this
 project's names, not the schema's -- so which of them a run produces is a
 project's choice. Declaring one would promise a column that a config need never
-ask for. ``cascade_completeness`` registers whichever it stamps as generated
+ask for. ``cascade_usability`` registers whichever it stamps as generated
 columns, each described by what it admits, which says more than a fixed field
 could: the description names the actual rules that profile relaxed.
 
@@ -36,7 +33,7 @@ counts and that it cannot be negative, so these columns are still described and
 still checked. See [`processing.weighting.core.hierarchy`]
 [processing.weighting.core.hierarchy].
 
-See [`processing.completeness`][processing.completeness] for the per-level rules
+See [`processing.usability`][processing.usability] for the per-level rules
 and the admission vocabulary.
 """
 
@@ -44,12 +41,13 @@ from datetime import datetime
 
 from pydantic import BaseModel, model_validator
 
-from data_canon.codebook.days import TravelDow
+from data_canon.codebook.days import BeginEndDay, TravelDow
 from data_canon.codebook.generic import BooleanYesNo, LocationSource, LocationType
 from data_canon.codebook.households import IncomeBroad, ResidenceRentOwn, ResidenceType
 from data_canon.codebook.persons import (
     AgeCategory,
     CommuteFreq,
+    Education,
     Employment,
     Ethnicity,
     Gender,
@@ -59,6 +57,7 @@ from data_canon.codebook.persons import (
     Race,
     SchoolType,
     Student,
+    SurveyTech,
     WorkParking,
 )
 from data_canon.codebook.tours import (
@@ -78,6 +77,14 @@ from data_canon.codebook.trips import (
 )
 from data_canon.core.schema_field import schema_field
 
+# Shared by the joint trip and joint tour tables.
+_GROUP_HH_DAY_ID = (
+    "The household-day this grouping happened on, shared by every member's "
+    "day. Not any one member's person_day_id: a grouping belongs to the household's "
+    "day, and a member's own day can be unusable while the others' are not."
+)
+_GROUP_TRAVEL_DATE = "The household-day's date, repeated here so it reads without a lookup."
+
 
 # Data Models ------------------------------------------------------------------
 class HouseholdModel(BaseModel):
@@ -91,6 +98,15 @@ class HouseholdModel(BaseModel):
     income: int | None = schema_field(ge=0, default=None)
     income_bin: IncomeBroad = schema_field()
     num_vehicles: int = schema_field(ge=0)
+    exclusion_reason: str | None = schema_field(
+        default=None,
+        description=(
+            "Why the project cleaner dropped this household, or null when kept. Any "
+            "reason makes every one of the household's days unusable under every "
+            "usability profile, and the household with them. survey_complete, the "
+            "vendor's verdict, is untouched."
+        ),
+    )
     survey_complete: bool = schema_field()
 
 
@@ -123,25 +139,16 @@ class PersonModel(BaseModel):
     ethnicity: Ethnicity | None = schema_field(default=None)
     telework_freq: CommuteFreq | None = schema_field(default=None)
     commute_freq: CommuteFreq | None = schema_field(default=None)
+    education: Education | None = schema_field(default=None)
     # Employer *provides* commute subsidy: Free (fully subsidized) parking at work
-    commute_subsidy_provide_free_parking: BooleanYesNo | None = schema_field(
-        default=None, required_in_steps=["format_ctramp"]
-    )
+    commute_subsidy_provide_free_parking: BooleanYesNo | None = schema_field(default=None)
     # Employer *provides* commute subsidy: Discounted (partially subsidized) parking at work
-    commute_subsidy_provide_discounted_parking: BooleanYesNo | None = schema_field(
-        default=None, required_in_steps=["format_ctramp"]
-    )
+    commute_subsidy_provide_discounted_parking: BooleanYesNo | None = schema_field(default=None)
     # Uses commute subsidy: Free (fully subsidized) parking at work
-    commute_subsidy_use_free_parking: BooleanYesNo | None = schema_field(
-        default=None, required_in_steps=["format_ctramp"]
-    )
+    commute_subsidy_use_free_parking: BooleanYesNo | None = schema_field(default=None)
     # Uses commute subsidy: Discounted (partially subsidized) parking at work
-    commute_subsidy_use_discounted_parking: BooleanYesNo | None = schema_field(
-        default=None, required_in_steps=["format_ctramp"]
-    )
-    # NOTE: is proxy is vague.
-    # Better and more flexible would be to have proxy_person_id on the proxied person
-    # This allows for multiple proxy reporters and is more explicit.
+    commute_subsidy_use_discounted_parking: BooleanYesNo | None = schema_field(default=None)
+    # NOTE: vague; a proxy_person_id on the proxied person would allow several reporters
     is_proxy: bool | None = schema_field(default=None)
     surveyable: bool | None = schema_field(
         default=None,
@@ -156,6 +163,22 @@ class PersonModel(BaseModel):
             "surveyable."
         ),
     )
+    survey_tech: SurveyTech = schema_field(
+        description=(
+            "The technology that collected this person's travel: a call center, a "
+            "browser, or GPS (a phone app). A person whose "
+            "travel was reported by someone else carries the technology it was "
+            "reported through; one whose travel was never collected is MISSING."
+        ),
+    )
+    exclusion_reason: str | None = schema_field(
+        default=None,
+        description=(
+            "Why the project cleaner dropped this person, or null when kept. Any "
+            "reason makes every one of the person's days unusable under every "
+            "usability profile. survey_complete, the vendor's verdict, is untouched."
+        ),
+    )
     num_days_complete: int = schema_field(ge=0, default=0)
     survey_complete: bool | None = schema_field(default=None)
 
@@ -167,37 +190,76 @@ class PersonDayModel(BaseModel):
         ge=1,
         fk_to="persons.person_id",
         required_child=True,
-        # Only surveyable persons must have a day. Unrelated household members
-        # file no travel and the vendor gives them no day rows, so requiring
-        # one of them can only be satisfied by fabricating a day that reads as
-        # a genuine no-travel day.
+        # Unrelated members file no travel; requiring their day would mean fabricating one
         required_child_when="surveyable",
     )
-    day_id: int = schema_field(ge=1, unique=True)
+    person_day_id: int = schema_field(ge=1, unique=True)
     hh_id: int = schema_field(ge=1, fk_to="households.hh_id")
+    hh_day_id: int = schema_field(ge=1, fk_to="household_days.hh_day_id")
     travel_date: datetime = schema_field()
     travel_dow: TravelDow = schema_field()
-    survey_complete: bool | None = schema_field(default=False)
-    hh_day_survey_complete: bool | None = schema_field(
+    begin_day: BeginEndDay | None = schema_field(
         default=None,
         description=(
-            "Household-day coherence: every member of the household reported a "
-            "complete day on this travel_date. Stamped by the cascade_completeness "
-            "step as an ALL reduction over member-days. Under a profile that "
-            "asks for whole household-days, a day is only usable within one."
+            "Where the respondent said the day began. Null where the survey did "
+            "not ask. HOME or OTHER_HOME puts a home of theirs at the day's first "
+            "trip origin; away from every reported home, that is another home."
         ),
     )
-    # The usable-side mirror of hh_day_survey_complete is now stamped once per
-    # usability profile, as hh_day_{profile}. Those names come from config, so
-    # they cannot be model fields; cascade_completeness registers them as
-    # generated columns with a description of what each one gated.
+    end_day: BeginEndDay | None = schema_field(
+        default=None,
+        description=(
+            "Where the respondent said the day ended. Null where the survey did "
+            "not ask. HOME or OTHER_HOME puts a home of theirs at the day's last "
+            "trip destination; away from every reported home, that is another home."
+        ),
+    )
+    exclusion_reason: str | None = schema_field(
+        default=None,
+        description=(
+            "Why the project cleaner dropped this day, or null when kept. Any reason "
+            "makes the day unusable under every usability profile, and its "
+            "household-date incomplete where a profile needs every member's day. "
+            "survey_complete, the vendor's verdict, is untouched."
+        ),
+    )
+    survey_complete: bool | None = schema_field(default=False)
+
+
+class HouseholdDayModel(BaseModel):
+    """One household's travel date: every member's person-day on it, together.
+
+    The vendor sends no household-day file, so each project's cleaner builds
+    this table from the person-days (``utils.create_ids.create_household_days``).
+    Joint trips and joint tours belong to a household-day rather than to any one
+    member's day.
+    """
+
+    hh_day_id: int = schema_field(
+        ge=1,
+        unique=True,
+        description="hh_id * 100 + day_num: the household's day, as person_day_id is the person's.",
+    )
+    hh_id: int = schema_field(ge=1, fk_to="households.hh_id")
+    travel_date: datetime = schema_field()
+    survey_complete: bool | None = schema_field(
+        default=None,
+        description=(
+            "Every surveyable member's day on this date is complete, as the vendor "
+            "judged each one; False where no surveyable member has a day on it. "
+            "Stamped by the cascade_usability step. Under a profile that asks "
+            "for whole household-days, a person-day is only usable within one."
+        ),
+    )
+    # usable_{profile} is named from config, so cascade_usability registers it
+    # as a generated column instead of a field here.
 
 
 class UnlinkedTripModel(BaseModel):
     """Trip data model for validation."""
 
     unlinked_trip_id: int = schema_field(ge=1, unique=True)
-    day_id: int = schema_field(ge=1, fk_to="days.day_id")
+    person_day_id: int = schema_field(ge=1, fk_to="person_days.person_day_id")
     person_id: int = schema_field(ge=1, fk_to="persons.person_id")
     hh_id: int = schema_field(ge=1, fk_to="households.hh_id")
     linked_trip_id: int = schema_field(ge=1, fk_to="linked_trips.linked_trip_id")
@@ -261,7 +323,7 @@ class UnlinkedTripModel(BaseModel):
 class LinkedTripModel(BaseModel):
     """Linked Trip data model for validation."""
 
-    day_id: int = schema_field(ge=1, fk_to="days.day_id")
+    person_day_id: int = schema_field(ge=1, fk_to="person_days.person_day_id")
     person_id: int = schema_field(ge=1, fk_to="persons.person_id")
     hh_id: int = schema_field(ge=1, fk_to="households.hh_id")
 
@@ -291,15 +353,12 @@ class LinkedTripModel(BaseModel):
     distance_meters: float = schema_field(ge=0)
     depart_time: datetime = schema_field()
     arrive_time: datetime = schema_field()
-    # This field is derivable, and tour aggregation already recomputes it with
-    # different semantics rather than reading it. See issue #81 for whether it
-    # should stay on the schema at all.
-    d_activity_duration: int = schema_field(
+    d_activity_duration: int | None = schema_field(
+        default=None,
         description=(
-            "Whole minutes spent at the trip destination before the next departure "
-            "(activity duration at the destination). Sentinel values: -1 when the "
-            "destination is home; -2 for the last trip of a person-day (no "
-            "subsequent departure)."
+            "Whole minutes spent at the trip destination before the person's next "
+            "departure that day. None for the last trip of a person-day, whose stay "
+            "has no recorded end."
         ),
     )
     tour_direction: TourDirection = schema_field()
@@ -380,7 +439,7 @@ class TourModel(BaseModel):
     tour_id: int = schema_field(ge=1, unique=True)
     hh_id: int = schema_field(ge=1, fk_to="households.hh_id")
     person_id: int = schema_field(ge=1, fk_to="persons.person_id")
-    day_id: int = schema_field(ge=1, fk_to="days.day_id")
+    person_day_id: int = schema_field(ge=1, fk_to="person_days.person_day_id")
     tour_num: int = schema_field(ge=1)
     subtour_num: int = schema_field(ge=0)
     parent_tour_id: int = schema_field(ge=1, fk_to="tours.tour_id")
@@ -515,7 +574,10 @@ class JointTripModel(BaseModel):
 
     joint_trip_id: int = schema_field(ge=1, unique=True)
     hh_id: int = schema_field(ge=1, fk_to="households.hh_id")
-    day_id: int = schema_field(ge=1, fk_to="days.day_id")
+    hh_day_id: int = schema_field(
+        ge=1, fk_to="household_days.hh_day_id", description=_GROUP_HH_DAY_ID
+    )
+    travel_date: datetime = schema_field(description=_GROUP_TRAVEL_DATE)
     num_joint_travelers: int = schema_field(
         ge=2,
         description=(
@@ -544,7 +606,10 @@ class JointTourModel(BaseModel):
 
     joint_tour_id: int = schema_field(ge=1, unique=True)
     hh_id: int = schema_field(ge=1, fk_to="households.hh_id")
-    day_id: int = schema_field(ge=1, fk_to="days.day_id")
+    hh_day_id: int = schema_field(
+        ge=1, fk_to="household_days.hh_day_id", description=_GROUP_HH_DAY_ID
+    )
+    travel_date: datetime = schema_field(description=_GROUP_TRAVEL_DATE)
     num_participants: int = schema_field(
         ge=2,
         description=(
@@ -569,11 +634,22 @@ class HabitualLocationModel(BaseModel):
     distinguishes a habitual location is the person's standing relationship to
     it, which is what ``source`` and ``is_primary`` record.
 
-    ``location_num`` numbers locations of the same kind for a person, with the
-    primary (when known) at ``1``. An alternate worksite is therefore just a
-    ``WORK`` row with ``location_num > 1`` and ``source = OBSERVED`` — there is
-    no separate ``ALTERNATE_WORK`` kind. An "other home" (second home, other
-    parent's house) is likewise a ``HOME`` row with ``location_num > 1``.
+    ``location_num`` numbers locations of the same kind for a person: reported
+    ones first, primary at ``1``, then the rest in the order the person was first
+    seen there. An alternate worksite is therefore just a ``WORK`` row with
+    ``location_num > 1`` and ``source = OBSERVED`` — there is no separate
+    ``ALTERNATE_WORK`` kind. An "other home" (second home, other parent's house)
+    is likewise a ``HOME`` row with ``location_num > 1``. Homes are never
+    inferred from travel: every home is one the respondent reported or named as
+    where a day began or ended.
+
+    Survey cleaning delivers the table holding the reported locations only — the
+    survey's home, work and school coordinates plus any further ones, such as a
+    vendor's second home — numbered and identified. The
+    ``detect_habitual_locations`` step appends the observed ones after them and
+    never changes a delivered row. Each reported primary repeats its coordinate
+    columns (``home_lat/lon`` on households, ``work_*``/``school_*`` on persons),
+    and validation holds the two equal.
 
     Per-day use of a location lives in
     [`HabitualLocationDayModel`][data_canon.models.survey.HabitualLocationDayModel],
@@ -639,7 +715,7 @@ class HabitualLocationDayModel(BaseModel):
         fk_to="habitual_locations.habitual_location_id",
     )
     person_id: int = schema_field(ge=1, fk_to="persons.person_id")
-    day_id: int = schema_field(ge=1, fk_to="days.day_id")
+    person_day_id: int = schema_field(ge=1, fk_to="person_days.person_day_id")
     location_type: LocationType = schema_field(
         description="Kind of location, denormalized from the parent row for filtering."
     )
@@ -650,8 +726,8 @@ class HabitualLocationDayModel(BaseModel):
             "Total measurable minutes spent at this location on this day. None "
             "when no visit that day had a measurable duration, which is not the "
             "same as zero: a stay that ran past the last trip of the day has no "
-            "recorded end, and arrivals home carry no duration at all (see "
-            "LinkedTripModel.d_activity_duration sentinels)."
+            "recorded end. Always None at home, whose stays run past the day's "
+            "ends, so a total would be only the part of the day that was seen."
         ),
     )
     n_visits: int = schema_field(

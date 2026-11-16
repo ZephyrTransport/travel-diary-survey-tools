@@ -53,6 +53,8 @@ dev = [
     "griffe-pydantic>=1.0.0",
     "mkdocs-include-markdown-plugin>=6.0.0",
     "pandas>=2.1.0",
+    "mkdocs-gen-files>=0.5.0",
+    "mkdocs-literate-nav>=0.6.1",
 ]
 
 [build-system]
@@ -128,3 +130,12 @@ markers = [
     "e2e: hermetic end-to-end pipeline tests on synthetic data (run alone with: pytest -m e2e)",
     "slow: tests that take more than 5 seconds",
 ]
+
+# Checked by scripts/check_module_length.py (pre-commit and tests). A module under
+# src/ may not exceed max-lines. A [tool.module-length.baseline] table may pin a
+# module already over it, at its length then: it may shrink but not grow, and
+# comes off the table once it is within the limit.
+[tool.module-length]
+max-lines = 750
+
+[tool.module-length.baseline]

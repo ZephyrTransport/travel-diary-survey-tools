@@ -1,4 +1,4 @@
-"""Dummy module to run validation on processed data."""
+"""Final validation step: model validation of the processed tables."""
 
 from .final_check import final_check
 

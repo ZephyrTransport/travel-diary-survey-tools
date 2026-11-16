@@ -6,8 +6,6 @@ blocks with population counts).  The three layers are rasterized onto a
 common grid and ``exactextract`` performs the zonal cross-tabulation with
 sub-pixel coverage fractions.
 
-See ``src/utils/CROSSWALK.md`` for the mathematical formulation.
-
 Example:
     ```python
     from utils.crosswalk import build_crosswalk
@@ -71,17 +69,18 @@ def build_crosswalk(
             weight (typically population).
         resolution: Raster cell size in metres (EPSG:5070).
         min_allocation: Drop source-target pairs whose allocation weight
-            is below this fraction (e.g. 0.02 = 2%).  Remaining weights
-            are **not** re-normalised; the dropped slivers simply become
-            part of the out-of-region remainder.  Default 0.0 (keep all).
+            is below this fraction (e.g. 0.02 = 2%), then re-normalise the
+            remaining weights to sum to 1.0 per source zone, absorbing both
+            the dropped slivers and the out-of-region remainder.  Default
+            0.0 (keep all, no re-normalising).
 
     Returns:
         DataFrame with columns
         ``[source_id, target_id, population, allocation_weight]``.
         ``allocation_weight`` is the fraction of each source zone's
-        **total** population that falls in the target zone.  Weights sum
-        to <= 1.0 per ``source_id``; the remainder is population outside
-        all target zones.
+        **total** population that falls in the target zone.  With
+        ``min_allocation`` 0, weights sum to <= 1.0 per ``source_id``; the
+        remainder is population outside all target zones.
     """
     # Validate required columns
     for gdf, col, label in [
@@ -119,7 +118,6 @@ def build_crosswalk(
 
     # Compute raster grid from union of source extent
     total_weight = float(wgt_albers[weight_col].sum())
-    src_bounds = unary_union(src_albers.geometry).bounds
     minx, miny, maxx, maxy = src_bounds
 
     # Resolution heuristic warning
@@ -156,9 +154,7 @@ def build_crosswalk(
     # Cross-tabulate via exactextract
     df = _cross_tabulate(pop_arr, src_arr, int_to_src, transform, tgt_albers)
 
-    # Compute total rasterized population per source zone (including
-    # population outside all target zones) so allocation_weight reflects
-    # the true fraction, not an inflated share.
+    # Total rasterized population per source zone, including outside all targets
     flat_pop = pop_arr.ravel()
     flat_src = src_arr.ravel()
     src_mask = flat_src > 0
@@ -194,17 +190,12 @@ def build_crosswalk(
         (pl.col("population") / pl.col("source_total_pop")).alias("allocation_weight"),
     ).drop("source_total_pop")
 
-    # Drop sliver allocations below threshold and redistribute their
-    # weight proportionally among the remaining rows per source zone.
-    # Also absorb small out-of-region remainders below the threshold.
+    # Drop slivers below the threshold; re-normalise what remains (see docstring)
     if min_allocation > 0:
         n_before = len(df)
         df = df.filter(pl.col("allocation_weight") >= min_allocation)
         n_dropped = n_before - len(df)
 
-        # Re-normalise so remaining weights sum to 1.0 per source zone.
-        # This absorbs both dropped target-zone slivers and small
-        # out-of-region remainders in one step.
         df = df.with_columns(
             (
                 pl.col("allocation_weight") / pl.col("allocation_weight").sum().over("source_id")
@@ -379,7 +370,7 @@ def _cross_tabulate(
 def _temp_tif(
     *arrays: np.ndarray,
     transform: rasterio.transform.Affine,
-    dtypes: list[str] | None = None,
+    dtypes: list[str],
 ) -> Generator[str, None, None]:
     """Context manager: write bands to an in-memory GeoTIFF (GDAL /vsimem/).
 
@@ -388,8 +379,6 @@ def _temp_tif(
     avoids transient Windows temp-file read errors.
     """
     count = len(arrays)
-    if dtypes is None:
-        dtypes = ["float32"] * count
     memfile = MemoryFile()
     try:
         with memfile.open(

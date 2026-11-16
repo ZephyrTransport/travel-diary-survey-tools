@@ -1,3 +1,4 @@
+[](){#weighting-crosswalk}
 # Population-Weighted Geography Crosswalk
 
 ## Overview
@@ -107,20 +108,9 @@ So the final crosswalk rows would look like this:
 
 This is the key idea: each source geography is split across target zones in proportion to the coverage-weighted population captured in each target polygon.
 
-## API
+## Settings and code
 
-The PUMA-specific wrapper classes live on the [Data Preparation](data_preparation.md) page:
-
-- `PumaCrosswalk`
-- `TargetZoneConfig`
-- `GeographyConfig`
-
-### Generic crosswalk function
-
-`build_crosswalk` is the underlying generic implementation — it works with any source/target/weight polygon combination and is not specific to PUMAs or weighting.
-
-::: utils.crosswalk
-    options:
-      show_root_heading: true
-      members:
-        - build_crosswalk
+The crosswalk is set by the `geography` block of [Compute Weights](compute_weights.md#settings).
+The PUMA-specific wrapper is in [processing.weighting.data_prep](../../reference/processing/weighting/data_prep.md);
+the generic `build_crosswalk`, which works for any source, target and weight polygons, is in
+[utils](../../reference/utils.md).

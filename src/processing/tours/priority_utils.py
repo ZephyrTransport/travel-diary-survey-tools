@@ -19,8 +19,9 @@ def add_purpose_priority_column(
 ) -> pl.DataFrame:
     """Add purpose priority column to dataframe.
 
-    Maps person_category (PersonCategory string) → purpose priority value.
-        Purpose priority is determined by the nested mapping in the TourConfig:
+    Maps person_category (PersonCategory string) and d_purpose_category to the
+    priority in ``config.purpose_priority_by_personcat``; HOME gets 999.
+
     Args:
         df: DataFrame with person_category and d_purpose_category columns
         config: TourConfig with priority mappings
@@ -97,41 +98,9 @@ def add_mode_priority_column(
     return df.with_columns([mode_expr.cast(pl.Int32).alias(alias)])
 
 
-def add_activity_duration_column(
-    df: pl.DataFrame,
-    default_minutes: float = 240.0,
-    alias: str = "activity_duration",
-) -> pl.DataFrame:
-    """Add activity duration column to dataframe.
-
-    Calculates time spent at each destination as the time between
-    arrival and the next trip's departure. For the last trip of the day,
-    uses the provided default duration.
-
-    Args:
-        df: DataFrame with arrive_time, depart_time, person_id, day_id columns
-        default_minutes: Default duration for last trip of day (default: 240)
-        alias: Column name for the duration values
-
-    Returns:
-        DataFrame with added activity_duration column (in minutes)
-    """
-    return df.with_columns(
-        [
-            (pl.col("depart_time").shift(-1).over(["person_id", "day_id"]) - pl.col("arrive_time"))
-            .dt.total_minutes()
-            .fill_null(default_minutes)
-            .alias(alias)
-        ]
-    )
-
-
 def add_purpose_score_column(
     df: pl.DataFrame,
     config: TourConfig,
-    purpose_col: str = "_d_purpose_effective",
-    duration_col: str = "_activity_duration",
-    person_category_col: str = "person_category",
     alias: str = "purpose_score",
 ) -> pl.DataFrame:
     """Add a duration-weighted purpose score used to pick the tour purpose.
@@ -148,11 +117,9 @@ def add_purpose_score_column(
     selected. The lookups are vectorized joins rather than per-row evaluation.
 
     Args:
-        df: Trip data with the purpose, duration and person-category columns.
+        df: Trip data with ``d_purpose_category``, ``_activity_duration``
+            (minutes) and ``person_category``.
         config: TourConfig carrying the weight and half-max tables.
-        purpose_col: Column holding the (effective) purpose category value.
-        duration_col: Column holding the activity duration in minutes.
-        person_category_col: Column holding the PersonCategory string.
         alias: Name for the score column to add.
 
     Returns:
@@ -174,20 +141,17 @@ def add_purpose_score_column(
         schema={"_purpose": pl.Int64, "_h": pl.Float64},
     )
 
+    duration = pl.col("_activity_duration")
     scored = (
-        df.with_columns(pl.col(purpose_col).cast(pl.Int64).alias("_score_purpose"))
+        df.with_columns(pl.col("d_purpose_category").cast(pl.Int64).alias("_score_purpose"))
         .join(
             weights,
-            left_on=[person_category_col, "_score_purpose"],
+            left_on=["person_category", "_score_purpose"],
             right_on=["_pcat", "_purpose"],
             how="left",
         )
         .join(halfmax, left_on="_score_purpose", right_on="_purpose", how="left")
-        .with_columns(
-            (pl.col("_w") * pl.col(duration_col) / (pl.col(duration_col) + pl.col("_h"))).alias(
-                alias
-            )
-        )
+        .with_columns((pl.col("_w") * duration / (duration + pl.col("_h"))).alias(alias))
         .drop("_score_purpose", "_w", "_h")
     )
     return scored

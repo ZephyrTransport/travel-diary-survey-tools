@@ -150,6 +150,11 @@ class PurposeToCategoryMap:
         return cls.PURPOSE_TO_CATEGORY.get(purpose, PurposeCategory.OTHER)
 
 
+# Purpose categories the model formatters and the joint-tour rule treat as work.
+# A modelling convention: canonical purposes keep WORK and WORK_RELATED apart.
+WORK_PURPOSE_CATEGORIES = (PurposeCategory.WORK, PurposeCategory.WORK_RELATED)
+
+
 class Driver(LabeledEnum):
     """driver value labels."""
 

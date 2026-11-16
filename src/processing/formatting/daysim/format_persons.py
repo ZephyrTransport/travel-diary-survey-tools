@@ -28,14 +28,14 @@ logger = logging.getLogger(__name__)
 MODE_TO_MODE_TYPE_MAP = {k.value: v.value for k, v in ModeType.from_mode().items()}
 
 
-def compute_day_completeness(days: pl.DataFrame) -> pl.DataFrame:
+def compute_day_completeness(person_days: pl.DataFrame) -> pl.DataFrame:
     """Compute day completeness indicators for survey weighting.
 
     Creates person-level completeness indicators by day of week and calculates
     total complete days for different weekday periods (3-day, 4-day, 5-day).
 
     Args:
-        days: DataFrame with columns [person_id, is_complete, travel_dow]
+        person_days: DataFrame with columns [person_id, survey_complete, travel_dow]
 
     Returns:
         DataFrame with columns:
@@ -49,7 +49,7 @@ def compute_day_completeness(days: pl.DataFrame) -> pl.DataFrame:
 
     # Pivot days by person and day of week
     pivoted = (
-        days.select(["person_id", "survey_complete", "travel_dow"])
+        person_days.select(["person_id", "survey_complete", "travel_dow"])
         .pivot(index="person_id", on="travel_dow", values="survey_complete")
         .fill_null(0)
     )
@@ -107,7 +107,7 @@ def compute_day_completeness(days: pl.DataFrame) -> pl.DataFrame:
     return result.sort(by=["hhno", "pno"])
 
 
-def format_persons(persons: pl.DataFrame, days: pl.DataFrame) -> pl.DataFrame:
+def format_persons(persons: pl.DataFrame, person_days: pl.DataFrame) -> pl.DataFrame:
     """Format person data to DaySim specification.
 
     Applies mapping dictionaries and derives person type (`pptyp`) and worker
@@ -117,35 +117,22 @@ def format_persons(persons: pl.DataFrame, days: pl.DataFrame) -> pl.DataFrame:
 
     - **Person Type Classification**: Full-time worker, part-time worker, university
       student, non-working adult, retired, child by age based on age, employment
-      status, student status (cascading logic below)
+      status, student status (see ``get_person_type_expr``)
     - **Day Completeness**: Mark complete travel days vs partial reporting (from days table)
     - **Activity Patterns**: Work at home frequency, school location type derived from
       usual work/school locations
     - **Usual Days**: Calculate usual work/school days per week
 
-    Person type (pptyp) cascading logic:
-
-    - Age < 5: Child 0-4 (type 8)
-    - Age < 16: Child 5-15 (type 7)
-    - Full-time employed: Full-time worker (type 1)
-    - Age 16-17 and student: High school 16+ (type 6)
-    - Age 18-24 and high school: High school 16+ (type 6)
-    - Age >= 18 and student: University student (type 5)
-    - Part-time/self-employed: Part-time worker (type 2)
-    - Age < 65: Non-working adult (type 4)
-    - Age >= 65: Non-working senior (type 3)
-
     Args:
         persons: DataFrame with canonical person fields
-        days: Optional DataFrame with day completeness indicators
+        person_days: DataFrame with day completeness indicators
 
     Returns:
         DataFrame with DaySim person fields
     """
     logger.info("Formatting person data")
 
-    # Compute day completeness if days data provided
-    day_completeness = compute_day_completeness(days)
+    day_completeness = compute_day_completeness(person_days)
 
     # Rename columns to DaySim naming convention
     persons_daysim = persons.rename(
@@ -165,7 +152,7 @@ def format_persons(persons: pl.DataFrame, days: pl.DataFrame) -> pl.DataFrame:
 
     # Apply basic field mappings and transformations
     persons_daysim = persons_daysim.with_columns(
-        # Fill null coordinates with -1
+        # Unmatched zones are -1
         pl.col(["pwtaz", "pwpcl", "pstaz", "pspcl"]).fill_null(-1),
         # Map age categories to midpoint ages
         pagey=pl.col("age").replace(AGE_MAP),
@@ -210,32 +197,18 @@ def format_persons(persons: pl.DataFrame, days: pl.DataFrame) -> pl.DataFrame:
         .otherwise(pl.lit(0))  # non-worker
     )
 
-    # Set work/school locations to None (coords) or -1 (taz) if person is not worker/student
+    # A non-worker has no workplace and a non-student no school: zones and coordinates -1.
+    is_worker = pl.col("pwtyp") != DaysimWorkerType.NON_WORKER.value
+    is_student = pl.col("pstyp") != DaysimStudentType.NOT_STUDENT.value
     persons_daysim = persons_daysim.with_columns(
-        pwtaz=pl.when(pl.col("pwtyp") != DaysimWorkerType.NON_WORKER.value)
-        .then(pl.col("pwtaz"))
-        .otherwise(pl.lit(-1)),
-        pwpcl=pl.when(pl.col("pwtyp") != DaysimWorkerType.NON_WORKER.value)
-        .then(pl.col("pwpcl"))
-        .otherwise(pl.lit(-1)),
-        pwxco=pl.when(pl.col("pwtyp") != DaysimWorkerType.NON_WORKER.value)
-        .then(pl.col("pwxco"))
-        .otherwise(pl.lit(-1)),
-        pwyco=pl.when(pl.col("pwtyp") != DaysimWorkerType.NON_WORKER.value)
-        .then(pl.col("pwyco"))
-        .otherwise(pl.lit(-1)),
-        pstaz=pl.when(pl.col("pstyp") != DaysimStudentType.NOT_STUDENT.value)
-        .then(pl.col("pstaz"))
-        .otherwise(pl.lit(-1)),
-        pspcl=pl.when(pl.col("pstyp") != DaysimStudentType.NOT_STUDENT.value)
-        .then(pl.col("pspcl"))
-        .otherwise(pl.lit(-1)),
-        psxco=pl.when(pl.col("pstyp") != DaysimStudentType.NOT_STUDENT.value)
-        .then(pl.col("psxco"))
-        .otherwise(pl.lit(-1)),
-        psyco=pl.when(pl.col("pstyp") != DaysimStudentType.NOT_STUDENT.value)
-        .then(pl.col("psyco"))
-        .otherwise(pl.lit(-1)),
+        *(
+            pl.when(is_worker).then(pl.col(c)).otherwise(pl.lit(-1)).alias(c)
+            for c in ("pwtaz", "pwpcl", "pwxco", "pwyco")
+        ),
+        *(
+            pl.when(is_student).then(pl.col(c)).otherwise(pl.lit(-1)).alias(c)
+            for c in ("pstaz", "pspcl", "psxco", "psyco")
+        ),
     )
 
     # If person weight is in data, use that, else default to 1.0
@@ -262,9 +235,7 @@ def format_persons(persons: pl.DataFrame, days: pl.DataFrame) -> pl.DataFrame:
         pdiary=pl.when(pl.col("num_days_complete") > 0).then(1).otherwise(0),
     )
 
-    # Join day completeness if available
-    if day_completeness is not None:
-        persons_daysim = persons_daysim.join(day_completeness, on=["hhno", "pno"], how="left")
+    persons_daysim = persons_daysim.join(day_completeness, on=["hhno", "pno"], how="left")
 
     # Select DaySim person fields
     person_cols = [
@@ -295,24 +266,17 @@ def format_persons(persons: pl.DataFrame, days: pl.DataFrame) -> pl.DataFrame:
         "psxco",
         "psyco",
         "psexpfac",
+        "mon_complete",
+        "tue_complete",
+        "wed_complete",
+        "thu_complete",
+        "fri_complete",
+        "sat_complete",
+        "sun_complete",
+        "num_days_complete_3dayweekday",
+        "num_days_complete_4dayweekday",
+        "num_days_complete_5dayweekday",
     ]
-
-    # Add day completeness columns if available
-    if day_completeness is not None:
-        person_cols.extend(
-            [
-                "mon_complete",
-                "tue_complete",
-                "wed_complete",
-                "thu_complete",
-                "fri_complete",
-                "sat_complete",
-                "sun_complete",
-                "num_days_complete_3dayweekday",
-                "num_days_complete_4dayweekday",
-                "num_days_complete_5dayweekday",
-            ]
-        )
 
     logger.info("Formatted %d persons", len(persons_daysim))
     return persons_daysim.select(person_cols).sort(by=["hhno", "pno"])

@@ -1,22 +1,8 @@
-"""Fingerprint the pipeline's output so a change in *results* cannot pass silently.
+"""Fingerprint the pipeline's output so a change in results cannot pass silently.
 
-The e2e suite asserts that the pipeline runs and that specific behaviours hold.
-Neither answers the question a reviewer actually has about a data change: did any
-number move, and if so which. Six PRs landed on a green suite while altering real
-output, and nothing said so -- the shift only surfaced when the pipeline was run
-by hand against production data weeks later.
-
-So each run is reduced to a fingerprint and compared against a committed
-baseline. A mismatch fails loudly and names the table and column. An intended
-change is then *promoted*: regenerate the baseline, and the diff of this file
-becomes the reviewable record of what the PR moved.
-
-**No record-level values are stored.** A column contributes a hash, and
-aggregates over it -- null count, distinct count, numeric range and sum, and for
-low-cardinality non-identifier columns a value-count histogram. The hash is what
-detects a change; the aggregates are what make the failure diagnosable without
-putting data in the repository. That rule holds even though this fixture is
-synthetic, because the same harness should be safe to point at real output.
+Each table is reduced to a hash per column plus aggregates (null and distinct counts,
+numeric range and sum, a histogram for low-cardinality non-identifier columns). No
+record-level values are stored, so the harness is safe to point at real output.
 """
 
 import hashlib
@@ -27,7 +13,7 @@ from typing import Any
 
 import polars as pl
 
-BASELINE_DIR = Path(__file__).parent / "baselines"
+BASELINE = Path(__file__).parent / "baselines" / "full.json"
 
 #: Env var that rewrites the baseline instead of asserting against it.
 UPDATE_ENV = "E2E_BASELINE_UPDATE"
@@ -38,14 +24,15 @@ UPDATE_ENV = "E2E_BASELINE_UPDATE"
 PRIMARY_KEYS = {
     "households": ("hh_id",),
     "persons": ("person_id",),
-    "days": ("day_id",),
+    "household_days": ("hh_day_id",),
+    "person_days": ("person_day_id",),
     "unlinked_trips": ("unlinked_trip_id",),
     "linked_trips": ("linked_trip_id",),
     "joint_trips": ("joint_trip_id",),
     "tours": ("tour_id",),
     "joint_tours": ("joint_tour_id",),
     "habitual_locations": ("habitual_location_id",),
-    "habitual_location_days": ("habitual_location_id", "day_id"),
+    "habitual_location_days": ("habitual_location_id", "person_day_id"),
     # Formatted output. These models declare no unique field, so the keys are the
     # ones the formats themselves use to identify a record -- CT-RAMP scopes ids
     # to the person-day, DaySim numbers everything from the household down.
@@ -117,22 +104,16 @@ def fingerprint(tables: dict[str, pl.DataFrame]) -> dict[str, Any]:
     return out
 
 
-def baseline_path(profile: str) -> Path:
-    return BASELINE_DIR / f"{profile}.json"
-
-
-def load(profile: str) -> dict[str, Any] | None:
-    path = baseline_path(profile)
-    if not path.exists():
+def load() -> dict[str, Any] | None:
+    if not BASELINE.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(BASELINE.read_text(encoding="utf-8"))
 
 
-def save(profile: str, data: dict[str, Any]) -> Path:
-    path = baseline_path(profile)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=1, sort_keys=True) + "\n", encoding="utf-8")
-    return path
+def save(data: dict[str, Any]) -> Path:
+    BASELINE.parent.mkdir(parents=True, exist_ok=True)
+    BASELINE.write_text(json.dumps(data, indent=1, sort_keys=True) + "\n", encoding="utf-8")
+    return BASELINE
 
 
 def update_requested() -> bool:
@@ -172,10 +153,10 @@ def diff(old: dict[str, Any], new: dict[str, Any]) -> list[str]:
     return lines
 
 
-def report(profile: str, lines: list[str]) -> str:
+def report(lines: list[str]) -> str:
     """The failure message: what moved, and how to accept it."""
     head = (
-        f"Pipeline output changed against tests/e2e/baselines/{profile}.json.\n"
+        "Pipeline output changed against tests/e2e/baselines/full.json.\n"
         f"{len(lines)} difference(s):\n\n"
     )
     body = "\n".join(f"  {line}" for line in lines)

@@ -1,10 +1,4 @@
-"""Scenario builders for creating common test patterns.
-
-This module provides pre-built test scenarios with households, persons,
-days, and trips. Uses data-driven patterns to reduce code duplication.
-"""
-
-from datetime import UTC, datetime, time
+"""Whole small surveys: households, persons, days and unlinked trips for a named travel pattern."""
 
 import polars as pl
 
@@ -18,7 +12,6 @@ from data_canon.codebook.persons import (
 )
 from data_canon.codebook.trips import Mode, ModeType, Purpose, PurposeCategory
 
-from .base_records import create_day, create_household, create_person
 from .locations import (
     BART_HOME_LOCATION,
     BART_WORK_LOCATION,
@@ -26,14 +19,19 @@ from .locations import (
     RESTAURANT_LOCATION,
     SCHOOL_COLLEGE_LOCATION,
     SCHOOL_HIGH_LOCATION,
-    SHOPPING_LOCATION,
     WORK_2_LOCATION,
     WORK_3_LOCATION,
     WORK_LOCATION,
+    Location,
 )
-from .trip_records import create_unlinked_trip
+from .records import (
+    create_day,
+    create_household,
+    create_person,
+    create_unlinked_trip,
+    on_diary_date,
+)
 
-# Default transit mode codes
 DEFAULT_TRANSIT_MODE_CODES = [
     ModeType.TRANSIT.value,
     ModeType.FERRY.value,
@@ -41,54 +39,39 @@ DEFAULT_TRANSIT_MODE_CODES = [
 ]
 
 
+def _at(prefix: str, location: Location, *, zones: bool = False) -> dict:
+    """*location*'s coordinates as ``<prefix>_lat``/``_lon`` fields, with its zones if asked."""
+    fields = {f"{prefix}_lat": location.lat, f"{prefix}_lon": location.lon}
+    if zones:
+        fields |= {f"{prefix}_taz": location.taz, f"{prefix}_maz": location.maz}
+    return fields
+
+
 def _create_trips_from_spec(
-    trip_specs: list[dict], person_id: int, hh_id: int, day_id: int = 1
+    trip_specs: list[dict], person_id: int, hh_id: int, person_day_id: int = 1
 ) -> list[dict]:
-    """Create trips from a specification array.
-
-    Args:
-        trip_specs: List of trip specification dicts with keys:
-            - unlinked_trip_id: Trip ID
-            - o_location: Origin Location object
-            - d_location: Destination Location object
-            - o_purpose_category, d_purpose_category: Purpose categories
-            - mode, mode_type: Mode enums
-            - depart_hour, depart_minute: Departure time
-            - arrive_hour, arrive_minute: Arrival time
-            - travel_time: Travel time in minutes
-            - purpose: Legacy purpose field (optional)
-        person_id: Person ID
-        hh_id: Household ID
-        day_id: Day ID (defaults to 1)
-
-    Returns:
-        List of trip dictionaries
-    """
+    """Create trips from a specification array."""
     trips = []
     for spec in trip_specs:
-        # Resolve coordinates from Location objects
         o_location = spec["o_location"]
         d_location = spec["d_location"]
 
-        # Create time objects
-        depart_time = datetime.combine(
-            datetime.now(tz=UTC).date(),
-            time(spec["depart_hour"], spec.get("depart_minute", 0)),
+        depart_time = on_diary_date(
+            spec["depart_hour"],
+            spec.get("depart_minute", 0),
         )
-        arrive_time = datetime.combine(
-            datetime.now(tz=UTC).date(),
-            time(spec["arrive_hour"], spec.get("arrive_minute", 0)),
+        arrive_time = on_diary_date(
+            spec["arrive_hour"],
+            spec.get("arrive_minute", 0),
         )
 
         trip = create_unlinked_trip(
             unlinked_trip_id=spec["unlinked_trip_id"],
             person_id=person_id,
             hh_id=hh_id,
-            day_id=day_id,
-            o_lat=o_location.lat,
-            o_lon=o_location.lon,
-            d_lat=d_location.lat,
-            d_lon=d_location.lon,
+            person_day_id=person_day_id,
+            **_at("o", o_location),
+            **_at("d", d_location),
             o_purpose_category=spec["o_purpose_category"],
             d_purpose_category=spec["d_purpose_category"],
             mode_1=spec["mode"],
@@ -111,50 +94,32 @@ def simple_work_tour(
 
     Uses predefined HOME_LOCATION and WORK_LOCATION from locations.py.
     TAZ/MAZ IDs are assigned via mock spatial join in test pipeline.
-
-    Args:
-        hh_id: Household ID
-        person_id: Person ID
-
-    Returns:
-        Tuple of (households, persons, days, unlinked_trips) DataFrames
     """
-    # Create household
     household = create_household(
         hh_id=hh_id,
-        home_taz=HOME_LOCATION.taz,
-        home_maz=HOME_LOCATION.maz,
-        home_lat=HOME_LOCATION.lat,
-        home_lon=HOME_LOCATION.lon,
+        **_at("home", HOME_LOCATION, zones=True),
         num_people=1,
         num_workers=1,
     )
 
-    # Create person
     person = create_person(
         person_id=person_id,
         hh_id=hh_id,
         person_num=1,
         age=AgeCategory.AGE_35_TO_44,
         employment=Employment.EMPLOYED_FULLTIME,
-        home_lat=HOME_LOCATION.lat,
-        home_lon=HOME_LOCATION.lon,
-        work_taz=WORK_LOCATION.taz,
-        work_maz=WORK_LOCATION.maz,
-        work_lat=WORK_LOCATION.lat,
-        work_lon=WORK_LOCATION.lon,
+        **_at("home", HOME_LOCATION),
+        **_at("work", WORK_LOCATION, zones=True),
     )
 
-    # Create day
     day = create_day(
-        day_id=1,
+        person_day_id=1,
         person_id=person_id,
         hh_id=hh_id,
         num_trips=2,
         is_complete=True,
     )
 
-    # Create trips using specification
     trip_specs = [
         {
             "unlinked_trip_id": 1,
@@ -184,14 +149,14 @@ def simple_work_tour(
         },
     ]
 
-    trips = _create_trips_from_spec(trip_specs, person_id, hh_id, day_id=1)
+    trips = _create_trips_from_spec(trip_specs, person_id, hh_id, person_day_id=1)
     unlinked_trips = pl.DataFrame(trips)
 
     households = pl.DataFrame([household])
     persons = pl.DataFrame([person])
-    days = pl.DataFrame([day])
+    person_days = pl.DataFrame([day])
 
-    return households, persons, days, unlinked_trips
+    return households, persons, person_days, unlinked_trips
 
 
 def transit_commute(
@@ -203,20 +168,10 @@ def transit_commute(
     Pattern: Home → (walk) → BART → (BART) → BART → (walk) → Work → (return)
     Uses predefined HOME_LOCATION, WORK_LOCATION, BART_HOME_LOCATION, and
     BART_WORK_LOCATION from locations.py.
-
-    Args:
-        hh_id: Household ID
-        person_id: Person ID
-
-    Returns:
-        Tuple of (households, persons, days, unlinked_trips) DataFrames
     """
     household = create_household(
         hh_id=hh_id,
-        home_taz=HOME_LOCATION.taz,
-        home_maz=HOME_LOCATION.maz,
-        home_lat=HOME_LOCATION.lat,
-        home_lon=HOME_LOCATION.lon,
+        **_at("home", HOME_LOCATION, zones=True),
         num_people=1,
         num_workers=1,
     )
@@ -227,16 +182,12 @@ def transit_commute(
         person_num=1,
         age=AgeCategory.AGE_35_TO_44,
         employment=Employment.EMPLOYED_FULLTIME,
-        home_lat=HOME_LOCATION.lat,
-        home_lon=HOME_LOCATION.lon,
-        work_taz=WORK_LOCATION.taz,
-        work_maz=WORK_LOCATION.maz,
-        work_lat=WORK_LOCATION.lat,
-        work_lon=WORK_LOCATION.lon,
+        **_at("home", HOME_LOCATION),
+        **_at("work", WORK_LOCATION, zones=True),
     )
 
     day = create_day(
-        day_id=1,
+        person_day_id=1,
         person_id=person_id,
         hh_id=hh_id,
         num_trips=6,
@@ -337,14 +288,14 @@ def transit_commute(
         },
     ]
 
-    trips = _create_trips_from_spec(trip_specs, person_id, hh_id, day_id=1)
+    trips = _create_trips_from_spec(trip_specs, person_id, hh_id, person_day_id=1)
     unlinked_trips = pl.DataFrame(trips)
 
     households = pl.DataFrame([household])
     persons = pl.DataFrame([person])
-    days = pl.DataFrame([day])
+    person_days = pl.DataFrame([day])
 
-    return households, persons, days, unlinked_trips
+    return households, persons, person_days, unlinked_trips
 
 
 def multi_stop_tour(
@@ -355,20 +306,10 @@ def multi_stop_tour(
 
     Pattern: Home → Work → Stop (lunch/errand) → Work → Home
     Uses predefined HOME_LOCATION, WORK_LOCATION, and RESTAURANT_LOCATION.
-
-    Args:
-        hh_id: Household ID
-        person_id: Person ID
-
-    Returns:
-        Tuple of (households, persons, days, unlinked_trips) DataFrames
     """
     household = create_household(
         hh_id=hh_id,
-        home_taz=HOME_LOCATION.taz,
-        home_maz=HOME_LOCATION.maz,
-        home_lat=HOME_LOCATION.lat,
-        home_lon=HOME_LOCATION.lon,
+        **_at("home", HOME_LOCATION, zones=True),
         num_people=1,
         num_workers=1,
     )
@@ -379,270 +320,67 @@ def multi_stop_tour(
         person_num=1,
         age=AgeCategory.AGE_35_TO_44,
         employment=Employment.EMPLOYED_FULLTIME,
-        home_lat=HOME_LOCATION.lat,
-        home_lon=HOME_LOCATION.lon,
-        work_taz=WORK_LOCATION.taz,
-        work_maz=WORK_LOCATION.maz,
-        work_lat=WORK_LOCATION.lat,
-        work_lon=WORK_LOCATION.lon,
+        **_at("home", HOME_LOCATION),
+        **_at("work", WORK_LOCATION, zones=True),
     )
 
-    day = create_day(day_id=1, person_id=person_id, hh_id=hh_id, num_trips=4)
+    day = create_day(person_day_id=1, person_id=person_id, hh_id=hh_id, num_trips=4)
 
-    # Home → Work → Stop → Work → Home
     trips = [
         create_unlinked_trip(
             unlinked_trip_id=1,
             person_id=person_id,
             hh_id=hh_id,
-            o_lat=HOME_LOCATION.lat,
-            o_lon=HOME_LOCATION.lon,
-            d_lat=WORK_LOCATION.lat,
-            d_lon=WORK_LOCATION.lon,
+            **_at("o", HOME_LOCATION),
+            **_at("d", WORK_LOCATION),
             purpose=Purpose.PRIMARY_WORKPLACE,
             o_purpose_category=PurposeCategory.HOME,
             d_purpose_category=PurposeCategory.WORK,
-            depart_time=datetime.combine(datetime.now(tz=UTC).date(), time(8, 0)),
+            depart_time=on_diary_date(8, 0),
         ),
         create_unlinked_trip(
             unlinked_trip_id=2,
             person_id=person_id,
             hh_id=hh_id,
-            o_lat=WORK_LOCATION.lat,
-            o_lon=WORK_LOCATION.lon,
-            d_lat=RESTAURANT_LOCATION.lat,
-            d_lon=RESTAURANT_LOCATION.lon,
+            **_at("o", WORK_LOCATION),
+            **_at("d", RESTAURANT_LOCATION),
             purpose=Purpose.DINING,
             o_purpose_category=PurposeCategory.WORK,
             d_purpose_category=PurposeCategory.MEAL,
             mode_type=ModeType.WALK,
-            depart_time=datetime.combine(datetime.now(tz=UTC).date(), time(12, 0)),
+            depart_time=on_diary_date(12, 0),
         ),
         create_unlinked_trip(
             unlinked_trip_id=3,
             person_id=person_id,
             hh_id=hh_id,
-            o_lat=RESTAURANT_LOCATION.lat,
-            o_lon=RESTAURANT_LOCATION.lon,
-            d_lat=WORK_LOCATION.lat,
-            d_lon=WORK_LOCATION.lon,
+            **_at("o", RESTAURANT_LOCATION),
+            **_at("d", WORK_LOCATION),
             purpose=Purpose.PRIMARY_WORKPLACE,
             o_purpose_category=PurposeCategory.MEAL,
             d_purpose_category=PurposeCategory.WORK,
             mode_type=ModeType.WALK,
-            depart_time=datetime.combine(datetime.now(tz=UTC).date(), time(13, 0)),
+            depart_time=on_diary_date(13, 0),
         ),
         create_unlinked_trip(
             unlinked_trip_id=4,
             person_id=person_id,
             hh_id=hh_id,
-            o_lat=WORK_LOCATION.lat,
-            o_lon=WORK_LOCATION.lon,
-            d_lat=HOME_LOCATION.lat,
-            d_lon=HOME_LOCATION.lon,
+            **_at("o", WORK_LOCATION),
+            **_at("d", HOME_LOCATION),
             purpose=Purpose.HOME,
             o_purpose_category=PurposeCategory.WORK,
             d_purpose_category=PurposeCategory.HOME,
-            depart_time=datetime.combine(datetime.now(tz=UTC).date(), time(17, 0)),
+            depart_time=on_diary_date(17, 0),
         ),
     ]
 
     households = pl.DataFrame([household])
     persons = pl.DataFrame([person])
-    days = pl.DataFrame([day])
+    person_days = pl.DataFrame([day])
     unlinked_trips = pl.DataFrame(trips)
 
-    return households, persons, days, unlinked_trips
-
-
-def multi_tour_day(
-    hh_id: int = 1,
-    person_id: int = 101,
-) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
-    """Create a person with multiple tours in one day.
-
-    Pattern: Home → Work → Home → Shopping → Home
-    Uses predefined HOME_LOCATION, WORK_LOCATION, and SHOPPING_LOCATION.
-
-    Args:
-        hh_id: Household ID
-        person_id: Person ID
-
-    Returns:
-        Tuple of (households, persons, days, unlinked_trips) DataFrames
-    """
-    household = create_household(
-        hh_id=hh_id,
-        home_taz=HOME_LOCATION.taz,
-        home_maz=HOME_LOCATION.maz,
-        home_lat=HOME_LOCATION.lat,
-        home_lon=HOME_LOCATION.lon,
-        num_people=1,
-        num_workers=1,
-    )
-
-    person = create_person(
-        person_id=person_id,
-        hh_id=hh_id,
-        person_num=1,
-        age=AgeCategory.AGE_35_TO_44,
-        employment=Employment.EMPLOYED_FULLTIME,
-        work_taz=WORK_LOCATION.taz,
-        work_maz=WORK_LOCATION.maz,
-        work_lat=WORK_LOCATION.lat,
-        work_lon=WORK_LOCATION.lon,
-        home_lat=HOME_LOCATION.lat,
-        home_lon=HOME_LOCATION.lon,
-    )
-
-    day = create_day(day_id=1, person_id=person_id, hh_id=hh_id, num_trips=4)
-
-    # Home → Work → Home → Shop → Home
-    trips = [
-        create_unlinked_trip(
-            unlinked_trip_id=1,
-            person_id=person_id,
-            hh_id=hh_id,
-            o_lat=HOME_LOCATION.lat,
-            o_lon=HOME_LOCATION.lon,
-            d_lat=WORK_LOCATION.lat,
-            d_lon=WORK_LOCATION.lon,
-            purpose=Purpose.PRIMARY_WORKPLACE,
-            o_purpose_category=PurposeCategory.HOME,
-            d_purpose_category=PurposeCategory.WORK,
-            depart_time=datetime.combine(datetime.now(tz=UTC).date(), time(8, 0)),
-        ),
-        create_unlinked_trip(
-            unlinked_trip_id=2,
-            person_id=person_id,
-            hh_id=hh_id,
-            o_lat=WORK_LOCATION.lat,
-            o_lon=WORK_LOCATION.lon,
-            d_lat=HOME_LOCATION.lat,
-            d_lon=HOME_LOCATION.lon,
-            purpose=Purpose.HOME,
-            o_purpose_category=PurposeCategory.WORK,
-            d_purpose_category=PurposeCategory.HOME,
-            depart_time=datetime.combine(datetime.now(tz=UTC).date(), time(17, 0)),
-        ),
-        create_unlinked_trip(
-            unlinked_trip_id=3,
-            person_id=person_id,
-            hh_id=hh_id,
-            o_lat=HOME_LOCATION.lat,
-            o_lon=HOME_LOCATION.lon,
-            d_lat=SHOPPING_LOCATION.lat,
-            d_lon=SHOPPING_LOCATION.lon,
-            purpose=Purpose.GROCERY,
-            o_purpose_category=PurposeCategory.HOME,
-            d_purpose_category=PurposeCategory.SHOP,
-            depart_time=datetime.combine(datetime.now(tz=UTC).date(), time(19, 0)),
-        ),
-        create_unlinked_trip(
-            unlinked_trip_id=4,
-            person_id=person_id,
-            hh_id=hh_id,
-            o_lat=SHOPPING_LOCATION.lat,
-            o_lon=SHOPPING_LOCATION.lon,
-            d_lat=HOME_LOCATION.lat,
-            d_lon=HOME_LOCATION.lon,
-            purpose=Purpose.HOME,
-            o_purpose_category=PurposeCategory.SHOP,
-            d_purpose_category=PurposeCategory.HOME,
-            depart_time=datetime.combine(datetime.now(tz=UTC).date(), time(20, 0)),
-        ),
-    ]
-
-    households = pl.DataFrame([household])
-    persons = pl.DataFrame([person])
-    days = pl.DataFrame([day])
-    unlinked_trips = pl.DataFrame(trips)
-
-    return households, persons, days, unlinked_trips
-
-
-def work_tour_no_usual_location(
-    hh_id: int = 1,
-    person_id: int = 101,
-) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame, pl.DataFrame]:
-    """Create a work tour for person without usual work location defined.
-
-    Tests edge case where worker has no work_lat/work_lon set in person record.
-    The tour still goes to a work destination, but person doesn't have a
-    defined usual workplace.
-
-    Pattern: Home → Work → Home
-    Uses HOME_LOCATION and WORK_LOCATION.
-
-    Args:
-        hh_id: Household ID
-        person_id: Person ID
-
-    Returns:
-        Tuple of (households, persons, days, unlinked_trips) DataFrames
-    """
-    household = create_household(
-        hh_id=hh_id,
-        home_taz=HOME_LOCATION.taz,
-        home_maz=HOME_LOCATION.maz,
-        home_lat=HOME_LOCATION.lat,
-        home_lon=HOME_LOCATION.lon,
-        num_people=1,
-        num_workers=1,
-    )
-
-    # Worker WITHOUT work location defined (work_lat/lon = None)
-    person = create_person(
-        person_id=person_id,
-        hh_id=hh_id,
-        person_num=1,
-        age=AgeCategory.AGE_35_TO_44,
-        employment=Employment.EMPLOYED_FULLTIME,
-        home_lat=HOME_LOCATION.lat,
-        home_lon=HOME_LOCATION.lon,
-        work_lat=None,  # No usual work location
-        work_lon=None,
-        work_taz=None,
-    )
-
-    day = create_day(day_id=1, person_id=person_id, hh_id=hh_id, num_trips=2)
-
-    # Home → Work → Home (work destination is ad-hoc, not usual location)
-    trips = [
-        create_unlinked_trip(
-            unlinked_trip_id=1,
-            person_id=person_id,
-            hh_id=hh_id,
-            o_lat=HOME_LOCATION.lat,
-            o_lon=HOME_LOCATION.lon,
-            d_lat=WORK_LOCATION.lat,
-            d_lon=WORK_LOCATION.lon,
-            purpose=Purpose.PRIMARY_WORKPLACE,
-            o_purpose_category=PurposeCategory.HOME,
-            d_purpose_category=PurposeCategory.WORK,
-            depart_time=datetime.combine(datetime.now(tz=UTC).date(), time(8, 0)),
-        ),
-        create_unlinked_trip(
-            unlinked_trip_id=2,
-            person_id=person_id,
-            hh_id=hh_id,
-            o_lat=WORK_LOCATION.lat,
-            o_lon=WORK_LOCATION.lon,
-            d_lat=HOME_LOCATION.lat,
-            d_lon=HOME_LOCATION.lon,
-            purpose=Purpose.HOME,
-            o_purpose_category=PurposeCategory.WORK,
-            d_purpose_category=PurposeCategory.HOME,
-            depart_time=datetime.combine(datetime.now(tz=UTC).date(), time(17, 0)),
-        ),
-    ]
-
-    households = pl.DataFrame([household])
-    persons = pl.DataFrame([person])
-    days = pl.DataFrame([day])
-    unlinked_trips = pl.DataFrame(trips)
-
-    return households, persons, days, unlinked_trips
+    return households, persons, person_days, unlinked_trips
 
 
 def multi_person_household(
@@ -656,24 +394,12 @@ def multi_person_household(
     Uses data-driven approach to create persons based on type specifications.
     Uses HOME_LOCATION, WORK_LOCATION, WORK_2_LOCATION, SCHOOL_LOCATION, and
     SCHOOL_HIGH_LOCATION from locations.py.
-
-    Args:
-        hh_id: Household ID
-        num_workers: Number of workers (full-time)
-        num_students: Number of students (university)
-        num_children: Number of children (age 5-15)
-
-    Returns:
-        Tuple of (households, persons) DataFrames (no trips/days)
     """
     total_people = num_workers + num_students + num_children
 
     household = create_household(
         hh_id=hh_id,
-        home_taz=HOME_LOCATION.taz,
-        home_maz=HOME_LOCATION.maz,
-        home_lat=HOME_LOCATION.lat,
-        home_lon=HOME_LOCATION.lon,
+        **_at("home", HOME_LOCATION, zones=True),
         num_people=total_people,
         num_workers=num_workers,
         num_vehicles=num_workers,
@@ -737,13 +463,11 @@ def multi_person_household(
         )
         person_num += 1
 
-    # Create persons from specifications
     persons = []
     for spec in person_specs:
         person = create_person(
             hh_id=hh_id,
-            home_lat=HOME_LOCATION.lat,
-            home_lon=HOME_LOCATION.lon,
+            **_at("home", HOME_LOCATION),
             **spec,
         )
         persons.append(person)
@@ -763,10 +487,7 @@ def create_single_adult_household():
     """Create a single full-time worker household for tests."""
     household = create_household(
         hh_id=1,
-        home_taz=HOME_LOCATION.taz,
-        home_maz=HOME_LOCATION.maz,
-        home_lat=HOME_LOCATION.lat,
-        home_lon=HOME_LOCATION.lon,
+        **_at("home", HOME_LOCATION, zones=True),
         num_people=1,
         num_vehicles=1,
         num_workers=1,
@@ -790,10 +511,7 @@ def create_family_household():
     """Create household with working adults and school-age children."""
     household = create_household(
         hh_id=2,
-        home_taz=HOME_LOCATION.taz,
-        home_maz=HOME_LOCATION.maz,
-        home_lat=HOME_LOCATION.lat,
-        home_lon=HOME_LOCATION.lon,
+        **_at("home", HOME_LOCATION, zones=True),
         num_people=4,
         num_vehicles=2,
         num_workers=2,
@@ -852,10 +570,7 @@ def create_retired_household():
     """Create a household with retired persons for tests."""
     household = create_household(
         hh_id=3,
-        home_taz=HOME_LOCATION.taz,
-        home_maz=HOME_LOCATION.maz,
-        home_lat=HOME_LOCATION.lat,
-        home_lon=HOME_LOCATION.lon,
+        **_at("home", HOME_LOCATION, zones=True),
         num_people=2,
         num_vehicles=1,
         num_workers=0,
@@ -890,10 +605,7 @@ def create_university_student_household():
     """Create a household with university students for tests."""
     household = create_household(
         hh_id=4,
-        home_taz=HOME_LOCATION.taz,
-        home_maz=HOME_LOCATION.maz,
-        home_lat=HOME_LOCATION.lat,
-        home_lon=HOME_LOCATION.lon,
+        **_at("home", HOME_LOCATION, zones=True),
         num_people=1,
         num_vehicles=1,
         num_workers=0,

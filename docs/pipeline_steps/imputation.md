@@ -1,10 +1,57 @@
+# Imputation
+
 ::: processing.imputation
     options:
-      show_root_heading: true
+      show_root_heading: false
       show_root_toc_entry: false
-      show_if_no_docstring: false
-      filters:
-        - "!^_"
+      members: false
+
+## The step
+
+::: processing.imputation.impute.imputation
+    options:
+      show_root_heading: false
+      show_root_toc_entry: false
+      show_signature: false
+      show_docstring_parameters: false
+      show_docstring_returns: false
+      show_docstring_raises: false
+
+## Example
+
+Each table lists its own rules; a rule names a column, a method (`knn`, `rf` or
+`mice`), the values to treat as missing, and the features to predict it from.
+
+```yaml title="Example"
+- name: imputation
+  params:
+    impute_columns:
+      households:
+        - column: income_bin
+          method: rf
+          missing_values: [MISSING, PNTA]
+          categorical_features: [residence_type, residence_rent_own]
+          aggregate_from:
+            persons:
+              pivot_count: [employment, education, student]
+      persons:
+        - column: gender
+          method: rf
+          missing_values: [MISSING, PNTA]
+          join_tables: [households]
+          numeric_features: [num_trips]
+          categorical_features: [age, employment, education, income_bin]
+    stash_preimputed: true
+    random_state: 42
+    validate_imputation:
+      enabled: true
+      n_folds: 5
+      sample_pct: 5.0
+```
+
+## Settings
+
+<!-- step-settings: imputation -->
 
 ## Feature Importance
 
@@ -32,14 +79,14 @@ feature (e.g. `gender=1` + `gender=2` → `gender`).
 The returned `feature_importance` dict maps feature names to their normalised
 importance score.  Example:
 
-| Feature            | Importance |
-|--------------------|-----------|
-| employment         | 0.312     |
-| education          | 0.241     |
-| age                | 0.189     |
-| occupation         | 0.127     |
-| hh_mode_income_bin | 0.065     |
-| …                  | …         |
+| Feature         | Importance |
+|-----------------|-----------|
+| employment      | 0.312     |
+| education       | 0.241     |
+| age             | 0.189     |
+| occupation      | 0.127     |
+| n_hh_income_bin | 0.065     |
+| …               | …         |
 
 An importance of 0.31 means ~31% of the model's total impurity reduction came
 from splits on that feature.  Higher values indicate features the model relies
@@ -83,70 +130,4 @@ model to test against.  For imputation, importance is the better lens — you
 want to know "does including this feature actually improve the imputed
 values?"
 
-::: processing.imputation.impute
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - imputation
-      filters:
-        - "!^logger$"
-        - "!^_"
-
-::: processing.imputation.knn
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - impute_knn
-      filters:
-        - "!^_"
-
-::: processing.imputation.random_forest
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - impute_random_forest
-      filters:
-        - "!^_"
-
-::: processing.imputation.mice
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - impute_mice
-      filters:
-        - "!^_"
-
-::: processing.imputation.comparison
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - compare_imputation_methods
-      filters:
-        - "!^_"
-
-::: processing.imputation.flags
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - stash_preimputed_columns
-        - stash_preimputed_column
-      filters:
-        - "!^_"
-
-::: processing.imputation.validation
-    options:
-      show_root_heading: true
-      show_root_toc_entry: false
-      members:
-        - validate_knn_imputation
-        - validate_mice_imputation
-        - validate_rf_imputation
-        - log_validation_results
-      filters:
-        - "!^_"
+Code: [processing.imputation](../reference/processing/imputation.md)

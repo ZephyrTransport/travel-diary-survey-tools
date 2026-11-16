@@ -4,13 +4,12 @@ import logging
 
 import polars as pl
 
-from data_canon.codebook.trips import AccessEgressMode, Driver, ModeType, PurposeCategory
-from pipeline.decoration import step
+from data_canon.codebook.trips import AccessEgressMode, Driver, ModeType
+from pipeline.decoration import Tables, step
 from utils.create_ids import create_linked_trip_id
 from utils.enum_helpers import resolve_enum_labels
 from utils.helpers import expr_haversine
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 MODE_TYPE_TO_ACCESS_EGRESS = {
@@ -42,7 +41,7 @@ as access or egress modes for transit journeys.
 @step(
     requires={
         "unlinked_trips": {
-            "day_id",
+            "person_day_id",
             "o_lon",
             "o_lat",
             "d_lon",
@@ -56,11 +55,11 @@ as access or egress modes for transit journeys.
     },
     produces={
         "unlinked_trips": {"linked_trip_id"},
-        "linked_trips": {"linked_trip_id", "day_id", "person_id", "hh_id", "driver"},
+        "linked_trips": {"linked_trip_id", "person_day_id", "person_id", "hh_id", "driver"},
     },
 )
 def link_trips(
-    unlinked_trips: pl.DataFrame,
+    tables: Tables,
     change_mode_enum: str,
     transit_mode_enums: list[str],
     max_dwell_time: float = 120,
@@ -74,8 +73,7 @@ def link_trips(
     temporal continuity across consecutive trips.
 
     Args:
-        unlinked_trips: Individual trip records with person_id, day_id,
-            depart_time, arrive_time, o/d locations, o/d purposes, mode_type.
+        tables: ``unlinked_trips``, the individual trip records.
         change_mode_enum: Enum label indicating a mode change purpose.
         transit_mode_enums: List of enum labels that count as transit modes.
         max_dwell_time: Maximum time gap between trips to link them, in
@@ -106,9 +104,10 @@ def link_trips(
                 - Time gap between trips ≤ max_dwell_time minutes
                 - Distance between previous destination and current origin
                   ≤ dwell_buffer_distance meters
+                - With split_on_occupancy, the reported party size is unchanged
             - Otherwise, start a new linked trip
-        3. Assign globally unique linked_trip_id =
-           (day_id * 1000) + sequence_number
+        3. Assign globally unique linked_trip_id: the person_day_id followed by a
+           two-digit sequence number
 
         # Phase 2: Aggregate Linked Trips
 
@@ -120,11 +119,11 @@ def link_trips(
             - Duration: Sum of all trip durations (including dwell time)
             - Purposes: First origin purpose, last destination purpose
             - Mode Logic:
-                - If any trip uses transit → mode_type = TRANSIT
-                - Otherwise, use mode of longest distance trip
+                - If any segment uses a transit mode → the mode of the
+                  longest-duration transit segment
+                - Otherwise, the mode of the longest-duration segment
             - Transit Details: Count boarding/alighting, aggregate access/egress modes
             - Driver/Passenger: Aggregate from component trips
-        3. Create trip_list array containing all component trip IDs
 
     Notes:
         - Links trips when travelers make intermediate stops for mode changes or transfers
@@ -134,6 +133,7 @@ def link_trips(
         - Spatial/temporal thresholds prevent false linkages across separate journeys
     """
     logger.info("Linking trips...")
+    unlinked_trips = tables["unlinked_trips"]
 
     # Link trip IDs
     unlinked_trips_with_ids = link_trip_ids(
@@ -173,7 +173,7 @@ def link_trip_ids(
      - If previous trip's destination purpose is 'change_mode',
        continue the linked trip; else start a new linked trip.
      - Assign linked trip IDs accordingly.
-     Linked trip IDs are made globally unique by combining day_id and
+     Linked trip IDs are made globally unique by combining person_day_id and
      local linked trip index.
 
     Args:
@@ -206,7 +206,9 @@ def link_trip_ids(
         unlinked_trips = unlinked_trips.drop("linked_trip_id")
 
     # Step 1: Sort trips by person, day, and departure time
-    unlinked_trips = unlinked_trips.sort(["person_id", "day_id", "depart_time", "arrive_time"])
+    unlinked_trips = unlinked_trips.sort(
+        ["person_id", "person_day_id", "depart_time", "arrive_time"]
+    )
 
     if split_on_occupancy and "num_travelers" not in unlinked_trips.columns:
         msg = (
@@ -317,6 +319,76 @@ def _warn_on_occupancy_change(unlinked_trips: pl.DataFrame) -> None:
     )
 
 
+def _mode_selection(unlinked_trips: pl.DataFrame, transit_mode_codes: list) -> pl.DataFrame:
+    """Each linked trip's mode: its longest transit segment's, else its longest segment's."""
+    return (
+        unlinked_trips.with_columns(
+            (pl.col("arrive_time") - pl.col("depart_time")).alias("trip_duration")
+        )
+        # Longest segment first within each linked trip
+        .sort(["linked_trip_id", "trip_duration"], descending=[False, True])
+        .group_by("linked_trip_id")
+        .agg(
+            pl.col("mode_type")
+            .filter(pl.col("mode_type").is_in(transit_mode_codes))
+            .first()
+            .alias("mode_transit"),
+            pl.col("mode_type")
+            .filter(~pl.col("mode_type").is_in(transit_mode_codes))
+            .first()
+            .alias("mode_non_transit"),
+        )
+        .select(
+            "linked_trip_id", pl.coalesce("mode_transit", "mode_non_transit").alias("mode_type")
+        )
+    )
+
+
+def _access_egress(unlinked_trips: pl.DataFrame, transit_mode_codes: list) -> pl.DataFrame:
+    """Each transit trip's first and last non-transit segment modes, as ModeType codes.
+
+    Null for a linked trip with no transit segment. They are mapped to
+    AccessEgressMode after the join in :func:`aggregate_linked_trips`.
+    """
+    is_transit = pl.col("mode_type").is_in(transit_mode_codes)
+    return (
+        unlinked_trips.sort(["linked_trip_id", "depart_time", "arrive_time"])
+        .group_by("linked_trip_id")
+        .agg(
+            pl.when(is_transit.any())
+            .then(pl.col("mode_type").filter(~is_transit).first())
+            .alias("access_mode"),
+            pl.when(is_transit.any())
+            .then(pl.col("mode_type").filter(~is_transit).last())
+            .alias("egress_mode"),
+        )
+    )
+
+
+def _add_d_activity_duration(linked_trips: pl.DataFrame) -> pl.DataFrame:
+    """Add whole minutes spent at each destination before the person's next departure.
+
+    Ordered within each person-day; null for the day's last trip, which has no
+    next departure.
+    """
+    return (
+        linked_trips.sort(["person_id", "person_day_id", "depart_time", "arrive_time"])
+        .with_columns(
+            pl.col("depart_time")
+            .shift(-1)
+            .over(["person_id", "person_day_id"])
+            .alias("_next_depart_time")
+        )
+        .with_columns(
+            (pl.col("_next_depart_time") - pl.col("arrive_time"))
+            .dt.total_minutes()
+            .cast(pl.Int64)
+            .alias("d_activity_duration")
+        )
+        .drop("_next_depart_time")
+    )
+
+
 def aggregate_linked_trips(
     unlinked_trips: pl.DataFrame,
     transit_mode_enums: list[str],
@@ -332,6 +404,14 @@ def aggregate_linked_trips(
         transit is involved in any trip segment, use transit mode.
     Else:
         Use mode of longest duration trip segment.
+
+    ``dwell_duration_minutes`` is the time between segments (e.g. a transfer),
+    summed over each gap from one segment's arrival to the next one's departure.
+    It is measured from the timestamps alone, so it cannot go negative and a
+    single-segment trip is exactly zero. The earlier "elapsed minus summed
+    segment durations" form differenced two independently rounded quantities
+    (reported durations are whole minutes, elapsed is truncated) and so reported
+    -1 minutes of dwell on trips that had none.
 
     Args:
         unlinked_trips: DataFrame with linked_trip_id column
@@ -350,113 +430,29 @@ def aggregate_linked_trips(
         enum_labels=transit_mode_enums,  # pyright: ignore[reportArgumentType]
     )
 
-    # First, find the mode type from the longest duration trip segment
-    mode_selection = (
-        unlinked_trips
-        # Calculate trip durations
-        .with_columns(
-            [
-                (pl.col("arrive_time") - pl.col("depart_time")).alias("trip_duration"),
-            ]
-        )
-        # sort so longest trip per linked_trip_id is first
-        .sort(["linked_trip_id", "trip_duration"], descending=[False, True])
-        .group_by("linked_trip_id")
-        .agg(
-            [
-                # Transit mode if present
-                pl.col("mode_type")
-                .filter(pl.col("mode_type").is_in(transit_mode_codes))
-                .first()
-                .alias("mode_transit"),
-                # Longest non-transit mode (trips already sorted by duration)
-                pl.col("mode_type")
-                .filter(~pl.col("mode_type").is_in(transit_mode_codes))
-                .first()
-                .alias("mode_non_transit"),
-            ]
-        )
-        .with_columns(
-            [
-                pl.when(pl.col("mode_transit").is_not_null())
-                .then(pl.col("mode_transit"))
-                .otherwise(pl.col("mode_non_transit"))
-                .alias("mode_type"),
-            ]
-        )
-        .select(["linked_trip_id", "mode_type"])
-    )
-
-    # Get access and egress modes for transit trips
-    # Access mode = mode_type of first segment before transit
-    # Egress mode = mode_type of last segment after transit
-    # These will be cast to AccessEgressMode enum values during join
-    access_egress = (
-        unlinked_trips.sort(["linked_trip_id", "depart_time", "arrive_time"])
-        .with_columns(
-            [
-                pl.col("mode_type").is_in(transit_mode_codes).alias("is_transit"),
-            ]
-        )
-        .group_by("linked_trip_id")
-        .agg(
-            [
-                # Access mode: first non-transit mode_type before any transit
-                pl.when(pl.col("is_transit").any())
-                .then(pl.col("mode_type").filter(~pl.col("is_transit")).first())
-                .otherwise(pl.lit(None))
-                .alias("access_mode"),
-                # Egress mode: last non-transit mode_type after transit
-                pl.when(pl.col("is_transit").any())
-                .then(pl.col("mode_type").filter(~pl.col("is_transit")).last())
-                .otherwise(pl.lit(None))
-                .alias("egress_mode"),
-            ]
-        )
-    )
-
-    # Build aggregation list
     agg_exprs = [
-        # Linked trip number (from first trip segment)
+        # First segment's number, day of week, departure and origin
         pl.first("linked_trip_num"),
         # Travel dow is from first trip. Caution for overnight trips
         pl.first("travel_dow"),
-        # Departure information (from first trip segment)
-        # pl.first("depart_date"),
-        # pl.first("depart_hour"),
-        # pl.first("depart_minute"),
-        # pl.first("depart_seconds"),
         pl.first("depart_time"),
         pl.first("o_purpose"),
         pl.first("o_purpose_category"),
         pl.first("o_lat"),
         pl.first("o_lon"),
-        # Arrival information (from last trip segment)
-        # pl.last("arrive_date"),
-        # pl.last("arrive_hour"),
-        # pl.last("arrive_minute"),
-        # pl.last("arrive_seconds"),
+        # Last segment's arrival and destination
         pl.last("arrive_time"),
         pl.last("d_purpose"),
         pl.last("d_purpose_category"),
         pl.last("d_lat"),
         pl.last("d_lon"),
-        # Trip distance (sum of segment distances)
         pl.col("distance_meters").sum(),
-        # Travel duration (sum of segment durations)
         pl.col("duration_minutes").sum().alias("travel_duration_minutes"),
         # Total trip duration
         (pl.col("arrive_time").max() - pl.col("depart_time").min())
         .dt.total_minutes()
         .alias("duration_minutes"),
-        # Dwell duration: time waiting between the merged segments (e.g. a
-        # transfer), summed over each gap from one segment's arrival to the
-        # next segment's departure. Measured from the timestamps alone so it
-        # cannot go negative and a single-segment trip is exactly zero. The
-        # earlier "elapsed minus summed segment durations" form differenced two
-        # independently rounded quantities -- vendor durations are whole
-        # minutes, elapsed is truncated -- and so reported -1 minutes of dwell
-        # on trips that had no dwell at all.
+        # Dwell between segments, from timestamps alone (see docstring)
         (pl.col("depart_time").shift(-1) - pl.col("arrive_time"))
         .dt.total_seconds()
         .sum()
@@ -464,11 +460,9 @@ def aggregate_linked_trips(
         .round()
         .cast(pl.Int64)
         .alias("dwell_duration_minutes"),
-        # Number of segments in linked trip
         pl.len().alias("num_segments"),
     ]
 
-    # Conditionally add linked_trip_weight if column exists
     if "unlinked_trip_weight" in unlinked_trips.columns:
         agg_exprs.append(pl.col("unlinked_trip_weight").mean().alias("linked_trip_weight"))
 
@@ -476,77 +470,36 @@ def aggregate_linked_trips(
     if "survey_complete" in unlinked_trips.columns:
         agg_exprs.append(pl.all("survey_complete").alias("survey_complete"))
 
-    # Add remaining aggregations
     agg_exprs.extend(
         [
-            # num_travelers (max of segment num_travelers)
             pl.col("num_travelers").max().alias("num_travelers"),
-            # Determine driver status across segments
+            # One driver value across segments; all MISSING stays MISSING; mixed is BOTH
             pl.when(pl.col("driver").n_unique() == 1)
             .then(pl.col("driver").first())
-            # If missing entirely
             .when(pl.col("driver").filter(pl.col("driver") != Driver.MISSING.value).n_unique() == 0)
-            .then(pl.lit(Driver.MISSING.value))  # All missing
-            # If mixed driver/passenger, set to BOTH
+            .then(pl.lit(Driver.MISSING.value))
             .otherwise(pl.lit(Driver.BOTH.value))
             .alias("driver"),
         ]
     )
 
-    # Now aggregate with proper time ordering
     linked_trips = (
-        unlinked_trips
-        # Sort by departure time
-        .sort(["linked_trip_id", "depart_time", "arrive_time"])
-        .group_by(
-            ["linked_trip_id", "person_id", "hh_id"],
-        )
+        unlinked_trips.sort(["linked_trip_id", "depart_time", "arrive_time"])
+        .group_by(["linked_trip_id", "person_id", "hh_id"])
         .agg(agg_exprs)
-        # Join with mode selection based on longest duration
-        .join(mode_selection, on="linked_trip_id", how="left")
-        # Join with access/egress modes
-        .join(access_egress, on="linked_trip_id", how="left")
+        .join(_mode_selection(unlinked_trips, transit_mode_codes), on="linked_trip_id", how="left")
+        .join(_access_egress(unlinked_trips, transit_mode_codes), on="linked_trip_id", how="left")
         # Map mode_type values to AccessEgressMode enum values
         .with_columns(
-            [
-                pl.when(pl.col("access_mode").is_not_null())
-                .then(pl.col("access_mode").replace_strict(MODE_TYPE_TO_ACCESS_EGRESS))
-                .otherwise(pl.lit(None))
-                .alias("access_mode"),
-                pl.when(pl.col("egress_mode").is_not_null())
-                .then(pl.col("egress_mode").replace_strict(MODE_TYPE_TO_ACCESS_EGRESS))
-                .otherwise(pl.lit(None))
-                .alias("egress_mode"),
-            ]
+            pl.when(pl.col(c).is_not_null())
+            .then(pl.col(c).replace_strict(MODE_TYPE_TO_ACCESS_EGRESS))
+            .alias(c)
+            for c in ("access_mode", "egress_mode")
+        )
+        .join(
+            unlinked_trips.select(["linked_trip_id", "person_day_id"]).unique(),
+            on="linked_trip_id",
+            how="left",
         )
     )
-
-    # Join day_id back for reference
-    linked_trips = linked_trips.join(
-        unlinked_trips.select(["linked_trip_id", "day_id"]).unique(),
-        on="linked_trip_id",
-        how="left",
-    )
-
-    # Compute d_activity_duration: whole minutes spent at the destination before the next
-    # departure (i.e. the activity duration at the trip destination). Ordered
-    # within each person-day. Sentinels: -1 when the destination is home; -2 for
-    # the last trip of a person-day (no subsequent departure).
-    linked_trips = (
-        linked_trips.sort(["person_id", "day_id", "depart_time", "arrive_time"])
-        .with_columns(
-            pl.col("depart_time").shift(-1).over(["person_id", "day_id"]).alias("_next_depart_time")
-        )
-        .with_columns(
-            pl.when(pl.col("d_purpose_category") == PurposeCategory.HOME.value)
-            .then(pl.lit(-1))
-            .when(pl.col("_next_depart_time").is_null())
-            .then(pl.lit(-2))
-            .otherwise((pl.col("_next_depart_time") - pl.col("arrive_time")).dt.total_minutes())
-            .cast(pl.Int64)
-            .alias("d_activity_duration")
-        )
-        .drop("_next_depart_time")
-    )
-
-    return linked_trips
+    return _add_d_activity_duration(linked_trips)

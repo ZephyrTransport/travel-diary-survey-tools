@@ -26,16 +26,9 @@ import data_canon.codebook.vehicles as vehicles_module
 
 # Import processing package to trigger step registration via @step() decorators
 import processing  # noqa: F401
+from data_canon.core.dataclass import CanonicalData
 from data_canon.core.labeled_enum import LabeledEnum
-from data_canon.models.survey import (
-    HouseholdModel,
-    LinkedTripModel,
-    PersonDayModel,
-    PersonModel,
-    TourModel,
-    UnlinkedTripModel,
-)
-from pipeline.step_registry import get_step_validation_summary
+from pipeline.step_registry import STEP_REGISTRY, is_config_named
 
 
 def get_field_type_description(field_info: FieldInfo) -> str:
@@ -107,52 +100,73 @@ def get_field_constraints(field_info: FieldInfo) -> str:
     return ", ".join(constraints) if constraints else ""
 
 
-def get_field_creation_info(model: type[BaseModel]) -> dict[str, str]:
-    """Get information about which step creates each field.
+# Reference config: its step order sets the matrix columns.
+REFERENCE_CONFIG = Path(__file__).parent.parent / "projects" / "bats_2023" / "config.yaml"
 
-    Args:
-        model: Pydantic model class
 
-    Returns:
-        Dictionary mapping field names to the step that creates them
+def ordered_steps(config_path: Path) -> list[str]:
+    """Every step with a contract: the reference config's order, then the rest by name.
+
+    A step the reference config does not run still has a contract worth showing,
+    so it is listed after the ones it does run rather than left out.
     """
-    creation_info = {}
-    for field_name, field_info in model.model_fields.items():
-        extra = field_info.json_schema_extra or {}
-        created_in_step = extra.get("created_in_step")
-        if created_in_step:
-            creation_info[field_name] = created_in_step
-    return creation_info
-
-
-def check_steps_and_order(steps: set[str], config_path: Path) -> list[str]:
-    """Check steps against config and return ordered list."""
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    in_config = list(dict.fromkeys(s["name"] for s in config.get("steps", [])))
+    declared = {name for name, contract in STEP_REGISTRY.items() if contract.tables}
+    return [s for s in in_config if s in declared] + sorted(declared - set(in_config))
 
-    # Extract step order from config if available
-    cfg_steps = [s["name"] for s in config.get("steps", [])]
 
-    # Ensure we don't have a step not in the preferred order
-    missing = steps - set(cfg_steps)
-    if missing:
-        msg = (
-            f"Required model step(s) {missing} missing from config steps. "
-            "Check the models and config file."
-        )
+def _mark(step: str, table: str, field_name: str, required: str) -> str:
+    """The cell for one step and field: *required* if read, ``+`` if produced."""
+    tc = STEP_REGISTRY[step].tables.get(table)
+    if tc is None:
+        return ""
+    return (required if field_name in tc.requires else "") + (
+        "+" if field_name in tc.produces else ""
+    )
+
+
+def table_rows(
+    table: str, model: type[BaseModel], steps: list[str], required: str
+) -> list[list[str]]:
+    """``[field, type, constraints, *marks]`` for each model field, then each pattern.
+
+    A pattern such as ``usable_<profile>`` is a column the config names, so no
+    model declares it; it gets its own row after the declared fields.
+
+    Raises:
+        ValueError: A contract names a column that is neither a model field nor
+            a pattern -- a typo, or a field the model is missing.
+    """
+    contracts = [STEP_REGISTRY[s].tables[table] for s in steps if table in STEP_REGISTRY[s].tables]
+    named = set().union(*(tc.requires | tc.produces for tc in contracts)) if contracts else set()
+    unknown = sorted(f for f in named if f not in model.model_fields and not is_config_named(f))
+    if unknown:
+        msg = f"Step contracts name {table} columns no model declares: {unknown}"
         raise ValueError(msg)
 
-    # Remove repeat config steps while preserving order
-    seen = set()
-    ordered_steps = []
-    for s in cfg_steps:
-        if s not in seen:
-            ordered_steps.append(s)
-        seen.add(s)
+    rows = [
+        [
+            name,
+            get_field_type_description(info),
+            get_field_constraints(info),
+            *(_mark(s, table, name, required) for s in steps),
+        ]
+        for name, info in model.model_fields.items()
+    ]
+    rows += [
+        [name, "named by config", "", *(_mark(s, table, name, required) for s in steps)]
+        for name in sorted(f for f in named if is_config_named(f))
+    ]
+    return rows
 
-    return ordered_steps
+
+def _steps_for(table: str, steps: list[str]) -> list[str]:
+    """The steps whose contract mentions *table*."""
+    return [s for s in steps if table in STEP_REGISTRY[s].tables]
 
 
-def generate_matrix_markdown(models: dict[str, type]) -> str:  # noqa: PLR0915
+def generate_matrix_markdown(models: dict[str, type[BaseModel]]) -> str:
     """Generate tabbed markdown showing column requirements per table.
 
     Each canonical table gets its own tab with a compact matrix that only
@@ -164,17 +178,7 @@ def generate_matrix_markdown(models: dict[str, type]) -> str:  # noqa: PLR0915
     Returns:
         Markdown formatted string with pymdownx content tabs
     """
-    # Get registry data: {step_name: {table_name: [fields]}}
-    registry_summary = get_step_validation_summary()
-    required_steps = set(registry_summary.keys())
-
-    creation_info = {}
-    for table_name, model in models.items():
-        creation_info[table_name] = get_field_creation_info(model)
-
-    # Read projects/config.yaml for preferred order if available
-    example_path = Path(__file__).parent.parent / "projects" / "bats_2023" / "config.yaml"
-    sorted_steps = check_steps_and_order(required_steps, example_path)
+    sorted_steps = ordered_steps(REFERENCE_CONFIG)
 
     lines: list[str] = []
     # YAML frontmatter for MkDocs page metadata
@@ -192,50 +196,30 @@ def generate_matrix_markdown(models: dict[str, type]) -> str:  # noqa: PLR0915
     lines.append("")
     lines.append(
         "Each tab shows the fields for one canonical table. "
-        "Only steps that reference the table are shown."
+        "Only steps that reference the table are shown. Rows such as "
+        "`usable_<profile>` are columns the config names, one per profile or zone."
     )
     lines.append("")
     lines.append("| Symbol | Meaning |")
     lines.append("| :----: | ------- |")
     lines.append("| ✓ | Required as input |")
     lines.append("| + | Created / produced |")
+    lines.append("| ✓+ | Required, then updated |")
     lines.append("")
 
     for table_name, model in models.items():
-        # Determine which steps are relevant to this table
-        table_steps = [s for s in sorted_steps if table_name in registry_summary.get(s, {})]
-
-        field_creation = creation_info[table_name]
-        all_fields = list(model.model_fields.keys())
+        table_steps = _steps_for(table_name, sorted_steps)
 
         # Tab header (pymdownx tabbed alternate style)
         lines.append(f'=== "{table_name}"')
         lines.append("")
 
         if table_steps:
-            # Build compact header
             header = ["Field", "Type", "Constraints", *table_steps]
             lines.append("    | " + " | ".join(header) + " |")
             lines.append("    | " + " | ".join(["---"] * len(header)) + " |")
-
-            for field_name in all_fields:
-                field_info = model.model_fields[field_name]
-                field_type = get_field_type_description(field_info)
-                constraints = get_field_constraints(field_info)
-                row = [f"`{field_name}`", field_type, constraints]
-
-                for step in table_steps:
-                    step_fields = registry_summary.get(step, {}).get(table_name, [])
-                    created_in = field_creation.get(field_name)
-
-                    if created_in == step:
-                        row.append("+")
-                    elif field_name in step_fields:
-                        row.append("✓")
-                    else:
-                        row.append("")
-
-                lines.append("    | " + " | ".join(row) + " |")
+            for name, *rest in table_rows(table_name, model, table_steps, "✓"):
+                lines.append("    | " + " | ".join([f"`{name}`", *rest]) + " |")
         else:
             lines.append("    No step-specific field requirements registered.")
 
@@ -244,7 +228,7 @@ def generate_matrix_markdown(models: dict[str, type]) -> str:  # noqa: PLR0915
     return "\n".join(lines)
 
 
-def generate_matrix_csv(models: dict[str, type]) -> str:
+def generate_matrix_csv(models: dict[str, type[BaseModel]]) -> str:
     """Generate CSV showing column requirements per step.
 
     Args:
@@ -253,51 +237,13 @@ def generate_matrix_csv(models: dict[str, type]) -> str:
     Returns:
         CSV formatted string
     """
-    # Get registry data: {step_name: {table_name: [fields]}}
-    registry_summary = get_step_validation_summary()
-    required_steps = set(registry_summary.keys())
+    sorted_steps = ordered_steps(REFERENCE_CONFIG)
 
-    creation_info = {}
+    lines = [",".join(["Table", "Field", "Type", "Constraints", *sorted_steps])]
     for table_name, model in models.items():
-        creation_info[table_name] = get_field_creation_info(model)
-
-    # Sort steps for consistent ordering
-    example_path = Path(__file__).parent.parent / "projects" / "bats_2023" / "config.yaml"
-    sorted_steps = check_steps_and_order(required_steps, example_path)
-
-    # Build CSV
-    lines = []
-    header = ["Table", "Field", "Type", "Constraints", *sorted_steps]
-    lines.append(",".join(header))
-
-    for table_name, model in models.items():
-        field_creation = creation_info[table_name]
-
-        # Get all fields from model
-        all_fields = list(model.model_fields.keys())
-
-        for field_name in all_fields:
-            field_info = model.model_fields[field_name]
-            field_type = get_field_type_description(field_info)
-            constraints = get_field_constraints(field_info)
-
-            row = [table_name, field_name, field_type, constraints]
-
-            # Check each step
-            for step in sorted_steps:
-                step_tables = registry_summary.get(step, {})
-                step_fields = step_tables.get(table_name, [])
-                created_in = field_creation.get(field_name)
-
-                if created_in == step:
-                    row.append("+")
-                elif field_name in step_fields:
-                    row.append("x")
-                else:
-                    row.append("")
-
-            lines.append(",".join(row))
-
+        lines.extend(
+            ",".join([table_name, *row]) for row in table_rows(table_name, model, sorted_steps, "x")
+        )
     return "\n".join(lines)
 
 
@@ -384,14 +330,7 @@ def generate_enum_codebook_markdown(enums: dict[str, type]) -> str:
 
 def main() -> None:
     """Generate and save column requirement matrices."""
-    models = {
-        "households": HouseholdModel,
-        "persons": PersonModel,
-        "days": PersonDayModel,
-        "unlinked_trips": UnlinkedTripModel,
-        "linked_trips": LinkedTripModel,
-        "tours": TourModel,
-    }
+    models = CanonicalData().models
 
     # Collect enum classes
     enums = collect_labeled_enums()

@@ -1,6 +1,6 @@
 """HTML table builders for the diagnostics report.
 
-This module generates the four main tables displayed in the diagnostics HTML report:
+This module generates six of the tables displayed in the diagnostics HTML report:
 
 1. **Balancer Performance Table** — Per-zone convergence status, target-fit metrics
    (MAPE, P90, Max), and weight quality metrics (CV, ESS%). Combines all key
@@ -10,17 +10,23 @@ This module generates the four main tables displayed in the diagnostics HTML rep
    std, min, max) and expansion factor stats (min/max/mean/median EF ratio).
 
 3. **Unweighted Cell Counts** — Data sparsity matrix showing unweighted sample counts
-   per control category per zone, with optional PUMS-weighted percentages for context.
+   per control category per zone, with optional PUMS-weighted percentages for context,
+   and each control's importance.
 
 4. **Crosswalk Summary Table** — Zone → HH samples mapping with optional zone group
    aggregation.
 
-All table builders return raw HTML strings suitable for Jinja2 template insertion.
-The `_html_table()` helper provides a consistent interface for simple tables and
-supports grouped/spanned headers for complex layouts.
-"""
+5. **Imputation Summary Table** — Per control, how many seed rows had an empty
+   incidence block, and the cross-validated log-loss and F1 of the PUMS-trained
+   model that filled them.
 
-import re
+6. **Survey Share Table** — Each group's share of its area's survey against its
+   share of the area's PUMS.
+
+All table builders return raw HTML strings suitable for Jinja2 template insertion,
+built with the helpers in ``table_html``. The per-profile tables are in
+``profile_tables``.
+"""
 
 import polars as pl
 
@@ -28,107 +34,22 @@ from processing.weighting.controls.base import ControlLevel
 from processing.weighting.controls.registry import resolve_targets
 from processing.weighting.core.specs import (
     ControlTotals,
-    GeographyCoverage,
     ImputationSummary,
     ZoneStatus,
 )
+from processing.weighting.data_prep.incidence import control_columns
+from processing.weighting.validation.survey_shares import table_cells
 
-from .comparison import Inheritance
-from .data import (
-    _REDISTRIBUTION_TAIL,
-    CascadeRow,
-    ProfileSummary,
-    RedistributionRow,
-    SplitIdentityRow,
-    category_label_map,
-)
+from .data import category_label_map
 from .glossary import term
-
-# ---------------------------------------------------------------------------
-# HTML primitives
-# ---------------------------------------------------------------------------
-
-
-def _tag(name: str, text: str, **attrs: str) -> str:
-    """Wrap *text* in an HTML element with optional attributes."""
-    attr_str = "".join(f' {k.rstrip("_")}="{v}"' for k, v in attrs.items()) if attrs else ""
-    return f"<{name}{attr_str}>{text}</{name}>"
-
-
-def _wbr(text: str) -> str:
-    """Insert ``<wbr>`` word-break opportunities after ``/``, ``-``, ``_``, and spaces."""
-    return re.sub(r"([/_\- ])", r"\1<wbr>", text)
-
-
-def _html_table(
-    headers: list[str],
-    rows: list[list[str]],
-    *,
-    group_row: list[tuple[str, int]] | None = None,
-    css_class: str = "",
-) -> str:
-    r"""Build a ``<table>`` from *headers* and pre-formatted cell strings.
-
-    Provides a consistent interface for generating HTML tables with single or
-    multi-tier headers. Cells starting with ``<td`` are inserted as-is to support
-    pre-styled cells (e.g., CSS classes for coloring convergence status).
-
-    Args:
-        headers: Column header labels for a single-row header, or sub-column labels
-            when `group_row` is used.
-        rows: Table body, one list per row. Each cell is a pre-formatted string.
-        group_row: Optional two-tier header specification. Each tuple is
-            ``(label, colspan)``. Columns with ``colspan == 1`` span both header rows
-            (``rowspan="2"``). Columns with ``colspan > 1`` become group headers
-            spanning multiple sub-columns (labels consumed from `headers` list).
-        css_class: Optional CSS class name applied to the ``<table>`` element.
-
-    Returns:
-        Complete HTML ``<table>`` string.
-
-    Example:
-        Simple table:
-        >>> _html_table(["Zone", "Count"], [["A", "100"], ["B", "200"]])
-        '<table>\n<tr><th>Zone</th><th>Count</th></tr>\n...'
-
-        Grouped header:
-        >>> _html_table(
-        ...     ["Target", "% Error"],  # sub-headers
-        ...     [["A", "1000", "+2.5%"]],
-        ...     group_row=[("Zone", 1), ("Household", 2)]  # Zone spans both rows
-        ... )
-    """
-    cls = f' class="{css_class}"' if css_class else ""
-
-    if group_row is not None:
-        top_cells: list[str] = []
-        sub_cells: list[str] = []
-        for label, span in group_row:
-            if span == 1:
-                top_cells.append(f'<th rowspan="2">{label}</th>')
-            else:
-                top_cells.append(f'<th colspan="{span}">{label}</th>')
-                sub_cells.extend(_tag("th", headers.pop(0)) for _ in range(span))
-        head = "<tr>" + "".join(top_cells) + "</tr>\n<tr>" + "".join(sub_cells) + "</tr>"
-    else:
-        head = "<tr>" + "".join(_tag("th", h) for h in headers) + "</tr>"
-
-    body = "\n".join(
-        "<tr>" + "".join(c if c.startswith("<td") else _tag("td", c) for c in cells) + "</tr>"
-        for cells in rows
-    )
-    return f"<table{cls}>\n{head}\n{body}\n</table>"
-
-
-# ---------------------------------------------------------------------------
-# Section 0 — Fractional seed imputation
-# ---------------------------------------------------------------------------
+from .table_html import html_table, tag, wbr
 
 _HIGH_NULL_PCT = 25
+_LOW_COUNT_THRESHOLD = 30
 
 
 def imputation_summary_table(summaries: list[ImputationSummary]) -> str:
-    """Generate the fractional seed imputation table (Section 0 of diagnostics report).
+    """Generate the fractional seed imputation table.
 
     One row per control showing how many seed rows had an empty incidence block
     for it, plus the cross-validated log-loss and F1 of the PUMS-trained model
@@ -168,12 +89,7 @@ def imputation_summary_table(summaries: list[ImputationSummary]) -> str:
                 status,
             ]
         )
-    return _html_table(headers, rows)
-
-
-# ---------------------------------------------------------------------------
-# Section 2 — Balancer Performance (convergence + target fit)
-# ---------------------------------------------------------------------------
+    return html_table(headers, rows)
 
 
 def balancer_performance_table(
@@ -181,7 +97,7 @@ def balancer_performance_table(
     weighted: pl.DataFrame,
     zone_fit: pl.DataFrame,
 ) -> str:
-    """Generate the main balancer performance table (Section 2 of diagnostics report).
+    """Generate the main balancer performance table.
 
     Combines three categories of per-zone metrics into a single comprehensive table:
 
@@ -191,7 +107,7 @@ def balancer_performance_table(
 
     Args:
         statuses: Per-zone convergence results from the balancer.
-        weighted: Household seed joined with final weights (must include `ctrl_geoid`,
+        weighted: Household seed joined with final weights (must include `zone_group_id`,
             `hh_weight`, `base_weight` columns).
         zone_fit: Zone-level target fit summary (output of `zone_fit_summary()`).
 
@@ -200,11 +116,11 @@ def balancer_performance_table(
         Person (Target, % Error), MAPE, P90, Max, CV, ESS%.
 
     Note:
-        Uses `_html_table()` with a two-tier grouped header. The "Household" and
+        Uses `html_table()` with a two-tier grouped header. The "Household" and
         "Person" columns span their respective Target/% Error sub-columns.
     """
-    status_map = {s.geo_id: s for s in statuses}
-    fit_map = {r["geo_id"]: r for r in zone_fit.iter_rows(named=True)}
+    status_map = {s.zone_group_id: s for s in statuses}
+    fit_map = {r["zone_group_id"]: r for r in zone_fit.iter_rows(named=True)}
     zones = sorted(status_map)
 
     group_row = [
@@ -227,7 +143,7 @@ def balancer_performance_table(
     for z in zones:
         s = status_map[z]
         f = fit_map.get(z, {})
-        zone_df = weighted.filter(pl.col("ctrl_geoid") == z)
+        zone_df = weighted.filter(pl.col("zone_group_id") == z)
         n = zone_df.height
 
         w = zone_df["hh_weight"]
@@ -256,61 +172,48 @@ def balancer_performance_table(
             ]
         )
 
-    return _html_table(sub_headers, rows, group_row=group_row)
+    return html_table(sub_headers, rows, group_row=group_row)
 
 
-# ---------------------------------------------------------------------------
-# Section 3 — Weight Quality (distribution + ESS + CV + expansion factors)
-# ---------------------------------------------------------------------------
-
-
-def _weight_stats(w: pl.Series, bw: pl.Series) -> dict[str, str]:
-    """Compute weight distribution and expansion factor statistics.
+def _weight_stats(w: pl.Series, bw: pl.Series) -> list[str]:
+    """Weight distribution and expansion factor statistics, formatted.
 
     Args:
         w: Final household weights.
         bw: Base weights (pre-balancing).
 
     Returns:
-        Dictionary of pre-formatted strings: mean, median, std, min, max, min_ef,
-        max_ef, mean_ef, median_ef. EF (expansion factor) is the ratio w / bw.
-
-    Note:
-        CV and ESS are now computed inline in `balancer_performance_table()` rather
-        than here, as they only appear in that table.
+        Mean, median, std, min and max of *w*, then the min, max, mean and
+        median EF (expansion factor, the ratio w / bw).
     """
     ratio = w / bw
-    return {
-        "mean": f"{w.mean() or 0:,.2f}",
-        "median": f"{w.median():,.2f}",
-        "std": f"{w.std():,.2f}",
-        "min": f"{w.min():,.2f}",
-        "max": f"{w.max():,.2f}",
-        "min_ef": f"{ratio.min():.3f}",
-        "max_ef": f"{ratio.max():.3f}",
-        "mean_ef": f"{ratio.mean():.3f}",
-        "median_ef": f"{ratio.median():.3f}",
-    }
+    return [
+        f"{w.mean() or 0:,.2f}",
+        f"{w.median():,.2f}",
+        f"{w.std():,.2f}",
+        f"{w.min():,.2f}",
+        f"{w.max():,.2f}",
+        f"{ratio.min():.3f}",
+        f"{ratio.max():.3f}",
+        f"{ratio.mean():.3f}",
+        f"{ratio.median():.3f}",
+    ]
 
 
 def weight_quality_table(weighted: pl.DataFrame) -> str:
-    """Generate the weight quality table (Section 3 of diagnostics report).
+    """Generate the weight quality table.
 
     Shows per-zone and total weight distribution statistics (mean, median, std,
     min, max) and expansion factor ratios (min/max/mean/median EF). This table
-    complements the violin plot that follows it in the report.
+    complements the weight chart that follows it in the report.
 
     Args:
-        weighted: Household seed joined with final weights (must include `ctrl_geoid`,
+        weighted: Household seed joined with final weights (must include `zone_group_id`,
             `hh_weight`, `base_weight` columns).
 
     Returns:
         HTML table with 11 columns: Zone, N, Mean, Median, Std, Min, Max, Min EF,
         Max EF, Mean EF, Median EF, plus a TOTAL row aggregating across zones.
-
-    Note:
-        CV and ESS% were removed from this table in March 2026 and moved to the
-        balancer performance table for a unified view of all key metrics.
     """
     headers = [
         "Zone",
@@ -327,53 +230,21 @@ def weight_quality_table(weighted: pl.DataFrame) -> str:
     ]
 
     def _row(label: str, df: pl.DataFrame) -> list[str]:
-        s = _weight_stats(df["hh_weight"], df["base_weight"])
-        return [
-            label,
-            f"{df.height:,}",
-            s["mean"],
-            s["median"],
-            s["std"],
-            s["min"],
-            s["max"],
-            s["min_ef"],
-            s["max_ef"],
-            s["mean_ef"],
-            s["median_ef"],
-        ]
+        return [label, f"{df.height:,}", *_weight_stats(df["hh_weight"], df["base_weight"])]
 
-    zones = sorted(weighted["ctrl_geoid"].unique().to_list())
-    rows = [_row(str(z), weighted.filter(pl.col("ctrl_geoid") == z)) for z in zones]
+    zones = sorted(weighted["zone_group_id"].unique().to_list())
+    rows = [_row(str(z), weighted.filter(pl.col("zone_group_id") == z)) for z in zones]
     rows.append(_row("TOTAL", weighted))
-    return _html_table(headers, rows)
+    return html_table(headers, rows)
 
 
-# ---------------------------------------------------------------------------
-# Section 5 — Unweighted cell counts (data sparsity matrix)
-# ---------------------------------------------------------------------------
-
-_LOW_COUNT_THRESHOLD = 30
-
-
-def _count_cell(
-    count: int,
-    pums_pct: float | None = None,
-    *,
-    dimmed: bool = False,
-    na: bool = False,
-) -> str:
-    """Format a count cell.
-
-    *dimmed* — constituent category absorbed by a zone merge (grey italic).
-    *na* — merged category not active for this zone (em-dash).
-    """
+def _count_cell(count: int, pums_pct: float | None = None, *, na: bool = False) -> str:
+    """Format a count cell; *na* marks a category not active in this zone (em-dash)."""
     if na:
         return '<td style="color:#aaa;text-align:center">&mdash;</td>'
     pct_html = ""
     if pums_pct is not None:
         pct_html = f' <em style="color:#888;font-weight:normal">({pums_pct:.1f}%)</em>'
-    if dimmed:
-        return f'<td style="color:#aaa;font-style:italic">{count}{pct_html}</td>'
     if count < _LOW_COUNT_THRESHOLD:
         return f'<td style="color:#c33;font-weight:bold">{count}{pct_html}</td>'
     return f"<td>{count}{pct_html}</td>"
@@ -398,8 +269,6 @@ def _build_zone_merge_lookups(
             continue
         zone_set = set(spec.zones)
         for merged_label, base_members in spec.groups.items():
-            if isinstance(base_members, dict):
-                continue
             merged_zones[(spec.control, merged_label.lower())] = zone_set
             for m in base_members:
                 key = (spec.control, m.lower())
@@ -407,16 +276,86 @@ def _build_zone_merge_lookups(
     return merged_zones, absorbed_zones
 
 
-def unweighted_cell_counts(  # noqa: C901, PLR0912, PLR0915
+def _importance_cell(control: str, used: dict[str, float], moe: dict[str, float] | None) -> str:
+    """The importance balancing used, with the MOE-computed one in parentheses."""
+    if moe is None:
+        return f"{used[control]:.0f}"
+    computed = moe.get(control)
+    shown = "&mdash;" if computed is None else f"{computed:.0f}"
+    return f'{used[control]:.0f} <em style="color:#888;font-weight:normal">({shown})</em>'
+
+
+def _seed_counts(
+    seed: pl.DataFrame, controls: list
+) -> tuple[dict[str, list[tuple[str, str]]], dict[str, dict[str, int]]]:
+    """Each control's ``(column, category)`` pairs in *seed*, and every column's count per zone.
+
+    Categories come from the seed's own columns, so merged ones are included and
+    the originals a merge dropped are not.
+    """
+    ctrl_members = {c.name: list(control_columns(c, seed.columns).items()) for c in controls}
+    control_cols = [col for members in ctrl_members.values() for col, _ in members]
+    if not control_cols:
+        return ctrl_members, {}
+    zone_counts = seed.group_by("zone_group_id").agg(
+        [pl.col(c).sum().alias(c) for c in control_cols]
+    )
+    counts_by_zone = {
+        row["zone_group_id"]: {col: int(row[col]) for col in control_cols}
+        for row in zone_counts.iter_rows(named=True)
+    }
+    return ctrl_members, counts_by_zone
+
+
+def _pums_shares(
+    ct: pl.DataFrame,
+) -> tuple[dict[tuple[str, str, str], float], dict[tuple[str, str], float]]:
+    """Each category's share of its control's PUMS total, per zone and over all zones."""
+    zone_ctrl_totals = ct.group_by(["zone_group_id", "control_name"]).agg(
+        pl.col("target_total").sum().alias("zone_ctrl_total")
+    )
+    ct_with_pct = ct.join(zone_ctrl_totals, on=["zone_group_id", "control_name"], how="left")
+    ct_with_pct = ct_with_pct.with_columns(
+        (pl.col("target_total") / pl.col("zone_ctrl_total") * 100).alias("pct")
+    )
+    pums_pct = {
+        (row["zone_group_id"], row["control_name"], row["category"]): row["pct"]
+        for row in ct_with_pct.iter_rows(named=True)
+    }
+
+    all_ctrl_totals = ct.group_by("control_name").agg(
+        pl.col("target_total").sum().alias("all_ctrl_total")
+    )
+    ct_total = (
+        ct.group_by(["control_name", "category"])
+        .agg(pl.col("target_total").sum().alias("cat_total"))
+        .join(all_ctrl_totals, on="control_name", how="left")
+        .with_columns((pl.col("cat_total") / pl.col("all_ctrl_total") * 100).alias("pct"))
+    )
+    pums_pct_total = {
+        (row["control_name"], row["category"]): row["pct"] for row in ct_total.iter_rows(named=True)
+    }
+    return pums_pct, pums_pct_total
+
+
+def unweighted_cell_counts(  # noqa: C901
     seed: pl.DataFrame,
     target_names: list[str],
     control_totals: ControlTotals | None = None,
     merge_specs: list | None = None,
+    *,
+    moe_importance: dict[str, float] | None = None,
+    importance_used: dict[str, float] | None = None,
 ) -> str:
     """Single matrix table: categories (rows) x zones (columns).
 
     Row headers are grouped by control name using ``<th rowspan>``.
     A level separator row (Household / Person) divides the two groups.
+
+    With *importance_used*, each control also shows the importance balancing
+    gave it, with what its PUMS MOE gave (*moe_importance*) in parentheses, or
+    a dash where the MOE could not be computed. The parentheses are left out
+    when importance was not MOE-based.
 
     When *control_totals* is provided, each cell also shows the
     PUMS-weighted percentage in italic parentheses so the reader can
@@ -427,81 +366,49 @@ def unweighted_cell_counts(  # noqa: C901, PLR0912, PLR0915
     """
     labels = category_label_map(target_names)
     merged_zones, absorbed_zones = _build_zone_merge_lookups(merge_specs)
-    zones = sorted(seed["ctrl_geoid"].unique().to_list())
+    zones = sorted(seed["zone_group_id"].unique().to_list())
     n_zone_cols = len(zones)
-
-    # Pre-compute counts for all controls across all zones with single aggregation.
-    # Discover categories from actual seed columns (includes merged,
-    # excludes dropped originals).
     all_controls = resolve_targets(target_names, ControlLevel.HOUSEHOLD) + resolve_targets(
         target_names, ControlLevel.PERSON
     )
+    ctrl_members, counts_by_zone = _seed_counts(seed, all_controls)
 
-    # Build (ctrl, col_name, member_key) triples from actual seed columns
-    ctrl_members: dict[str, list[tuple[str, str]]] = {}  # ctrl_name -> [(col, member_key)]
-    control_cols: list[str] = []
-
-    for ctrl in all_controls:
-        members: list[tuple[str, str]] = []
-        if ctrl.structural:
-            col = ctrl.name
-            if col in seed.columns:
-                member_key = ctrl.valid_members[0][1].lower()
-                members.append((col, member_key))
-                control_cols.append(col)
-        else:
-            prefix = f"{ctrl.name}__"
-            for col in sorted(c for c in seed.columns if c.startswith(prefix)):
-                member_key = col[len(prefix) :]
-                members.append((col, member_key))
-                control_cols.append(col)
-        ctrl_members[ctrl.name] = members
-
-    # Single group_by aggregation to get all zone x control counts
-    if control_cols:
-        zone_counts = seed.group_by("ctrl_geoid").agg(
-            [pl.col(c).sum().alias(c) for c in control_cols]
-        )
-        counts_by_zone: dict[str, dict[str, int]] = {}
-        for row in zone_counts.iter_rows(named=True):
-            zone_id = row["ctrl_geoid"]
-            counts_by_zone[zone_id] = {col: int(row[col]) for col in control_cols}
-    else:
-        counts_by_zone = {}
-
-    # Pre-compute PUMS share per (zone, control, category) ----------------
     pums_pct: dict[tuple[str, str, str], float] = {}
     pums_pct_total: dict[tuple[str, str], float] = {}
     if control_totals is not None:
         ct = control_totals.totals
-        zone_ctrl_totals = ct.group_by(["geo_id", "control_name"]).agg(
-            pl.col("target_total").sum().alias("zone_ctrl_total")
-        )
-        ct_with_pct = ct.join(zone_ctrl_totals, on=["geo_id", "control_name"], how="left")
-        ct_with_pct = ct_with_pct.with_columns(
-            (pl.col("target_total") / pl.col("zone_ctrl_total") * 100).alias("pct")
-        )
-        for row in ct_with_pct.iter_rows(named=True):
-            pums_pct[(row["geo_id"], row["control_name"], row["category"])] = row["pct"]
+        pums_pct, pums_pct_total = _pums_shares(ct)
 
-        all_ctrl_totals = ct.group_by("control_name").agg(
-            pl.col("target_total").sum().alias("all_ctrl_total")
-        )
-        ct_total = (
-            ct.group_by(["control_name", "category"])
-            .agg(pl.col("target_total").sum().alias("cat_total"))
-            .join(all_ctrl_totals, on="control_name", how="left")
-            .with_columns((pl.col("cat_total") / pl.col("all_ctrl_total") * 100).alias("pct"))
-        )
-        for row in ct_total.iter_rows(named=True):
-            pums_pct_total[(row["control_name"], row["category"])] = row["pct"]
+        # A category is shown if, in some zone where it is a target, it has a target or
+        # records. One zone merges replaced everywhere is a target nowhere with either.
+        targets = {
+            (r["zone_group_id"], r["control_name"], r["category"]): r["target_total"]
+            for r in ct.iter_rows(named=True)
+        }
+        ctrl_members = {
+            name: [
+                (col, key)
+                for col, key in members
+                if any(
+                    (z, name, key) in targets
+                    and (targets[(z, name, key)] or counts_by_zone.get(z, {}).get(col))
+                    for z in zones
+                )
+            ]
+            for name, members in ctrl_members.items()
+        }
+
+    importance_cols: list[str] = []
+    if importance_used is not None:
+        importance_cols = ["Importance" if moe_importance is None else "Importance (MOE-computed)"]
 
     header = (
         "<tr>"
-        + _tag("th", "Control")
-        + _tag("th", "Category")
-        + "".join(_tag("th", _wbr(str(z))) for z in zones)
-        + _tag("th", "Total")
+        + tag("th", "Control")
+        + "".join(tag("th", c) for c in importance_cols)
+        + tag("th", "Category")
+        + "".join(tag("th", wbr(str(z))) for z in zones)
+        + tag("th", "Total")
         + "</tr>"
     )
 
@@ -513,7 +420,7 @@ def unweighted_cell_counts(  # noqa: C901, PLR0912, PLR0915
             continue
         level_label = "Household" if level == ControlLevel.HOUSEHOLD else "Person"
         data_rows.append(
-            f'<tr><td colspan="{n_zone_cols + 3}" '
+            f'<tr><td colspan="{n_zone_cols + 3 + len(importance_cols)}" '
             f'style="background:#e8e8e8;font-weight:bold;text-align:left">{level_label}</td></tr>'
         )
         for ctrl in ctrls:
@@ -521,7 +428,11 @@ def unweighted_cell_counts(  # noqa: C901, PLR0912, PLR0915
             for i, (col, member_key) in enumerate(members):
                 cells = ""
                 if i == 0:
-                    cells += f'<th rowspan="{len(members)}">{ctrl.name}</th>'
+                    span = f'rowspan="{len(members)}"'
+                    cells += f"<th {span}>{ctrl.name}</th>"
+                    if importance_used is not None:
+                        shown = _importance_cell(ctrl.name, importance_used, moe_importance)
+                        cells += f"<td {span}>{shown}</td>"
 
                 # Zone merge annotations
                 active_in = merged_zones.get((ctrl.name, member_key))
@@ -546,320 +457,79 @@ def unweighted_cell_counts(  # noqa: C901, PLR0912, PLR0915
     return '<table class="sparsity">\n' + header + "\n" + "\n".join(data_rows) + "\n</table>"
 
 
-# ---------------------------------------------------------------------------
-# Section 1b — Crosswalk summary table
-# ---------------------------------------------------------------------------
+def crosswalk_summary_table(
+    crosswalk_df: pl.DataFrame,
+    seed: pl.DataFrame,
+    counties: dict[str, str],
+) -> str:
+    """Households per zone, in their balancing groups, with the Census county each covers.
 
+    The county names come from the Census rather than the config, so a zone ID put
+    in the wrong group shows up as a county the group's name doesn't match.
+    Households outside every zone get their own row: they cannot be weighted.
 
-def crosswalk_summary_table(crosswalk_df: pl.DataFrame, seed: pl.DataFrame) -> str:  # noqa: C901, PLR0912
-    """Compact Zone -> HH Samples table with optional Zone Group column."""
-    # study_geoid is the raw crosswalk geography; ctrl_geoid may be grouped.
-    sample_counts = dict(
-        seed.filter(pl.col("study_geoid").is_not_null()).group_by("study_geoid").len().iter_rows()
+    Args:
+        crosswalk_df: The PUMA-to-zone allocation, with ``target_zone_id`` and
+            ``zone_group_id``.
+        seed: One profile's household seed, with ``target_zone_id``.
+        counties: Zone ID to its Census county name or names.
+    """
+    counts = dict(
+        seed.filter(pl.col("target_zone_id").is_not_null())
+        .group_by("target_zone_id")
+        .len()
+        .iter_rows()
     )
-
-    # Zone group mapping (study_geoid → ctrl_geoid when they differ)
-    zone_to_group: dict[str, str] = {}
-    if "ctrl_geoid" in seed.columns and "study_geoid" in seed.columns:
-        pairs = (
-            seed.filter(pl.col("study_geoid") != pl.col("ctrl_geoid"))
-            .select("study_geoid", "ctrl_geoid")
-            .unique()
-        )
-        if pairs.height > 0:
-            zone_to_group = dict(pairs.iter_rows())
-    has_groups = bool(zone_to_group)
-
-    raw_zones = (
-        crosswalk_df.select("study_geoid")
+    outside = seed.filter(pl.col("target_zone_id").is_null()).height
+    zones = (
+        crosswalk_df.select("target_zone_id", "zone_group_id")
         .unique()
-        .filter(pl.col("study_geoid").is_not_null())
-        .to_series()
-        .to_list()
+        .filter(pl.col("target_zone_id").is_not_null())
+        .sort("zone_group_id", "target_zone_id")
     )
-    # Sort by zone group then descending HH samples so group members stay
-    # contiguous (needed for correct rowspan) and larger zones appear first.
-    zones = sorted(
-        raw_zones,
-        key=lambda g: (zone_to_group.get(g, ""), -(sample_counts.get(g, 0))),
-    )
+    grouped = zones.filter(pl.col("target_zone_id") != pl.col("zone_group_id")).height > 0
 
-    headers = []
-    if has_groups:
-        headers += ["Zone Group", "Grouped HH Samples"]
-    headers += ["Zone", "HH Samples"]
-    header = "<tr>" + "".join(_tag("th", h) for h in headers) + "</tr>"
-
-    # Build runs of consecutive zones sharing the same group for rowspan
-    group_runs: list[tuple[str, int]] = []  # (group_name, span)
-    if has_groups:
-        for geo in zones:
-            grp = zone_to_group.get(geo, "")
-            if group_runs and group_runs[-1][0] == grp and grp:
-                group_runs[-1] = (grp, group_runs[-1][1] + 1)
-            else:
-                group_runs.append((grp, 1))
-
-    # Grouped sample totals
-    group_sample_totals: dict[str, int] = {}
-    if has_groups:
-        for geo, grp in zone_to_group.items():
-            group_sample_totals[grp] = group_sample_totals.get(grp, 0) + sample_counts.get(geo, 0)
-
-    body_rows: list[str] = []
-    run_idx = 0
-    pos_in_run = 0
-    for geo in zones:
-        cells = ""
-        if has_groups:
-            grp = zone_to_group.get(geo, "")
-            if grp and group_runs:
-                _, span = group_runs[run_idx]
-                if pos_in_run == 0:
-                    rs = f' rowspan="{span}"' if span > 1 else ""
-                    cells += f"<td{rs}>{grp}</td>"
-                    total = group_sample_totals.get(grp, 0)
-                    cells += f"<td{rs}>{total:,}</td>"
-                pos_in_run += 1
-                if pos_in_run >= span:
-                    run_idx += 1
-                    pos_in_run = 0
-            else:
-                cells += _tag("td", "")
-                cells += _tag("td", "")
-        cells += f'<td style="text-align:left">{geo}</td>'
-        cells += _tag("td", f"{sample_counts.get(geo, 0):,}")
-        body_rows.append(f"<tr>{cells}</tr>")
-
-    return f"<table>\n{header}\n" + "\n".join(body_rows) + "\n</table>"
-
-
-# ---------------------------------------------------------------------------
-# Section 1 — Profile comparison (one row per fit)
-# ---------------------------------------------------------------------------
-
-
-def profile_comparison_table(rows: list[ProfileSummary]) -> str:
-    """Compare every fit in the run, one row each.
-
-    Each profile is balanced to the same controls over its own universe, so the
-    totals should land on the same targets. Divergence is the usability gate
-    changing what the survey can reach, not the balancer failing -- which is why
-    this table only exists once all the fits are done.
-    """
-    headers = [
-        "Profile",
-        "Households&nbsp;in&nbsp;sample",
-        "&Sigma;&nbsp;hh&nbsp;weight",
-        "&Sigma;&nbsp;person&nbsp;weight",
-        "&Sigma;&nbsp;day&nbsp;weight",
-        term("ess", "ESS&nbsp;%"),
-        term("cv"),
-        term("maxmed"),
-        term("mape"),
-        "Converged",
-    ]
+    headers = (["Zone group"] if grouped else []) + ["Zone", "Census county", "Households"]
+    pad = [""] if grouped else []
     body: list[list[str]] = []
-    for r in rows:
-        converged = f"{r.zones_converged} / {r.zones_total}"
-        css = "converged" if r.zones_converged == r.zones_total else "failed"
-        body.append(
-            [
-                r.profile or "the survey",
-                f"{r.seed_households:,}",
-                f"{r.weight_sums.get('households', 0.0):,.0f}",
-                f"{r.weight_sums.get('persons', 0.0):,.0f}",
-                f"{r.weight_sums.get('days', 0.0):,.0f}",
-                f"{r.ess_pct:.1f}%",
-                f"{r.cv:.3f}",
-                f"{r.max_over_median:.1f}",
-                f"{r.mape:.2f}%",
-                f'<td class="{css}">{converged}</td>',
-            ]
-        )
-    return _html_table(headers, body)
-
-
-# ---------------------------------------------------------------------------
-# Section — Weight cascade (all profiles side by side)
-# ---------------------------------------------------------------------------
-
-
-def cascade_table(cascades: dict[str | None, list[CascadeRow]]) -> str:
-    """Per-level weight coverage, one column group per profile.
-
-    Shown side by side rather than behind the profile toggle: the counts are
-    small enough to compare directly, and a labelled column cannot be misread
-    the way a toggled chart can.
-    """
-    if not cascades:
-        return ""
-    profiles = list(cascades)
-    by_table: dict[str, dict[str | None, CascadeRow]] = {}
-    for profile, rows in cascades.items():
-        for row in rows:
-            by_table.setdefault(row.table, {})[profile] = row
-
-    group_row = [("Level", 1), ("Rows", 1)]
-    group_row += [(p or "the survey", 3) for p in profiles]
-    sub_headers = ["Usable", "Weighted", "Unweighted"] * len(profiles)
-
-    body: list[list[str]] = []
-    for table, per_profile in by_table.items():
-        any_row = next(iter(per_profile.values()))
-        cells = [table, f"{any_row.rows:,}"]
-        for profile in profiles:
-            row = per_profile.get(profile)
-            if row is None:
-                cells += ["—", "—", "—"]
-                continue
-            unweighted = (
-                f'<td class="failed">{row.unweighted:,}</td>'
-                if row.unweighted
-                else f"{row.unweighted:,}"
-            )
-            cells += [f"{row.usable:,}", f"{row.weighted:,}", unweighted]
-        body.append(cells)
-    return _html_table(sub_headers, body, group_row=group_row)
-
-
-def redistribution_table(rows: dict[str | None, list[RedistributionRow]]) -> str:
-    """Child/parent weight ratio per copy-and-conserve edge, per profile."""
-    headers = [
-        "Levels",
-        "Profile",
-        "Median",
-        "P90",
-        "P99",
-        "Max",
-        f"&gt;&thinsp;{_REDISTRIBUTION_TAIL:g}&times;",
-    ]
-    body: list[list[str]] = []
-    for profile, edges in rows.items():
-        for r in edges:
-            body.append(  # noqa: PERF401
-                [
-                    f"{r.table} / {r.parent}",
-                    profile or "the survey",
-                    f"{r.p50:.2f}",
-                    f"{r.p90:.2f}",
-                    f"{r.p99:.2f}",
-                    f"{r.maximum:.1f}",
-                    f"{r.share_above:.1f}%",
-                ]
-            )
-    return _html_table(headers, body) if body else ""
-
-
-def split_identity_table(rows: dict[str | None, list[SplitIdentityRow]]) -> str:
-    """Whether each split level's children still sum to their parent's weight."""
-    headers = [
-        "Levels",
-        "Profile",
-        "Higher-level&nbsp;records",
-        "Largest&nbsp;gap",
-        "With&nbsp;no&nbsp;usable&nbsp;lower-level&nbsp;record",
-        "Weight&nbsp;not&nbsp;passed&nbsp;down",
-        "Lower-level&nbsp;records&nbsp;each",
-    ]
-    body: list[list[str]] = []
-    for profile, edges in rows.items():
-        for r in edges:
-            stranded = (
-                f'<td class="failed">{r.stranded_parents:,}</td>'
-                if r.stranded_parents
-                else f'<td class="converged">{r.stranded_parents:,}</td>'
-            )
+    for (group,), members in zones.group_by("zone_group_id", maintain_order=True):
+        for i, zone in enumerate(members["target_zone_id"].to_list()):
+            name = [str(group) if i == 0 else ""] if grouped else []
             body.append(
-                [
-                    f"{r.table} / {r.parent}",
-                    profile or "the survey",
-                    f"{r.parents_checked:,}",
-                    f"{r.max_residual:.1e}",
-                    stranded,
-                    f"{r.stranded_weight:,.0f}",
-                    f"{r.min_children}&ndash;{r.max_children} (med {r.median_children})",
-                ]
+                [*name, _left(zone), _left(counties.get(zone, "")), f"{counts.get(zone, 0):,}"]
             )
-    return _html_table(headers, body) if body else ""
+        if grouped and members.height > 1:
+            total = sum(counts.get(z, 0) for z in members["target_zone_id"].to_list())
+            body.append(["", "", _left("<b>Group</b>"), f"<b>{total:,}</b>"])
+    body.append(["<b>Outside all zones</b>", *pad, "", f"<b>{outside:,}</b>"])
+    body.append(["<b>Total</b>", *pad, "", f"<b>{seed.height:,}</b>"])
+    return html_table(headers, body)
 
 
-def coverage_table(coverages: dict[str | None, GeographyCoverage]) -> str:
-    """Households each profile admits that the control geography cannot place.
+def _left(text: str) -> str:
+    """A left-aligned cell, for names in a table that right-aligns its numbers."""
+    return f'<td style="text-align:left">{text}</td>'
 
-    A household outside every control polygon belongs to no balancing zone, so
-    no fit can give it a weight. That is a bound on what the weighting answers,
-    and it is stated rather than left to be inferred from a column of nulls.
+
+def survey_share_table_html(shares: pl.DataFrame) -> str:
+    """Every group's share of its area's survey against its share of the area's PUMS.
+
+    Smallest ratio first, so the groups nearest the stop are at the top. The
+    columns are the stop message's, so the two read the same way.
     """
     headers = [
-        "Profile",
-        "Households",
-        "In&nbsp;a&nbsp;zone",
-        "Outside&nbsp;all&nbsp;zones",
-        "Share",
+        "Area",
+        "Target",
+        "Group",
+        "Survey",
+        "PUMS",
+        "%&nbsp;of area's survey",
+        "%&nbsp;of area's PUMS",
+        "Ratio",
     ]
-    body: list[list[str]] = []
-    for profile, cov in coverages.items():
-        unplaceable = (
-            f'<td class="failed">{cov.n_unplaceable:,}</td>'
-            if cov.n_unplaceable
-            else f'<td class="converged">{cov.n_unplaceable:,}</td>'
-        )
-        body.append(
-            [
-                profile or "the survey",
-                f"{cov.n_universe:,}",
-                f"{cov.n_placed:,}",
-                unplaceable,
-                f"{cov.unplaceable_share * 100:.2f}%",
-            ]
-        )
-    return _html_table(headers, body)
-
-
-def inheritance_table(rows: list[Inheritance], labels: dict[str, str]) -> str:
-    """How each set's weight descends from the level above, and by what mechanism.
-
-    The mechanism is the column that matters. *Copied* means the level adds
-    nothing of its own, so a comparison there restates the level above. *Adjusted*
-    means records were rescaled individually after the weight descended, which is
-    the one case where the level no longer nests inside its parent -- and the one
-    a reader is most likely to mistake for the harmless kind.
-    """
-    if not rows:
-        return ""
-    headers = [
-        "Level",
-        "Weight set",
-        "Records",
-        term("inherit", "Same&nbsp;as&nbsp;level&nbsp;above"),
-        "Groups&nbsp;with&nbsp;unequal&nbsp;adjustments",
-        "Largest&nbsp;difference",
-        "Mechanism",
-    ]
-    verdicts = {
-        "copied": '<td class="failed">copied</td>',
-        "redistributed": "redistributed",
-        "adjusted": '<td class="failed">adjusted per record</td>',
-    }
-    body: list[list[str]] = []
-    for row in rows:
-        uniform = row.max_scope_spread <= 1 + 1e-9
-        spread = "&mdash;" if uniform else f"{row.max_scope_spread:,.2f}&times;"
-        varying = (
-            f'<td class="failed">{row.n_scopes_varying:,}</td>'
-            if row.n_scopes_varying
-            else f"{row.n_scopes_varying:,}"
-        )
-        body.append(
-            [
-                f"{row.level} &larr; {row.parent}",
-                labels.get(row.set_name, row.set_name),
-                f"{row.n:,}",
-                f"{row.share:.1f}%",
-                varying,
-                spread,
-                verdicts[row.mode],
-            ]
-        )
-    return _html_table(headers, body, css_class="inherit")
+    rows = []
+    for r in shares.sort("ratio").iter_rows(named=True):
+        cells = table_cells(r)
+        cells[2] = wbr(cells[2])  # the group name, which can be long
+        rows.append(cells)
+    return html_table(headers, rows)
