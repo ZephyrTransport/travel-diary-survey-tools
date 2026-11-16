@@ -31,8 +31,9 @@ FULL_COVARIANCE = [
 ]
 
 
-# Every field a config must state, so each case below varies only what it tests.
-_REQUIRED = {"method": "buffer", "covariance": None, "confidence_level": 0.90}
+# Every field a buffer config must state, so each case below varies only what it tests.
+_REQUIRED = {"method": "buffer", "time_threshold_minutes": 15.0, "space_threshold_meters": 100.0}
+_MAHALANOBIS = {"method": "mahalanobis", "confidence_level": 0.90}
 
 
 def _buffer(**overrides) -> JointTripConfig:
@@ -46,30 +47,14 @@ class TestJointTripConfig:
     @pytest.mark.parametrize(
         ("kwargs", "expected_threshold"),
         [
+            pytest.param(_REQUIRED, 0.0, id="buffer_has_no_statistical_threshold"),
             pytest.param(
-                {
-                    "method": "buffer",
-                    "time_threshold_minutes": 15.0,
-                    "space_threshold_meters": 100.0,
-                },
-                0.0,
-                id="buffer_has_no_statistical_threshold",
-            ),
-            pytest.param(
-                {
-                    "method": "mahalanobis",
-                    "covariance": [7000, 7000, 20, 20],
-                    "space_threshold_meters": 2.5,
-                },
+                {**_MAHALANOBIS, "covariance": [7000, 7000, 20, 20]},
                 1.0636232167792241,
                 id="diagonal_covariance",
             ),
             pytest.param(
-                {
-                    "method": "mahalanobis",
-                    "covariance": FULL_COVARIANCE,
-                    "space_threshold_meters": 2.5,
-                },
+                {**_MAHALANOBIS, "covariance": FULL_COVARIANCE},
                 1.0636232167792241,
                 id="full_covariance_matrix",
             ),
@@ -82,7 +67,7 @@ class TestJointTripConfig:
         chi-squared with four degrees of freedom; the buffer method does not
         use a statistical distance at all.
         """
-        config = JointTripConfig(**{**_REQUIRED, **kwargs})
+        config = JointTripConfig(**kwargs)
 
         assert config.covariance == kwargs.get("covariance")
         assert config.get_distance_threshold() == pytest.approx(expected_threshold)
@@ -91,23 +76,43 @@ class TestJointTripConfig:
         ("kwargs", "match"),
         [
             pytest.param(
-                {"method": "mahalanobis", "covariance": [10000, 10000, 100]},
+                {**_MAHALANOBIS, "covariance": [10000, 10000, 100]},
                 "must have 4 values",
                 id="diagonal_of_three",
             ),
             pytest.param(
-                {"method": "mahalanobis", "covariance": [[10000, 0], [0, 10000]]},
+                {**_MAHALANOBIS, "covariance": [[10000, 0], [0, 10000]]},
                 "4x4",
                 id="two_by_two_matrix",
             ),
             pytest.param(
-                {"time_threshold_minutes": -5.0},
+                {**_REQUIRED, "time_threshold_minutes": -5.0},
                 "greater than or equal",
                 id="negative_time_threshold",
             ),
             pytest.param(
+                {"method": "buffer", "time_threshold_minutes": 15.0},
+                "buffer requires space_threshold_meters",
+                id="buffer_missing_a_threshold",
+            ),
+            pytest.param(
+                {"method": "mahalanobis", "covariance": [7000, 7000, 20, 20]},
+                "mahalanobis requires confidence_level",
+                id="mahalanobis_missing_its_confidence_level",
+            ),
+            pytest.param(
+                {**_REQUIRED, "covariance": None},
+                "buffer does not use covariance",
+                id="buffer_given_a_mahalanobis_setting_even_null",
+            ),
+            pytest.param(
+                {**_MAHALANOBIS, "covariance": [7000, 7000, 20, 20], "space_threshold_meters": 50},
+                "mahalanobis does not use space_threshold_meters",
+                id="mahalanobis_given_a_buffer_threshold",
+            ),
+            pytest.param(
                 {
-                    "method": "mahalanobis",
+                    **_MAHALANOBIS,
                     "covariance": [
                         [10000, 100, 0, 0],
                         [0, 10000, 0, 0],
@@ -119,16 +124,16 @@ class TestJointTripConfig:
                 id="asymmetric_off_diagonal",
             ),
             pytest.param(
-                {"method": "mahalanobis", "covariance": [10000, -10000, 100, 100]},
+                {**_MAHALANOBIS, "covariance": [10000, -10000, 100, 100]},
                 "positive",
                 id="negative_variance",
             ),
         ],
     )
     def test_invalid_config_is_rejected(self, kwargs, match):
-        """A covariance that cannot be inverted is caught at configuration time."""
+        """Bad values, and settings missing from or foreign to the method, stop at configuration."""
         with pytest.raises(ValidationError, match=match):
-            JointTripConfig(**{**_REQUIRED, **kwargs})
+            JointTripConfig(**kwargs)
 
 
 class TestSimilarityCalculations:

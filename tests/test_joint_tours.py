@@ -90,8 +90,6 @@ def _tours_from(legs: list[dict]) -> pl.DataFrame:
         households=HOUSEHOLDS,
         matching=JointTripConfig(
             method="buffer",
-            covariance=None,
-            confidence_level=0.90,
             time_threshold_minutes=5.0,
             space_threshold_meters=50.0,
         ),

@@ -132,7 +132,6 @@ steps:
 
       # Alternative: simpler buffer method with time/space thresholds
       # method: "buffer"
-      # covariance: null
       # time_threshold_minutes: 15.0
       # space_threshold_meters: 100.0
 

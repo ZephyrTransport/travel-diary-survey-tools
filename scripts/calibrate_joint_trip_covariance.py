@@ -207,8 +207,6 @@ if __name__ == "__main__":
         households=households,
         matching=JointTripConfig(
             method="buffer",
-            covariance=None,
-            confidence_level=0.90,
             time_threshold_minutes=float(MAX_TIME_THRESHOLD_MIN),
             space_threshold_meters=float(MAX_SPACE_THRESHOLD_M),
         ),

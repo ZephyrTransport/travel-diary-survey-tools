@@ -30,9 +30,20 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from scipy import stats
 
+# The settings each method reads; the other method's are rejected.
+_METHOD_SETTINGS = {
+    "buffer": ("time_threshold_minutes", "space_threshold_meters"),
+    "mahalanobis": ("covariance", "confidence_level"),
+}
+
 
 class JointTripConfig(BaseModel):
     """Configuration for joint trip detection.
+
+    Each method has its own settings: ``buffer`` requires the two thresholds,
+    ``mahalanobis`` requires ``covariance`` and ``confidence_level``. A setting
+    of the other method is rejected, so a config can't look like it tunes
+    something it doesn't.
 
     Attributes:
         method: Detection method ('buffer' for strict thresholds,
@@ -41,7 +52,7 @@ class JointTripConfig(BaseModel):
         space_threshold_meters: Maximum spatial distance for buffer method
         covariance: Diagonal variances (list of 4) or full covariance matrix
             (4x4 list of lists) in units [m^2, m^2, min^2, min^2]. Required
-            for mahalanobis; null for buffer. The empirical variance of BATS
+            for mahalanobis. The empirical variance of BATS
             2023 household joint trips is about [7000, 7000, 20, 20]: origin
             ~84m std (7142 m² var), dest ~84m (7089 m²), depart ~4.7min
             (22 min²), arrive ~4.6min (21 min²).
@@ -58,34 +69,36 @@ class JointTripConfig(BaseModel):
         description=("Detection method: buffer (strict) or mahalanobis (statistical)"),
     )
 
-    time_threshold_minutes: float = Field(
-        default=15.0,
+    time_threshold_minutes: float | None = Field(
+        default=None,
         ge=0,
-        description="Maximum time difference in minutes for buffer method",
+        description="Maximum time difference in minutes (buffer method only, required there)",
     )
 
-    space_threshold_meters: float = Field(
-        default=100.0,
+    space_threshold_meters: float | None = Field(
+        default=None,
         ge=0,
-        description="Maximum spatial distance in meters for buffer method",
+        description="Maximum spatial distance in meters (buffer method only, required there)",
     )
 
     covariance: Sequence[float | int] | Sequence[Sequence[float | int]] | None = Field(
+        default=None,
         description=(
             "Diagonal (4 values) or full (4x4) covariance matrix in units "
-            "[origin_m^2, dest_m^2, depart_min^2, arrive_min^2]. Required for "
-            "mahalanobis; null for buffer. The empirical variance of BATS 2023 "
+            "[origin_m^2, dest_m^2, depart_min^2, arrive_min^2] (mahalanobis "
+            "method only, required there). The empirical variance of BATS 2023 "
             "household joint trips is about diagonal [7000, 7000, 20, 20]: "
             "origin ~84m std dev (7142 m² var), dest ~84m (7089 m²), "
             "depart ~4.7min (22 min²), arrive ~4.6min (21 min²)."
         ),
     )
 
-    confidence_level: float = Field(
+    confidence_level: float | None = Field(
+        default=None,
         gt=0,
         lt=1,
         description=(
-            "Strictness of the mahalanobis cutoff (mahalanobis method only). "
+            "Strictness of the mahalanobis cutoff (mahalanobis method only, required there). "
             "Higher = stricter. It reads backward from the usual meaning of "
             "confidence and is not the share of joint pairs kept. See "
             "get_distance_threshold."
@@ -161,12 +174,18 @@ class JointTripConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_method_params(self) -> "JointTripConfig":
-        """Ensure required parameters are provided for each method."""
-        if self.method == "mahalanobis" and self.covariance is None:
-            msg = (
-                "covariance must be provided for mahalanobis method, e.g. the BATS 2023 "
-                "empirical [7000, 7000, 20, 20], or run calibration."
-            )
+        """Require the chosen method's settings and reject the other method's."""
+        own = _METHOD_SETTINGS[self.method]
+        other = [s for m, names in _METHOD_SETTINGS.items() if m != self.method for s in names]
+        missing = [s for s in own if getattr(self, s) is None]
+        if missing:
+            msg = f"method {self.method} requires {', '.join(missing)}"
+            if "covariance" in missing:
+                msg += ", e.g. the BATS 2023 empirical covariance [7000, 7000, 20, 20]"
+            raise ValueError(msg)
+        stray = [s for s in other if s in self.model_fields_set]
+        if stray:
+            msg = f"method {self.method} does not use {', '.join(stray)}; remove it"
             raise ValueError(msg)
         return self
 
