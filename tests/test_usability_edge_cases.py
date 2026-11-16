@@ -13,8 +13,8 @@ import pytest
 
 from data_canon.codebook.days import TravelDow
 from data_canon.codebook.tours import TourCategory, TourDataQuality
-from processing.completeness import parse_usability_profiles, stamp_usable
 from processing.formatting.kept_records import suggest_usability_columns
+from processing.usability import parse_usability_profiles, stamp_usable
 from tests.fixtures.cascade import (
     DATE,
     LOOSE,
@@ -94,7 +94,7 @@ class TestTheCategoryTermOnlyAppliesAtPrimaryHome:
 
     ``tour_category`` and ``tour_data_quality`` state the same fact about where a
     tour ends. That the term is live at ``primary_home`` is pinned by
-    ``test_completeness::test_only_admissible_tours_are_usable``.
+    ``test_usability::test_only_admissible_tours_are_usable``.
     """
 
     @pytest.mark.parametrize("category", list(TourCategory))

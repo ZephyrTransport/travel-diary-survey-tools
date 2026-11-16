@@ -84,7 +84,7 @@ op: ALL / >=1 / >=2 = quantity gate (count members vs threshold);
 Because each level reads its neighbours, the derivation order is load-bearing;
 getting it wrong fails loudly (an unflagged member table raises), never silently.
 
-This package is the one place the logic lives. The ``cascade_completeness``
+This package is the one place the logic lives. The ``cascade_usability``
 pipeline step runs :func:`cascade_complete` once and then :func:`stamp_usable`
 per profile; every downstream consumer only *reads* the resulting flags.
 
@@ -98,10 +98,10 @@ Modules:
   table, with the zone checks.
 - ``joint_groupings``: which records are on a joint tour or joint trip, per profile.
 - ``descriptions``: what each stamped column means, in words.
-- ``cascade_completeness``: the pipeline step.
+- ``cascade_usability``: the pipeline step.
 """
 
-from .cascade_completeness import cascade_completeness
+from .cascade_usability import cascade_usability
 from .joint_groupings import MIN_JOINT_PARTICIPANTS
 from .profiles import (
     NO_ZONE_COVERAGE,
@@ -124,7 +124,7 @@ __all__ = [
     "TourClosesAt",
     "UsabilityProfile",
     "cascade_complete",
-    "cascade_completeness",
+    "cascade_usability",
     "parse_usability_profiles",
     "profile_of",
     "stamp_usable",

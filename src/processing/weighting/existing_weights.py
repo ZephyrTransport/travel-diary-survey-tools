@@ -39,7 +39,7 @@ import logging
 import polars as pl
 
 from pipeline.decoration import Tables, step
-from processing.completeness import usable_col_for
+from processing.usability import usable_col_for
 from processing.weighting.core.hierarchy import (
     LEVELS,
     Flow,
@@ -291,7 +291,7 @@ def _redistribute(
     profile's redistributed ones, so every column set holds the same supplied
     totals.
 
-    Usability is stamped upstream by ``cascade_completeness``. Populations come
+    Usability is stamped upstream by ``cascade_usability``. Populations come
     first (`_place_population`), then travel, then the joint tables. Each level is
     then checked against the rule that set it: persons against their household,
     supplied days against their person, derived levels against the identity they

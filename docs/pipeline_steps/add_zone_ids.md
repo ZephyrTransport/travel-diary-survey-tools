@@ -7,7 +7,7 @@ point outside every zone can be snapped to the nearest one within
 `max_snap_distance`, or left null.
 
 It runs after `extract_tours`, so tours get zones too, and before
-`cascade_completeness`, so a usability profile can require that a record has
+`cascade_usability`, so a usability profile can require that a record has
 a zone.
 
 ::: processing.add_zone_ids.add_zone_ids.add_zone_ids

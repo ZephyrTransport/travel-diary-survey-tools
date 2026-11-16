@@ -7,8 +7,8 @@ steps. The shape being walked is declared in [`processing.weighting.core.hierarc
 # The distribution rule
 
 A record is admitted by a *usability flag* -- one of the usability profiles
-stamped by the ``cascade_completeness`` step (see [`processing.completeness`]
-[processing.completeness]), so the weighted sample matches the records that
+stamped by the ``cascade_usability`` step (see [`processing.usability`]
+[processing.usability]), so the weighted sample matches the records that
 profile's consumer actually keeps.  Pass ``survey_complete`` instead to weight the whole
 valid survey, including partial and overnight tours.
 

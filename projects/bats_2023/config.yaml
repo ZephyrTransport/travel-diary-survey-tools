@@ -194,7 +194,7 @@ steps:
   # Cascade `survey_complete` (survey reporting) through hh <-> person <-> day <->
   # trip/tour so it is consistent with any upstream adjustments, then stamp one
   # usability column per profile declared below.
-  - name: cascade_completeness
+  - name: cascade_usability
     validate_input: false
     params:
       # One boolean column per profile. A profile states its standard on five

@@ -14,7 +14,7 @@ from pipeline.pipeline import Pipeline
 from processing import (
     add_existing_weights,
     add_zone_ids,
-    cascade_completeness,
+    cascade_usability,
     compute_weights,
     detect_habitual_locations,
     detect_joint_trips,
@@ -83,7 +83,7 @@ processing_steps = [
     detect_habitual_locations,
     detect_joint_trips,
     extract_tours,
-    cascade_completeness,
+    cascade_usability,
     format_daysim,
     write_data,
     add_existing_weights,

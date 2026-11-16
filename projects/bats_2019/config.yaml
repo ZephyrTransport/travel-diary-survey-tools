@@ -168,7 +168,7 @@ steps:
   # usability column per profile declared below. The cleaner sets only the leaf
   # -- whether the vendor completed each person-day -- and everything above it is
   # derived here, so the rule lives in one place.
-  - name: cascade_completeness
+  - name: cascade_usability
     validate_input: false
     params:
       # One boolean column per profile, on five axes, all answered explicitly.

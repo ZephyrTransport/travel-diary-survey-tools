@@ -9,12 +9,12 @@ from collections.abc import Collection
 
 import polars as pl
 
-from processing.completeness import profile_of
 from processing.formatting.kept_records import (
     GATED_TABLES,
     keep_records,
     select_profile_columns,
 )
+from processing.usability import profile_of
 from processing.weighting.controls.base import ControlLevel
 from processing.weighting.controls.registry import CONTROLS
 from processing.weighting.core.hierarchy import (

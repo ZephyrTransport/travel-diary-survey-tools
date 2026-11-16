@@ -38,7 +38,7 @@ Bridging these two representations is the core job of the pipeline steps that pr
 | `detect_joint_trips` | Identifies trips shared among household members |
 | `extract_tours` | Groups linked trips into home-based tours, subtours and joint tours |
 | `add_zone_ids` | Assigns TAZ (and other zones) to every location |
-| `cascade_completeness` | Stamps `usable_<profile>` for each profile, `ctramp` among them |
+| `cascade_usability` | Stamps `usable_<profile>` for each profile, `ctramp` among them |
 | `compute_weights` | Fits one weight set per profile, `hh_weight_ctramp` among them |
 | **`format_ctramp`** | **Translates canonical tours/trips into CT-RAMP schema** |
 

@@ -20,7 +20,7 @@ The usability columns are deliberately **not** declared below. A project names
 its profiles in config -- ``ctramp`` and ``analysis`` are this
 project's names, not the schema's -- so which of them a run produces is a
 project's choice. Declaring one would promise a column that a config need never
-ask for. ``cascade_completeness`` registers whichever it stamps as generated
+ask for. ``cascade_usability`` registers whichever it stamps as generated
 columns, each described by what it admits, which says more than a fixed field
 could: the description names the actual rules that profile relaxed.
 
@@ -33,7 +33,7 @@ counts and that it cannot be negative, so these columns are still described and
 still checked. See [`processing.weighting.core.hierarchy`]
 [processing.weighting.core.hierarchy].
 
-See [`processing.completeness`][processing.completeness] for the per-level rules
+See [`processing.usability`][processing.usability] for the per-level rules
 and the admission vocabulary.
 """
 
@@ -247,11 +247,11 @@ class HouseholdDayModel(BaseModel):
         description=(
             "Every surveyable member's day on this date is complete, as the vendor "
             "judged each one; False where no surveyable member has a day on it. "
-            "Stamped by the cascade_completeness step. Under a profile that asks "
+            "Stamped by the cascade_usability step. Under a profile that asks "
             "for whole household-days, a person-day is only usable within one."
         ),
     )
-    # usable_{profile} is named from config, so cascade_completeness registers it
+    # usable_{profile} is named from config, so cascade_usability registers it
     # as a generated column instead of a field here.
 
 

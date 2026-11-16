@@ -6,7 +6,7 @@ import polars as pl
 
 from data_canon.codebook.days import TravelDow
 from data_canon.codebook.tours import TourCategory, TourDataQuality
-from processing.completeness import (
+from processing.usability import (
     NO_ZONE_COVERAGE,
     HouseholdDayNeeds,
     JointTours,
@@ -15,7 +15,7 @@ from processing.completeness import (
     cascade_complete,
     stamp_usable,
 )
-from processing.completeness.profiles import ALL_DAYS
+from processing.usability.profiles import ALL_DAYS
 
 from .schema_utils import add_missing_tables
 

@@ -14,10 +14,10 @@ import pytest
 
 from data_canon.codebook.tours import TourCategory, TourDataQuality
 from data_canon.codebook.trips import PurposeCategory
-from processing.completeness import HouseholdDayNeeds, JointTours, UsabilityProfile
 from processing.formatting.kept_records import keep_records, select_profile_columns
 from processing.joint_trips.aggregation import build_joint_trips_table
 from processing.tours.joint_tour_helpers import build_joint_tours_table
+from processing.usability import HouseholdDayNeeds, JointTours, UsabilityProfile
 from tests.fixtures.cascade import household, make_profile, stamp
 
 STRICT = make_profile("strict", joint_tours=JointTours.FULLY_JOINT)

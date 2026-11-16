@@ -124,7 +124,7 @@ class CanonicalData:
         """Record columns a step generated whose names come from configuration.
 
         ``add_zone_ids`` emits ``{prefix}_{zone_name}``, the imputation step
-        emits ``{column}_preimputed``, and ``cascade_completeness`` emits one
+        emits ``{column}_preimputed``, and ``cascade_usability`` emits one
         column per usability profile, so the names differ per project and cannot
         be declared as model fields. They are still ours -- computed, named in
         config, and wanted in the delivered output -- so a step that creates them

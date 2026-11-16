@@ -10,7 +10,7 @@ import pytest
 
 from data_canon.codebook.days import TravelDow
 from data_canon.codebook.tours import TourCategory, TourDataQuality
-from processing.completeness import (
+from processing.usability import (
     HouseholdDayNeeds,
     TourClosesAt,
     UsabilityProfile,

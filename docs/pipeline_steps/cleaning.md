@@ -17,7 +17,7 @@ What a cleaner does depends on its survey. The BATS cleaners:
 - fix records the vendor got wrong, such as 2019 trips whose depart and arrive
   times are swapped;
 - set `survey_complete` from the vendor's completeness flags, at the day level
-  and up, for `cascade_completeness` to cascade. A trip the vendor marks 995
+  and up, for `cascade_usability` to cascade. A trip the vendor marks 995
   (it added the trip, and there was no trip survey) gets no verdict of its own
   and takes its day's;
 - in 2023, judge a child's day by the required `child_day_complete` setting:

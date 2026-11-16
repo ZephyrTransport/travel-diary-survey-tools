@@ -28,7 +28,7 @@ STEP_ORDER = (
     "detect_joint_trips",
     "extract_tours",
     "add_zone_ids",
-    "cascade_completeness",
+    "cascade_usability",
     "add_existing_weights",
     "format_ctramp",
     "format_daysim",
@@ -188,7 +188,7 @@ def _step_blocks(data_dir: Path, output_dir: Path, steps: tuple[str, ...]) -> di
                 "buffer_meters": HABITUAL_BUFFER_METERS,
             },
         },
-        "cascade_completeness": {
+        "cascade_usability": {
             # Two strict profiles the formatters name separately, plus a relaxed one
             # that must reach the output as a registered generated column. The strict
             # two take Tuesday to Thursday, so the week diaries lose their other days.

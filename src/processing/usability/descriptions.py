@@ -136,7 +136,7 @@ def log_gate_summary(
 
 
 def profile_columns(usability_profiles: dict | None) -> dict[str, dict[str, str]]:
-    """The per-profile columns `cascade_completeness` writes, with what each admits.
+    """The per-profile columns `cascade_usability` writes, with what each admits.
 
     Every profile column is listed for every stamped table, a few more than any one
     table carries; the writer keeps only those a table has.

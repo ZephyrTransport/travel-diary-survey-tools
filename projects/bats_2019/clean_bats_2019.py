@@ -816,7 +816,7 @@ def flag_measured_completeness(
     ``survey_complete_day`` is what the vendor recorded, so this is the one
     completeness fact the project owns. Everything above it -- person,
     household-day, household, and every trip and tour hanging off a day -- is
-    derived upward by the ``cascade_completeness`` step, which is also where the
+    derived upward by the ``cascade_usability`` step, which is also where the
     usability profiles are stamped.
 
     This used to cascade here as well, and the two did not agree: the docstring
@@ -826,7 +826,7 @@ def flag_measured_completeness(
 
     Both are facts the vendor recorded, so they are the project's to set. The
     trip leaf matters as much as the day one: tours are built from trips, and
-    ``cascade_completeness`` broadcasts a day's verdict onto the records that sit
+    ``cascade_usability`` broadcasts a day's verdict onto the records that sit
     on it rather than inventing one, so a trip table with no ``survey_complete`` leaves
     tours with none either and the usability pass has nothing to stand on.
 
@@ -885,7 +885,7 @@ def placeholder_survey_complete(
     """Give households and persons a placeholder ``survey_complete``.
 
     The 2019 vendor files carry completeness per day only, and the field check
-    needs the column on households and persons too. cascade_completeness replaces
+    needs the column on households and persons too. cascade_usability replaces
     both with its own rollup of the day verdicts, so this only has to exist: a
     household or person with at least one complete day.
     """
@@ -961,7 +961,7 @@ def clean_2019_bats(
     households = clean_households(households)
 
     # FLAG COMPLETE DAYS ==================================
-    # Only the measured leaf; cascade_completeness derives the rest.
+    # Only the measured leaf; cascade_usability derives the rest.
     person_days, unlinked_trips = flag_measured_completeness(person_days, unlinked_trips)
     households, persons = placeholder_survey_complete(households, persons, person_days)
 

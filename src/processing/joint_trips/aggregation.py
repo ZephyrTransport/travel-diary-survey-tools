@@ -8,7 +8,7 @@ import logging
 
 import polars as pl
 
-from processing.completeness import MIN_JOINT_PARTICIPANTS
+from processing.usability import MIN_JOINT_PARTICIPANTS
 
 logger = logging.getLogger(__name__)
 
@@ -124,7 +124,7 @@ def _validate_grouping_membership(joint_members: pl.DataFrame) -> None:
     """Raise when a joint grouping does not have two participants behind it.
 
     A joint trip *is* its member trips, and travelling together takes at least
-    :data:`~processing.completeness.MIN_JOINT_PARTICIPANTS` people. A grouping
+    :data:`~processing.usability.MIN_JOINT_PARTICIPANTS` people. A grouping
     standing for fewer is not joint travel, and anything reading the group as a
     party -- the weighting among them -- would overstate it. Two trips by the
     same person are not a group either, so the count is of people, not rows.

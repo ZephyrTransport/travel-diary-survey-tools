@@ -73,7 +73,7 @@ flowchart LR
     Load([load_data]) --> Clean(["clean_#lt;project#gt;"]) --> Impute([imputation]) --> Link([link_trips])
     Link --> Hab([detect_habitual_locations]) --> Joint([detect_joint_trips]) --> Tours([extract_tours])
     Tours --> Zones([add_zone_ids]) --> Comp
-    Comp["<b>cascade_completeness</b><br/>• usable_ctramp<br/>• usable_daysim<br/>• usable_analysis"] --> Weights
+    Comp["<b>cascade_usability</b><br/>• usable_ctramp<br/>• usable_daysim<br/>• usable_analysis"] --> Weights
     PUMS[/PUMS + sample plan/] --> Weights
     Weights["<b>compute_weights</b><br/>for each profile:<br/>seed → balance<br/>→ propagate"]
     Weights --> CT([format_ctramp]) --> Write([write_data])
@@ -97,7 +97,7 @@ flowchart LR
   style DS fill:#ffe0b2,color:#000
 ```
 
-The profile names are the bats_2023 project's; each project declares its own under `cascade_completeness`. Each formatter keeps the records, and reads the weights, of the profile named after it.
+The profile names are the bats_2023 project's; each project declares its own under `cascade_usability`. Each formatter keeps the records, and reads the weights, of the profile named after it.
 
 
 ### Pipeline Steps
@@ -204,7 +204,7 @@ steps:
           shapefile: "{{ TM2_shapefile_dir }}/tazs_TM2_2_5.shp"
           zone_id_field: "TAZ_NODE"
 
-  # ... cascade_completeness, compute_weights, format_ctramp, format_daysim
+  # ... cascade_usability, compute_weights, format_ctramp, format_daysim
 
   - name: write_data
     validate_input: true
@@ -229,7 +229,7 @@ from clean_bats_2023 import clean_2023_bats  # the project's own step, tagged wi
 from pipeline.pipeline import Pipeline
 from processing import (
     add_zone_ids,
-    cascade_completeness,
+    cascade_usability,
     compute_weights,
     detect_habitual_locations,
     detect_joint_trips,
@@ -254,7 +254,7 @@ processing_steps = [
     detect_joint_trips,
     extract_tours,
     add_zone_ids,
-    cascade_completeness,
+    cascade_usability,
     compute_weights,
     format_ctramp,
     format_daysim,
@@ -412,7 +412,7 @@ travel-diary-survey-tools/
 │   │   ├── joint_trips/
 │   │   ├── tours/
 │   │   ├── add_zone_ids/
-│   │   ├── completeness/
+│   │   ├── usability/
 │   │   ├── weighting/
 │   │   ├── final_check/
 │   │   └── formatting/ <---------- # Define bespoke output formatting here!

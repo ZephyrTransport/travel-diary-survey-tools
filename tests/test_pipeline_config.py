@@ -105,11 +105,9 @@ def _step_params(config_path: Path, step_name: str) -> dict:
 
 @pytest.mark.parametrize("project_dir", _project_dirs(), ids=lambda p: p.name)
 def test_named_profiles_are_stamped_by_the_cascade(project_dir: Path):
-    """Every profile a step names is one ``cascade_completeness`` stamps; a typo would not fail."""
+    """Every profile a step names is one ``cascade_usability`` stamps; a typo would not fail."""
     config_path = project_dir / "config.yaml"
-    declared = set(
-        _step_params(config_path, "cascade_completeness").get("usability_profiles") or {}
-    )
+    declared = set(_step_params(config_path, "cascade_usability").get("usability_profiles") or {})
     if not declared:
         pytest.skip("project declares no usability profiles")
     legal = declared | _ALWAYS_STAMPED
@@ -121,7 +119,7 @@ def test_named_profiles_are_stamped_by_the_cascade(project_dir: Path):
         for profile in named:
             assert profile in legal, (
                 f"{project_dir.name}: step {step_name!r} names profile {profile!r}, which "
-                f"cascade_completeness does not stamp. Declared: {sorted(legal)}"
+                f"cascade_usability does not stamp. Declared: {sorted(legal)}"
             )
 
 

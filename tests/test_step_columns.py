@@ -5,8 +5,8 @@ import polars as pl
 from data_canon.core.dataclass import CanonicalData
 from pipeline.decoration import Tables, step
 from processing.add_zone_ids.add_zone_ids import zone_columns
-from processing.completeness.descriptions import profile_columns
 from processing.imputation.impute import preimputed_columns
+from processing.usability.descriptions import profile_columns
 from processing.weighting.compute_weights import weight_columns
 
 ALL_DAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]

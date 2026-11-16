@@ -8,7 +8,7 @@ so ``zone_coverage`` is an ALL over the tour's trips, like ``survey_complete``.
 import polars as pl
 import pytest
 
-from processing.completeness import stamp_usable
+from processing.usability import stamp_usable
 from tests.fixtures.cascade import household, make_profile, stamp
 
 ZONE = "taz"

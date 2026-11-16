@@ -23,7 +23,7 @@ import polars as pl
 
 from data_canon.core.dataclass import CANONICAL_MODELS
 from data_canon.validation.relational import foreign_key_edges
-from processing.completeness import MIN_JOINT_PARTICIPANTS
+from processing.usability import MIN_JOINT_PARTICIPANTS
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +112,7 @@ def keep_records(
 
     Raises:
         ValueError: If a gated table carries no verdict, which means
-            `cascade_completeness` did not run or stamped a different profile;
+            `cascade_usability` did not run or stamped a different profile;
             or if the kept records do not agree with one another, which means
             the cascade did.
     """
@@ -125,7 +125,7 @@ def keep_records(
         sample = tables[missing[0]]
         msg = (
             f"{', '.join(missing)} carry no '{usability_flag_col}' column, so there "
-            f"is nothing to gate on. Declare it in cascade_completeness's "
+            f"is nothing to gate on. Declare it in cascade_usability's "
             f"usability_profiles. {suggest_usability_columns(sample)}"
         )
         raise ValueError(msg)
@@ -201,7 +201,7 @@ def select_profile_columns(
                     msg = (
                         f"{name} carries {what} for {found} but not for "
                         f"{usability_profile!r}, the profile this consumer reads. Add it to "
-                        f"the weighting step's weight_profiles and cascade_completeness's "
+                        f"the weighting step's weight_profiles and cascade_usability's "
                         f"usability_profiles; falling back to {base!r} would publish another "
                         "universe's expansion factors or joint tours, or none."
                     )

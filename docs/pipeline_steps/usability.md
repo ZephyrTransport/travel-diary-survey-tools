@@ -3,7 +3,7 @@
 The single place the canonical completeness and usability flags are computed.
 "Flag definitions" below carries the definitions, the derivation-order
 diagram, and the per-level rule table; the pipeline step
-(`cascade_completeness`) stamps them once so every downstream consumer only
+(`cascade_usability`) stamps them once so every downstream consumer only
 reads the result.
 
 Two kinds of flag, computed side by side:
@@ -35,7 +35,7 @@ No setting admits a tour with *missing data* (`NO_DESTINATION`, `SPATIAL_GAP`):
 those are not open ends, and no tolerance makes a missing leg present.
 
 ```yaml title="Example"
-- name: cascade_completeness
+- name: cascade_usability
   params:
     usability_profiles:
       ctramp:
@@ -119,7 +119,7 @@ the other members' days on that date keep their own verdict.
 
 ## Flag definitions
 
-::: processing.completeness
+::: processing.usability
     options:
       show_root_heading: false
       show_root_toc_entry: false
@@ -127,7 +127,7 @@ the other members' days on that date keep their own verdict.
 
 ## The step
 
-::: processing.completeness.cascade_completeness.cascade_completeness
+::: processing.usability.cascade_usability.cascade_usability
     options:
       show_root_heading: false
       show_root_toc_entry: false
@@ -138,6 +138,6 @@ the other members' days on that date keep their own verdict.
 
 ## Settings
 
-<!-- step-settings: cascade_completeness -->
+<!-- step-settings: cascade_usability -->
 
-Code: [processing.completeness](../reference/processing/completeness.md)
+Code: [processing.usability](../reference/processing/usability.md)

@@ -1,6 +1,6 @@
 """Select the records a formatter may see, by reading a verdict rather than making one.
 
-A formatter does not decide which records exist. `cascade_completeness` decides
+A formatter does not decide which records exist. `cascade_usability` decides
 that once, for every consumer, and stamps it as a usability profile; this reads
 the profile the config names and keeps what it admits.
 
@@ -27,13 +27,13 @@ import logging
 import polars as pl
 
 from data_canon.codebook.tours import TourDataQuality
-from processing.completeness import usable_col_for
 from processing.formatting.kept_records import (
     GATED_TABLES,
     WEIGHT_COLUMNS,
     keep_records,
     select_profile_columns,
 )
+from processing.usability import usable_col_for
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +89,7 @@ def keep_usable(
 
     Raises:
         ValueError: If a gated table carries no verdict, which means
-            `cascade_completeness` did not run or stamped a different profile.
+            `cascade_usability` did not run or stamped a different profile.
     """
     tables = select_profile_columns(tables, usability_profile)
     usability_flag_col = usable_col_for(usability_profile)

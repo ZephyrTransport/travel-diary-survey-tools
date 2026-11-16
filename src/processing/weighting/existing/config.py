@@ -180,7 +180,7 @@ class ExistingWeightsConfig(BaseModel):
         description=(
             "Usability profiles to weight, each writing its own column set "
             "suffixed with the profile name; a single profile is a list of one. "
-            "Each is stamped upstream by cascade_completeness; name "
+            "Each is stamped upstream by cascade_usability; name "
             "survey_complete to weight the whole valid survey including partial "
             "and overnight tours. The supplied files are read once and moved onto "
             "each profile's usable records rather than simply zeroed, so every set "

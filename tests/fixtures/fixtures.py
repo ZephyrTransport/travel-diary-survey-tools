@@ -193,7 +193,7 @@ def process_scenario_through_pipeline(
     data_with_zones["person_days"] = person_days  # Days do not need zone IDs
 
     # Stamp the usability verdict the formatters read. The real pipeline gets it
-    # from cascade_completeness, which needs reporting flags these synthetic
+    # from cascade_usability, which needs reporting flags these synthetic
     # scenarios do not carry -- so mark every record usable, which is what these
     # fixtures mean: they exist to exercise formatting, not gating. A test about
     # gating stamps its own values.

@@ -185,5 +185,5 @@ def add_missing_tables(tables: dict) -> dict:
         df = tables.get(name)
         if df is not None and column not in df.columns:
             tables[name] = df.with_columns(pl.lit(None, dtype=pl.Int64).alias(column))
-    tables.update(step_tables("cascade_completeness", tables))
+    tables.update(step_tables("cascade_usability", tables))
     return tables

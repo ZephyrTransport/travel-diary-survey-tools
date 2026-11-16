@@ -8,7 +8,7 @@ identities are checked with the pipeline's own ``_check_hierarchy`` and
 import polars as pl
 import pytest
 
-from processing.completeness import usable_col_for
+from processing.usability import usable_col_for
 from processing.weighting.core.hierarchy import weight_col_for
 from processing.weighting.validation.weight_checks import _check_hierarchy, _check_joint_sums
 

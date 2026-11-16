@@ -55,7 +55,7 @@ from .usable import stamp_usable
     },
     generated_columns=profile_columns,
 )
-def cascade_completeness(
+def cascade_usability(
     tables: Tables,
     usability_profiles: dict[str, dict[str, str]] | None = None,
 ) -> dict[str, pl.DataFrame]:
@@ -103,9 +103,9 @@ def cascade_completeness(
     column and raise if it is absent. ``survey_complete`` is always available as the
     floor without being declared.
 
-    See [`stamp_usable`][processing.completeness.stamp_usable] for the per-level
+    See [`stamp_usable`][processing.usability.stamp_usable] for the per-level
     rules and [`parse_usability_profiles`]
-    [processing.completeness.parse_usability_profiles] for the vocabulary.
+    [processing.usability.parse_usability_profiles] for the vocabulary.
 
     Args:
         tables: The canonical tables in ``requires``; ``household_days`` is built
@@ -125,7 +125,7 @@ def cascade_completeness(
     """
     if usability_profiles is None:
         msg = (
-            "cascade_completeness requires usability_profiles. There is no default "
+            "cascade_usability requires usability_profiles. There is no default "
             "because the choice decides what every downstream consumer can read. "
             "Declare at least one profile, e.g. 'ctramp: {tour_closes_at: "
             "primary_home, household_day_needs: all_members}'."

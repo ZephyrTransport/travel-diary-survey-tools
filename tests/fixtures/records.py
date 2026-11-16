@@ -4,7 +4,7 @@ Each builder starts from its table's defaults below and applies the keyword
 arguments on top; any key may be set or added. Enum members are stored as their
 values, and a field left as None that has a derived default (a purpose category,
 a time, a copied zone) gets it. ``usable_test`` is the usability verdict
-``cascade_completeness`` stamps; formatters read it rather than deriving a
+``cascade_usability`` stamps; formatters read it rather than deriving a
 criterion of their own, so a row standing in for canonical output carries it.
 """
 

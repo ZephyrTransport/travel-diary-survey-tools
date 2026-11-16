@@ -50,7 +50,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 
 from data_canon.validation.column import GeneratedColumn
-from processing.completeness import profile_of
+from processing.usability import profile_of
 
 _SEED_COLUMNS: frozenset[str] = frozenset({"base_weight"})
 """Pre-balancing columns that are also per-profile.

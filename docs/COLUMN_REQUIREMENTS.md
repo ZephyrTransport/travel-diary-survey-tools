@@ -20,7 +20,7 @@ Each tab shows the fields for one canonical table. Only steps that reference the
 
 === "households"
 
-    | Field | Type | Constraints | imputation | detect_joint_trips | add_zone_ids | cascade_completeness | add_existing_weights | compute_weights | format_ctramp | format_daysim | final_check |
+    | Field | Type | Constraints | imputation | detect_joint_trips | add_zone_ids | cascade_usability | add_existing_weights | compute_weights | format_ctramp | format_daysim | final_check |
     | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
     | `hh_id` | int | ≥ 1, UNIQUE |  |  | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |
     | `home_lat` | float | ≥ -90, ≤ 90 |  |  | ✓ |  |  | ✓ | ✓ |  |  |
@@ -39,7 +39,7 @@ Each tab shows the fields for one canonical table. Only steps that reference the
 
 === "persons"
 
-    | Field | Type | Constraints | imputation | extract_tours | add_zone_ids | cascade_completeness | add_existing_weights | compute_weights | format_ctramp | format_daysim | final_check |
+    | Field | Type | Constraints | imputation | extract_tours | add_zone_ids | cascade_usability | add_existing_weights | compute_weights | format_ctramp | format_daysim | final_check |
     | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
     | `person_id` | int | ≥ 1, UNIQUE |  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |
     | `hh_id` | int | ≥ 1, FK → `households.hh_id`, REQ_CHILD |  |  |  | ✓ | ✓ | ✓ | ✓ |  |  |
@@ -81,7 +81,7 @@ Each tab shows the fields for one canonical table. Only steps that reference the
 
 === "household_days"
 
-    | Field | Type | Constraints | cascade_completeness |
+    | Field | Type | Constraints | cascade_usability |
     | --- | --- | --- | --- |
     | `hh_day_id` | int | ≥ 1, UNIQUE | ✓ |
     | `hh_id` | int | ≥ 1, FK → `households.hh_id` | ✓ |
@@ -91,7 +91,7 @@ Each tab shows the fields for one canonical table. Only steps that reference the
 
 === "person_days"
 
-    | Field | Type | Constraints | imputation | detect_habitual_locations | detect_joint_trips | extract_tours | cascade_completeness | add_existing_weights | compute_weights | format_ctramp | format_daysim | final_check |
+    | Field | Type | Constraints | imputation | detect_habitual_locations | detect_joint_trips | extract_tours | cascade_usability | add_existing_weights | compute_weights | format_ctramp | format_daysim | final_check |
     | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
     | `person_id` | int | ≥ 1, FK → `persons.person_id`, REQ_CHILD |  |  |  |  | ✓ | ✓ | ✓ | ✓ |  |  |
     | `person_day_id` | int | ≥ 1, UNIQUE |  | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |
@@ -109,7 +109,7 @@ Each tab shows the fields for one canonical table. Only steps that reference the
 
 === "unlinked_trips"
 
-    | Field | Type | Constraints | imputation | link_trips | extract_tours | add_zone_ids | cascade_completeness | add_existing_weights | compute_weights | format_ctramp | format_daysim | final_check |
+    | Field | Type | Constraints | imputation | link_trips | extract_tours | add_zone_ids | cascade_usability | add_existing_weights | compute_weights | format_ctramp | format_daysim | final_check |
     | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
     | `unlinked_trip_id` | int | ≥ 1, UNIQUE |  |  |  | ✓ |  | ✓ | ✓ |  |  |  |
     | `person_day_id` | int | ≥ 1, FK → `person_days.person_day_id` |  | ✓ | ✓ |  | ✓ | ✓ | ✓ |  |  |  |
@@ -148,7 +148,7 @@ Each tab shows the fields for one canonical table. Only steps that reference the
 
 === "linked_trips"
 
-    | Field | Type | Constraints | imputation | link_trips | detect_habitual_locations | detect_joint_trips | extract_tours | add_zone_ids | cascade_completeness | add_existing_weights | compute_weights | format_ctramp | format_daysim | final_check |
+    | Field | Type | Constraints | imputation | link_trips | detect_habitual_locations | detect_joint_trips | extract_tours | add_zone_ids | cascade_usability | add_existing_weights | compute_weights | format_ctramp | format_daysim | final_check |
     | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
     | `person_day_id` | int | ≥ 1, FK → `person_days.person_day_id` |  | + | ✓ | ✓ | ✓ |  | ✓ |  |  |  |  |  |
     | `person_id` | int | ≥ 1, FK → `persons.person_id` |  | + | ✓ |  |  |  |  |  |  |  |  |  |
@@ -198,7 +198,7 @@ Each tab shows the fields for one canonical table. Only steps that reference the
 
 === "tours"
 
-    | Field | Type | Constraints | imputation | extract_tours | add_zone_ids | cascade_completeness | add_existing_weights | compute_weights | format_ctramp | format_daysim | final_check |
+    | Field | Type | Constraints | imputation | extract_tours | add_zone_ids | cascade_usability | add_existing_weights | compute_weights | format_ctramp | format_daysim | final_check |
     | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
     | `tour_id` | int | ≥ 1, UNIQUE |  | + | ✓ | ✓ | ✓ | ✓ | ✓ |  |  |
     | `hh_id` | int | ≥ 1, FK → `households.hh_id` |  |  |  |  |  |  |  |  |  |
@@ -239,7 +239,7 @@ Each tab shows the fields for one canonical table. Only steps that reference the
 
 === "joint_trips"
 
-    | Field | Type | Constraints | detect_joint_trips | extract_tours | cascade_completeness | add_existing_weights | compute_weights | format_ctramp |
+    | Field | Type | Constraints | detect_joint_trips | extract_tours | cascade_usability | add_existing_weights | compute_weights | format_ctramp |
     | --- | --- | --- | --- | --- | --- | --- | --- | --- |
     | `joint_trip_id` | int | ≥ 1, UNIQUE | + |  | ✓ | ✓ | ✓ | ✓ |
     | `hh_id` | int | ≥ 1, FK → `households.hh_id` | + |  | ✓ |  |  |  |
@@ -252,7 +252,7 @@ Each tab shows the fields for one canonical table. Only steps that reference the
 
 === "joint_tours"
 
-    | Field | Type | Constraints | extract_tours | cascade_completeness | add_existing_weights | compute_weights | format_ctramp |
+    | Field | Type | Constraints | extract_tours | cascade_usability | add_existing_weights | compute_weights | format_ctramp |
     | --- | --- | --- | --- | --- | --- | --- | --- |
     | `joint_tour_id` | int | ≥ 1, UNIQUE | + | ✓ | ✓ | ✓ | ✓ |
     | `hh_id` | int | ≥ 1, FK → `households.hh_id` | + | ✓ |  |  |  |

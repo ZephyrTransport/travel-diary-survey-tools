@@ -4,7 +4,7 @@ import polars as pl
 import pytest
 
 from data_canon.codebook.tours import TourCategory, TourDataQuality
-from processing.completeness import cascade_completeness
+from processing.usability import cascade_usability
 from tests.fixtures.cascade import STRICT, config_axes, household, stamp
 from tests.fixtures.schema_utils import add_missing_tables
 
@@ -319,9 +319,9 @@ class TestHouseholdDayCoherence:
 
 
 def test_the_step_returns_every_table_stamped():
-    """``cascade_completeness`` returns each table it takes, with the profile's column."""
+    """``cascade_usability`` returns each table it takes, with the profile's column."""
     tables = add_missing_tables(_gate_tables())
-    result = cascade_completeness(
+    result = cascade_usability(
         validate_input=False, **tables, usability_profiles={"test": config_axes()}
     )
     assert set(result) == set(tables)

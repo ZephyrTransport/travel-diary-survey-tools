@@ -5,7 +5,7 @@ walks the hierarchy twice. **Up** counts from the trips, through the tour fuse
 -- the one place a verdict is decided rather than read -- to the household.
 **Down** carries the household's verdict back to the trips. The joint groupings
 are decided last, beside it (see
-[`joint_groupings`][processing.completeness.joint_groupings]).
+[`joint_groupings`][processing.usability.joint_groupings]).
 
 Zone coverage is here too: whether a record's locations have a zone in the
 geography a profile names. That is a fact about where the zone layer stops,
@@ -449,7 +449,7 @@ def _zone_expr(frame: pl.DataFrame, table: str, profile: UsabilityProfile) -> pl
         msg = (
             f"usability_profile '{profile.name}' sets zone_coverage: "
             f"'{profile.zone_coverage}', but {table} carries no {', '.join(missing)}. "
-            f"Run add_zone_ids before cascade_completeness and declare a "
+            f"Run add_zone_ids before cascade_usability and declare a "
             f"zone_geography named '{profile.zone_coverage}', or set zone_coverage: "
             f"{NO_ZONE_COVERAGE} to ask nothing of geography."
         )

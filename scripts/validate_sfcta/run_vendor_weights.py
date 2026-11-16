@@ -55,7 +55,7 @@ from pipeline.pipeline import Pipeline  # noqa: E402
 from processing import (  # noqa: E402
     add_existing_weights,
     add_zone_ids,
-    cascade_completeness,
+    cascade_usability,
     detect_habitual_locations,
     detect_joint_trips,
     extract_tours,
@@ -148,7 +148,7 @@ if __name__ == "__main__":
             detect_joint_trips,
             extract_tours,
             add_zone_ids,
-            cascade_completeness,
+            cascade_usability,
             add_existing_weights,
             format_daysim,
             write_data,

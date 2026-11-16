@@ -8,7 +8,7 @@ holding the same value where the record is on it and null where it is not.
 Nothing here edits the bare id.
 
 Runs after the up and down walks in
-[`usable`][processing.completeness.usable], since it reads
+[`usable`][processing.usability.usable], since it reads
 every table's verdict. The functions below are in the order they run.
 """
 

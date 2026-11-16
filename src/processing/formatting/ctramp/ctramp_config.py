@@ -41,7 +41,7 @@ class CTRAMPConfig(BaseModel):
 
     usability_profile: str = Field(
         description=(
-            "Which usability profile stamped by cascade_completeness decides the "
+            "Which usability profile stamped by cascade_usability decides the "
             "record universe. Required, and must name a profile that run stamped: "
             "a looser profile admits more, at the cost of no longer matching "
             "whichever profile the weighting and the other formatters were given."

@@ -477,7 +477,7 @@ def clean_2023_bats(
     logger.info("Excluded %d of %d persons by survey_tech", n_excluded, persons.height)
 
     # ASSIGN COMPLETION STATUS =========================================
-    # Person and household completeness are rolled up later by cascade_completeness,
+    # Person and household completeness are rolled up later by cascade_usability,
     # so their is_complete here is only a placeholder.
     unlinked_trips = unlinked_trips.rename(
         {"trip_survey_complete": "survey_complete"}
